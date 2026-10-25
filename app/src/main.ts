@@ -19,6 +19,7 @@ type Conn =
   | { kind: 'refused'; reason: string };
 
 const s = {
+  // ponytail: onboarding shows on every launch for the demo; switch to localStorage for first-run only.
   screen: (sessionStorage.getItem('wraps.onboarded') ? 'home' : 'onboarding') as Screen,
   conn: { kind: 'off' } as Conn,
   nodes: [] as VpnNode[],

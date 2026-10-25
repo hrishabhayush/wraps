@@ -121,38 +121,3 @@ export class MockTopUpWallet implements TopUpWallet {
     return Buffer.from(JSON.stringify(v)).toString('base64url');
   }
 }
-
-// ---------------------------------------------------------------------------
-// AP4M rail: STUB. Owned by lane 3 (PAY-03).
-// ---------------------------------------------------------------------------
-
-/**
- * TODO(PAY-03): real AP4M rail, SPEC §4 step 3:
- *   Issuer → Agent: 402 Payment Required, AP4M x402, N RLUSD
- *   Agent: signs an AP4M voucher, submits it (no human)
- *   Issuer: redeems → VoucherRedeemed on-chain (PaymentLedger contract)
- *   AP4M: RLUSD → issuer's merchant payout address
- * Use the vendored AP4M starter files (vendor/ap4m/, INF-18) and the AP4M API
- * reference. Do not guess field names: check `VoucherRedeemed` fields at the booth (SPEC §19).
- * redeem() must resolve only after the redemption is confirmed, and must emit
- * 'VoucherRedeemed' with the real tx hash.
- */
-export class Ap4mRail extends EventEmitter implements TopUpRail {
-  readonly scheme = 'ap4m-x402';
-  readonly network = 'xrpl-evm-testnet';
-  constructor(readonly payTo: string) {
-    super();
-  }
-  async redeem(_paymentHeader: string, _req: PaymentRequirement): Promise<RedeemResult> {
-    throw new Error('Ap4mRail is not implemented yet (PAY-03). Use MockTopUpRail.');
-  }
-}
-
-/** TODO(PAY-03 / SDK-03): agent side of AP4M. Signs the voucher with the agent's own AP4M wallet. */
-export class Ap4mWallet implements TopUpWallet {
-  readonly scheme = 'ap4m-x402';
-  constructor(readonly address: string) {}
-  async pay(_req: PaymentRequirement): Promise<string> {
-    throw new Error('Ap4mWallet is not implemented yet (PAY-03). Use MockTopUpWallet.');
-  }
-}

@@ -22,7 +22,7 @@ pub fn run() {
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            TrayIconBuilder::new()
+            let tray = TrayIconBuilder::new()
                 .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
                 .icon_as_template(true)
                 .tooltip("Wraps")
@@ -41,6 +41,13 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+            println!("tray rect: {:?}", tray.rect());
+            // The menu bar can hide new icons behind the notch, so open the panel once on launch.
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.move_window(Position::TopRight);
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
             Ok(())
         })
         .on_window_event(|w, e| {

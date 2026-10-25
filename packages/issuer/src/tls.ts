@@ -12,9 +12,12 @@ import { request as httpRequest } from 'node:http';
 import { connect as tlsConnect, type TLSSocket } from 'node:tls';
 import { isIP } from 'node:net';
 import { webcrypto } from 'node:crypto';
-import type { Transport } from './client';
+import type { PeerResponse, Transport } from './client';
 
 x509.cryptoProvider.set(webcrypto as unknown as Crypto);
+
+const MAX_TLS_RESPONSE_BYTES = 1024 * 1024;
+const TLS_RESPONSE_TIMEOUT_MS = 15_000;
 
 export interface TlsIdentity {
   keyPem: string;
@@ -88,6 +91,18 @@ function openTls(url: URL): Promise<{ socket: TLSSocket; peerSpki: Uint8Array }>
 /** Sends one HTTP/1.1 request over an already verified TLS socket. */
 function sendOver(socket: TLSSocket, url: URL, init: RequestInit = {}): Promise<Response> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let responseBytes = 0;
+    const chunks: Buffer[] = [];
+    const timer = setTimeout(() => fail(new Error('TLS HTTP response timed out')), TLS_RESPONSE_TIMEOUT_MS);
+    const cleanup = () => clearTimeout(timer);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy(error);
+      reject(error);
+    };
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((v, k) => (headers[k] = v));
     const body = init.body == null ? undefined : typeof init.body === 'string' ? init.body : Buffer.from(init.body as ArrayBuffer);
@@ -103,9 +118,18 @@ function sendOver(socket: TLSSocket, url: URL, init: RequestInit = {}): Promise<
         createConnection: () => socket,
       },
       (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c) => chunks.push(c));
+        res.on('data', (c: Buffer) => {
+          responseBytes += c.length;
+          if (responseBytes > MAX_TLS_RESPONSE_BYTES) {
+            fail(new Error(`TLS HTTP response exceeds ${MAX_TLS_RESPONSE_BYTES} bytes`));
+            return;
+          }
+          chunks.push(c);
+        });
         res.on('end', () => {
+          if (settled) return;
+          settled = true;
+          cleanup();
           const h = new Headers();
           for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(', ') : v);
           const status = res.statusCode ?? 0;
@@ -113,10 +137,11 @@ function sendOver(socket: TLSSocket, url: URL, init: RequestInit = {}): Promise<
           resolve(new Response(nullBody ? null : Buffer.concat(chunks), { status, headers: h }));
           socket.destroy();
         });
-        res.on('error', reject);
+        res.on('aborted', () => fail(new Error('TLS HTTP response was aborted')));
+        res.on('error', fail);
       },
     );
-    req.on('error', reject);
+    req.on('error', fail);
     req.end(body);
   });
 }
@@ -129,6 +154,9 @@ export async function fetchRecordingPeer(url: string, init?: RequestInit): Promi
   return { response: await sendOver(socket, u, init), peerSpki };
 }
 
+/** Transport helper for HTTPS requests that must report the exact TLS peer key. */
+export const fetchWithPeer = fetchRecordingPeer satisfies (url: string, init?: RequestInit) => Promise<PeerResponse>;
+
 /**
  * Transport pinned to one origin's attested TLS key. Requests to that origin fail before
  * anything is sent if the server's key differs. Requests to other origins use `fallback`.
@@ -139,6 +167,12 @@ export function pinnedTransport(origin: string, spki: Uint8Array, fallback: Tran
   return async (url, init) => {
     const u = new URL(url);
     if (u.origin !== pinOrigin) return fallback(url, init);
+    if (fallback !== fetch) {
+      if (!fallback.fetchPinned) {
+        throw new TlsPinError('custom HTTPS transport must implement fetchPinned before sending requests');
+      }
+      return fallback.fetchPinned(url, pin, init);
+    }
     const { socket, peerSpki } = await openTls(u);
     if (!pin.equals(Buffer.from(peerSpki))) {
       socket.destroy();

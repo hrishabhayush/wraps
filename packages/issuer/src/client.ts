@@ -8,7 +8,18 @@ import { AttestationError, AttestationVerifier, VerifiedAttestation, fromB64u, h
 import { AttestationResponse } from './protocol';
 import { fetchRecordingPeer, pinnedTransport } from './tls';
 
-export type Transport = (url: string, init?: RequestInit) => Promise<Response>;
+export interface PeerResponse {
+  response: Response;
+  peerSpki: Uint8Array;
+}
+
+export interface Transport {
+  (url: string, init?: RequestInit): Promise<Response>;
+  /** HTTPS first contact must use the configured route and expose the TLS peer key. */
+  fetchWithPeer?: (url: string, init?: RequestInit) => Promise<PeerResponse>;
+  /** Must enforce this SPKI during TLS handshake, before sending the HTTP request. */
+  fetchPinned?: (url: string, expectedSpki: Uint8Array, init?: RequestInit) => Promise<Response>;
+}
 
 export interface AttestedIssuer {
   url: string;
@@ -30,8 +41,13 @@ export async function fetchAttestedIssuer(
   const https = new URL(issuerUrl).protocol === 'https:';
   let res: Response;
   let peerSpki: Uint8Array | undefined;
-  if (https) ({ response: res, peerSpki } = await fetchRecordingPeer(url));
-  else res = await transport(url);
+  if (https) {
+    const fetchWithPeer = transport === fetch ? fetchRecordingPeer : transport.fetchWithPeer;
+    if (!fetchWithPeer) {
+      throw new AttestationError('KEY_MISMATCH', 'custom HTTPS transport must expose the peer key with fetchWithPeer');
+    }
+    ({ response: res, peerSpki } = await fetchWithPeer(url));
+  } else res = await transport(url);
   if (!res.ok) throw new AttestationError('MALFORMED', `issuer returned HTTP ${res.status}`);
   const body = (await res.json()) as AttestationResponse;
   if (body.format !== verifier.format) {

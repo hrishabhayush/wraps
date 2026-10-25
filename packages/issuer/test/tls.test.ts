@@ -1,6 +1,7 @@
 // HTTPS with a self-signed key made at start-up. The key is in the attested key hash,
 // and every later call is pinned to it.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createServer as createHttpsServer } from 'node:https';
 import { AttestationError, MockAttestationProvider, MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
 import {
   IssuerCore,
@@ -10,8 +11,10 @@ import {
   createIssuerServer,
   createTlsIdentity,
   fetchAttestedIssuer,
+  fetchRecordingPeer,
   issuerTransport,
   listenUrl,
+  pinnedTransport,
   startIssuer,
 } from '../src/index';
 
@@ -39,6 +42,42 @@ describe('issuer over https', () => {
     expect(Buffer.from(att.tlsKey!).equals(Buffer.from(a.core.publicKeys.tls!))).toBe(true);
     const res = await issuerTransport(att)(`${a.url}/health`);
     expect(res.status).toBe(200);
+  });
+
+  it('uses the configured peer-aware transport for HTTPS attestation', async () => {
+    let peerCalls = 0;
+    let pinnedCalls = 0;
+    const routed = Object.assign(
+      async () => { throw new Error('ordinary transport must not be used for peer-bound TLS'); },
+      {
+        fetchWithPeer: async (url: string, init?: RequestInit) => { peerCalls++; return fetchRecordingPeer(url, init); },
+        fetchPinned: async (url: string, spki: Uint8Array, init?: RequestInit) => {
+          pinnedCalls++;
+          return pinnedTransport(a.url, spki)(url, init);
+        },
+      },
+    );
+    const att = await fetchAttestedIssuer(a.url, verifier(), routed);
+    expect(att.tlsKey).toBeDefined();
+    expect(peerCalls).toBe(1);
+    expect((await issuerTransport(att, routed)(`${a.url}/health`)).status).toBe(200);
+    expect(pinnedCalls).toBe(1);
+  });
+
+  it('fails closed instead of bypassing a custom HTTPS transport', async () => {
+    let calls = 0;
+    const custom = async () => { calls++; return new Response('{}'); };
+    await expect(fetchAttestedIssuer(a.url, verifier(), custom)).rejects.toMatchObject({ code: 'KEY_MISMATCH' });
+    expect(calls).toBe(0);
+  });
+
+  it('requires custom transports to enforce the pin before issuer requests', async () => {
+    const custom = Object.assign(
+      async () => new Response('{}'),
+      { fetchWithPeer: fetchRecordingPeer },
+    );
+    const att = await fetchAttestedIssuer(a.url, verifier(), custom);
+    await expect(issuerTransport(att, custom)(`${a.url}/health`)).rejects.toBeInstanceOf(TlsPinError);
   });
 
   it('refuses a server whose TLS key differs from the pinned one, before sending the request', async () => {
@@ -72,5 +111,19 @@ describe('issuer over https', () => {
     await expect(
       Promise.resolve().then(() => issuerTransport({ url: 'https://127.0.0.1:1', issuerName: 'x', tokenKey: new Uint8Array(), claimKey: new Uint8Array(), attestation: {} as any })),
     ).rejects.toBeInstanceOf(AttestationError);
+  });
+
+  it('bounds the body size of an untrusted first-contact TLS response', async () => {
+    const identity = await createTlsIdentity();
+    const server = createHttpsServer({ key: identity.keyPem, cert: identity.certPem }, (_req, res) => {
+      res.end(Buffer.alloc(1024 * 1024 + 1));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      await expect(fetchRecordingPeer(listenUrl(server))).rejects.toThrow('response exceeds 1048576 bytes');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

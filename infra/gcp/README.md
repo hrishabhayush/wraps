@@ -41,7 +41,7 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `relay-entrypoint.ts` | Verifies the issuer's live attestation, pins its TLS SPKI, creates the in-memory relay TLS identity, and starts the proxy and receipt listeners. |
 | `cloudbuild.yaml` | Cloud Build steps. `build.sh` runs it. |
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
-| `setup-issuer-state.sh prepare` | Creates or verifies the dedicated regional Standard bucket and symmetric Cloud KMS key for SEC-06, then writes their public resource names under `.state/`. |
+| `setup-issuer-state.sh prepare` | Creates or verifies the project-owned, dedicated regional Standard bucket and symmetric Cloud KMS key for SEC-06, then writes their public resource names under `.state/`. |
 | `setup-merchant-auth-wif.sh` | Creates a digest-scoped WIF provider and Secret Manager access for the issuer and relay image digests. |
 | `deploy.sh <role> [--replace] [--instance-name=NAME]` | Creates a production Confidential Space VM; preserves an existing VM unless replacement is explicitly requested. A named candidate can be tested side by side. |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
@@ -99,7 +99,7 @@ file, verifies that the bucket belongs to this project, and refuses objects outs
 prefix before granting the issuer digest access.
 
 ```sh
-# 1. Create or verify the regional bucket and KMS key.
+# 1. Create or verify the project-owned canonical state bucket and KMS key.
 infra/gcp/setup-issuer-state.sh prepare
 source infra/gcp/.state/issuer-state.env
 

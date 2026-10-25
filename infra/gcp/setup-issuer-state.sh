@@ -17,7 +17,10 @@ gc services enable storage.googleapis.com cloudkms.googleapis.com \
 
 PROJECT_NUMBER="$(gc projects describe "${GCP_PROJECT}" --format='value(projectNumber)')"
 [[ "${PROJECT_NUMBER}" =~ ^[0-9]+$ ]] || die "could not read the GCP project number"
-BUCKET="${ISSUER_STATE_GCS_BUCKET:-${GCP_PROJECT}-issuer-state-${PROJECT_NUMBER}}"
+EXPECTED_BUCKET="${GCP_PROJECT}-issuer-state-${PROJECT_NUMBER}"
+BUCKET="${ISSUER_STATE_GCS_BUCKET:-${EXPECTED_BUCKET}}"
+[[ "${BUCKET}" = "${EXPECTED_BUCKET}" ]] \
+  || die "issuer state must use its dedicated project bucket gs://${EXPECTED_BUCKET}; arbitrary bucket overrides are refused"
 KMS_KEY="projects/${GCP_PROJECT}/locations/${GCP_REGION}/keyRings/${KEYRING}/cryptoKeys/${KEY_ID}"
 WIF_PROVIDER="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
 
@@ -39,6 +42,23 @@ if ! gc storage buckets describe "gs://${BUCKET}" --format='value(name)' >/dev/n
     --uniform-bucket-level-access --public-access-prevention --quiet
 fi
 
+PROJECT_BUCKETS="$(gc storage buckets list --format='value(name)')"
+if ! printf '%s\n' "${PROJECT_BUCKETS}" | grep -Fxq "${BUCKET}"; then
+  die "gs://${BUCKET} is not owned by configured project ${GCP_PROJECT}"
+fi
+
+# The workload gets bucket-wide objectViewer/objectCreator roles. Keep this
+# canonical bucket dedicated to issuer snapshots before granting those roles.
+OBJECT_NAMES="$(gc storage objects list "gs://${BUCKET}/**" --format='value(name)')"
+while IFS= read -r object; do
+  [ -n "${object}" ] || continue
+  [[ "${object}" == "${PREFIX}/"* ]] \
+    || die "issuer state bucket contains an object outside ${PREFIX}/; refusing a bucket-wide workload grant"
+done <<< "${OBJECT_NAMES}"
+
+gc storage buckets update "gs://${BUCKET}" \
+  --update-labels=project=wraps,role=issuer-state --quiet
+
 BUCKET_JSON="$(mktemp)"
 trap 'rm -f "${BUCKET_JSON}"' EXIT
 gc storage buckets describe "gs://${BUCKET}" --format=json > "${BUCKET_JSON}"
@@ -56,6 +76,7 @@ if (pap !== 'enforced') errors.push('public access prevention must be enforced')
 const lifecycle = bucket.lifecycle ?? bucket.lifecycle_config ?? bucket.lifecycle_rule;
 const lifecycleRules = lifecycle?.rule ?? lifecycle?.rules ?? lifecycle;
 if (Array.isArray(lifecycleRules) && lifecycleRules.length !== 0) errors.push('remove lifecycle rules that could delete issuer snapshots');
+if (bucket.labels?.project !== 'wraps' || bucket.labels?.role !== 'issuer-state') errors.push('bucket must be labeled project=wraps,role=issuer-state');
 if (errors.length) { console.error(`invalid issuer-state bucket: ${errors.join('; ')}`); process.exit(1); }
 NODE
 

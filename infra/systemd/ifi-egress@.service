@@ -1,0 +1,18 @@
+# Egress (INF-11): one vsock-proxy per allowlisted destination.
+# Instance name = vsock port, e.g. ifi-egress@8001. deploy.sh writes
+# /etc/ifi/egress/<port>.env with REMOTE_HOST and REMOTE_PORT.
+# vsock-proxy refuses destinations missing from /etc/nitro_enclaves/vsock-proxy.yaml.
+[Unit]
+Description=IFI egress vsock-proxy on vsock port %i
+After=network-online.target
+Wants=network-online.target
+PartOf=ifi-egress.target
+
+[Service]
+EnvironmentFile=/etc/ifi/egress/%i.env
+ExecStart=/usr/bin/env vsock-proxy %i ${REMOTE_HOST} ${REMOTE_PORT} --config /etc/nitro_enclaves/vsock-proxy.yaml
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=ifi-egress.target

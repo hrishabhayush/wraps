@@ -1,0 +1,12 @@
+# Example of /etc/nitro_enclaves/vsock-proxy.yaml on the ISSUER parent.
+# Do not edit this by hand on the host: deploy.sh writes the real file from
+# infra/config/egress.<role>.conf. vsock-proxy refuses any destination not listed.
+allowlist:
+- {address: hackathon.ap4m.build, port: 443}
+- {address: XRPL_EVM_TESTNET_RPC_HOST_PLACEHOLDER, port: 443}
+- {address: s1.ripple.com, port: 443}
+- {address: s1.ripple.com, port: 51234}
+- {address: s2.ripple.com, port: 443}
+- {address: s2.ripple.com, port: 51234}
+- {address: xrplcluster.com, port: 443}
+- {address: QUICKNODE_HOST_PLACEHOLDER, port: 443}

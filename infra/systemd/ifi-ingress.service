@@ -1,0 +1,16 @@
+# Ingress (INF-10): public TCP PUBLIC_PORT on the parent -> enclave vsock APP_PORT.
+# socat copies bytes only. TLS ends inside the enclave, so the parent never sees plaintext.
+# The enclave sees every connection as coming from the parent, never the client IP.
+[Unit]
+Description=IFI ingress: TCP to enclave vsock
+After=network-online.target nitro-enclaves-allocator.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/ifi/ifi.env
+ExecStart=/usr/bin/socat TCP-LISTEN:${PUBLIC_PORT},fork,reuseaddr,backlog=256 VSOCK-CONNECT:${ENCLAVE_CID}:${APP_PORT}
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

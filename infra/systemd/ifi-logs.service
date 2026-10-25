@@ -1,0 +1,19 @@
+# Logs (INF-21): the enclave writes app stdout/stderr to vsock 3:LOG_PORT.
+# This unit receives it and hands it to journald. Read with:
+#   journalctl -u ifi-logs -f
+# Start it before the enclave, so no early lines are lost.
+[Unit]
+Description=IFI enclave log receiver (vsock to journald)
+After=network-online.target
+
+[Service]
+EnvironmentFile=/etc/ifi/ifi.env
+ExecStart=/usr/bin/socat -u VSOCK-LISTEN:${LOG_PORT},fork,reuseaddr STDOUT
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ifi-enclave
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

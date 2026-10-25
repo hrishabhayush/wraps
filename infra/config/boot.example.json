@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to /etc/ifi/<role>.boot.json on the host (mode 0600). deploy.sh pushes it into the enclave over vsock. Never commit the real file. The app decides which keys it reads.",
+  "xrplEvmRpcUrl": "https://XRPL_EVM_TESTNET_RPC_HOST_PLACEHOLDER/",
+  "quicknodeUrl": "https://QUICKNODE_HOST_PLACEHOLDER/YOUR_TOKEN/",
+  "ap4mBaseUrl": "https://hackathon.ap4m.build",
+  "paymentLedgerAddress": "0x0000000000000000000000000000000000000000",
+  "issuerPayoutPrivateKey": "0x... (issuer only; never log it)"
+}

@@ -1,0 +1,6 @@
+# Groups all ifi-egress@<port> units so they start and stop together.
+[Unit]
+Description=IFI egress vsock proxies
+
+[Install]
+WantedBy=multi-user.target

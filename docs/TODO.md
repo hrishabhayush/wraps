@@ -65,12 +65,12 @@ Folder: `infra/`
 
 ## Lane 2: Tokens and issuer (folder `packages/tokens`, `packages/issuer`)
 
-- [ ] **ISS-01** Token library: RFC 9578 type 0x0002 using `@cloudflare/privacypass-ts` / `@cloudflare/blindrsa-ts`. Issuer keygen, client blind/finalize, verify, `Authorization: PrivateToken` header format. (The stopped cloud agent started this in its worktree.)
-- [ ] **ISS-02** `POST /issue` behind a 402 (top-up). Use a `TopUpRail` interface: mock first, AP4M later (PAY-03).
-- [ ] **ISS-03** `POST /verify` (read-only: signature and not spent) and `POST /settle` (mark spent, add to the merchant's tab).
-- [ ] **ISS-04** Signed running-total claim for merchants, signed with a key that is in the attestation.
-- [ ] **ISS-05** Solvency: refuse to issue beyond funds held. Attest "outstanding ≤ funds held."
-- [ ] **ISS-06** Batched payouts at fixed times (mock first, RLUSD transfers on XRPL EVM later).
+- [x] **ISS-01** Token library: RFC 9578 type 0x0002 using `@cloudflare/privacypass-ts` / `@cloudflare/blindrsa-ts`. Issuer keygen, client blind/finalize, verify, `Authorization: PrivateToken` header format. (The stopped cloud agent started this in its worktree.) (core agent)
+- [x] **ISS-02** `POST /issue` behind a 402 (top-up). Use a `TopUpRail` interface: mock first, AP4M later (PAY-03). (core agent) Mock rail done; AP4M rail is PAY-03.
+- [x] **ISS-03** `POST /verify` (read-only: signature and not spent) and `POST /settle` (mark spent, add to the merchant's tab). (core agent)
+- [x] **ISS-04** Signed running-total claim for merchants, signed with a key that is in the attestation. (core agent)
+- [x] **ISS-05** Solvency: refuse to issue beyond funds held. Attest "outstanding ≤ funds held." (core agent)
+- [~] **ISS-06** Batched payouts at fixed times (mock first, RLUSD transfers on XRPL EVM later). (core agent) Mock payout job done; RLUSD transfers open.
 - [ ] **ISS-07** Wire into the enclave (INF-10 to INF-14).
 
 ## Lane 3: Payments / AP4M (folder `packages/ap4m`)
@@ -87,16 +87,16 @@ Folder: `infra/`
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
 
-- [ ] **SDK-01** Verify issuer and relay attestations (mock verifier first, Nitro verifier against `infra/pcrs.json`). Reject all-zero PCRs, wrong keys, reused nonces.
+- [~] **SDK-01** Verify issuer and relay attestations (mock verifier first, Nitro verifier against `infra/pcrs.json`). Reject all-zero PCRs, wrong keys, reused nonces. (core agent) Mock verifier done; NitroAttestationVerifier is a stub.
 - [ ] **SDK-02** Tunnel through the relay, pinned to its attested key.
-- [ ] **SDK-03** Top-up: hit the issuer's 402, sign the AP4M voucher, receive and unblind tokens.
-- [ ] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment.
-- [ ] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning.
+- [~] **SDK-03** Top-up: hit the issuer's 402, sign the AP4M voucher, receive and unblind tokens. (core agent) Mock wallet done; the real AP4M voucher is PAY-03.
+- [x] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment. (core agent)
+- [x] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning. (core agent)
 
 ## Lane 6: Merchant (folder `packages/merchant`)
 
-- [ ] **MER-01** One merchant, two services ("on-chain analytics", "filings") at different whole-token prices.
-- [ ] **MER-02** 402 with scheme `blindtoken`. Accept tokens, call issuer `/verify` then `/settle`, store claims.
+- [x] **MER-01** One merchant, two services ("on-chain analytics", "filings") at different whole-token prices. (core agent)
+- [x] **MER-02** 402 with scheme `blindtoken`. Accept tokens, call issuer `/verify` then `/settle`, store claims. (core agent)
 
 ## Lane 7: Spy bot (folder `packages/spybot`)
 

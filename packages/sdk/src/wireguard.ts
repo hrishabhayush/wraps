@@ -75,7 +75,7 @@ export async function fetchVerifiedWireGuardReceipt(
   const peers = networkPolicy.peers.map((peer) => {
     if (typeof peer.publicKey !== 'string' || typeof peer.allowedAddress !== 'string') throw new TypeError('malformed WireGuard peer policy');
     return { publicKey: peer.publicKey, allowedAddress: peer.allowedAddress };
-  }).sort((a, b) => a.publicKey.localeCompare(b.publicKey));
+  }).sort((a, b) => a.publicKey < b.publicKey ? -1 : a.publicKey > b.publicKey ? 1 : 0);
   const policyHash = createHash('sha256').update(JSON.stringify({
     endpoint: networkPolicy.endpoint,
     listenPort: networkPolicy.listenPort,
@@ -172,7 +172,7 @@ export async function registerWireGuardPeer(
   if (!isVerifiedWireGuardReceipt(receipt)) throw new TypeError('a verified WireGuard attestation receipt is required');
   if (!Number.isInteger(tlsPort) || tlsPort < 1 || tlsPort > 65535) throw new RangeError('invalid relay TLS port');
   const url = new URL(`https://${receipt.endpoint}:${tlsPort}/wireguard/register`);
-  if (tokens.length < 1 || tokens.length > 100) throw new RangeError('register between 1 and 100 blind tokens');
+  if (tokens.length !== 1) throw new RangeError('register exactly one blind token at a time');
   if (!receipt.peers.some((peer) => peer.publicKey === publicKey)) throw new TypeError('peer key is not in the verified WireGuard policy');
   const expectedSpki = Buffer.from(receipt.tunnelSpki, 'base64url');
   if (!expectedSpki.length) throw new TypeError('missing attested relay TLS key');

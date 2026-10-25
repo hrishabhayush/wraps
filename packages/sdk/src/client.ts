@@ -385,14 +385,12 @@ export class PrivatePayClient {
   }
 
   /** Spend blind tokens to activate this configured peer's metered WireGuard quota. */
-  async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, publicKey: string, tokenCount: number, tlsPort = 443): Promise<number> {
+  async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, publicKey: string, tlsPort = 443): Promise<number> {
     this.attested();
     if (!isVerifiedWireGuardReceipt(receipt) || !receipt.peers.some((peer) => peer.publicKey === publicKey)) {
       throw new TypeError('a verified receipt containing this peer is required');
     }
-    if (!Number.isSafeInteger(tokenCount) || tokenCount < 1 || tokenCount > 100) {
-      throw new PaymentRefusedError('BAD_QUOTE', 'WireGuard registration requires 1 to 100 whole tokens');
-    }
+    const tokenCount = 1;
     if (this.spentToday + tokenCount > this.opts.caps.dailyTokens) {
       throw new PaymentRefusedError('DAILY_CAP', 'WireGuard quota reservation would exceed the daily token cap');
     }

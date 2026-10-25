@@ -43,13 +43,11 @@ if [ "${ROLE}" = relay ]; then
     [ -n "${WG_ENDPOINT:-}" ] || die "WG_ENDPOINT is required when WG_ENABLED=true"
     [ -n "${WG_INTERFACE_ADDRESS:-}" ] || die "WG_INTERFACE_ADDRESS is required when WG_ENABLED=true"
     [ -n "${WG_PEERS_JSON:-}" ] || die "WG_PEERS_JSON is required when WG_ENABLED=true"
-    WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
     WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-ens4}"
-    [[ "${WG_LISTEN_PORT}" =~ ^[0-9]+$ ]] && [ "${WG_LISTEN_PORT}" -ge 1 ] && [ "${WG_LISTEN_PORT}" -le 65535 ] || die "WG_LISTEN_PORT must be a UDP port"
-    for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_LISTEN_PORT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
+    for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
       [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "WireGuard metadata values cannot contain newlines"
     done
-    WG_METADATA="tee-added-capabilities=[\"CAP_NET_ADMIN\"]~tee-env-WG_ENABLED=true~tee-env-WG_ENDPOINT=${WG_ENDPOINT}~tee-env-WG_LISTEN_PORT=${WG_LISTEN_PORT}~tee-env-WG_INTERFACE_ADDRESS=${WG_INTERFACE_ADDRESS}~tee-env-WG_EGRESS_INTERFACE=${WG_EGRESS_INTERFACE}~tee-env-WG_PEERS_JSON=${WG_PEERS_JSON}"
+    WG_METADATA="tee-added-capabilities=[\"CAP_NET_ADMIN\"]~tee-env-WG_ENABLED=true~tee-env-WG_ENDPOINT=${WG_ENDPOINT}~tee-env-WG_INTERFACE_ADDRESS=${WG_INTERFACE_ADDRESS}~tee-env-WG_EGRESS_INTERFACE=${WG_EGRESS_INTERFACE}~tee-env-WG_PEERS_JSON=${WG_PEERS_JSON}"
   fi
 
   for value in "${ATTESTATION_AUDIENCE}" "${ISSUER_URL}" "${RELAY_HOSTNAME}"; do
@@ -75,6 +73,8 @@ if [ "${ROLE}" = relay ]; then
   fi
 fi
 
+VM_TAGS=wraps
+[ "${ROLE}" = relay ] && VM_TAGS=wraps,wraps-relay
 CREATE_ARGS=(
   compute instances create "${NAME}"
   "--zone=${GCP_ZONE}"
@@ -87,7 +87,7 @@ CREATE_ARGS=(
   "--metadata=${METADATA}"
   "--service-account=${WORKLOAD_SA}"
   --scopes=cloud-platform
-  --tags=wraps
+  "--tags=${VM_TAGS}"
   "--labels=project=wraps,role=${ROLE},mode=${MODE}"
   "--max-run-duration=${MAX_RUN_DURATION}"
   --instance-termination-action=STOP
@@ -104,6 +104,16 @@ if [ "${DRY_RUN}" = 1 ]; then
   printf 'DRY RUN:'
   printf ' %q' gcloud --project="${GCP_PROJECT}" "${CREATE_ARGS[@]}"
   printf '\n'
+  if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+    printf 'DRY RUN (if firewall rule exists):'
+    printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules update wraps-allow-wireguard \
+      --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+    printf '\nDRY RUN (otherwise):'
+    printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
+      --direction=INGRESS --priority=1000 --network=default --action=ALLOW --allow=udp:51820 \
+      --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+    printf '\n'
+  fi
   exit 0
 fi
 
@@ -122,10 +132,10 @@ gc "${CREATE_ARGS[@]}" \
 if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
   RULE=wraps-allow-wireguard
   if gc compute firewall-rules describe "${RULE}" >/dev/null 2>&1; then
-    gc compute firewall-rules update "${RULE}" --allow="udp:${WG_LISTEN_PORT}" --source-ranges=0.0.0.0/0 --target-tags=wraps
+    gc compute firewall-rules update "${RULE}" --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
   else
     gc compute firewall-rules create "${RULE}" --direction=INGRESS --priority=1000 --network=default \
-      --action=ALLOW --allow="udp:${WG_LISTEN_PORT}" --source-ranges=0.0.0.0/0 --target-tags=wraps
+      --action=ALLOW --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
   fi
 fi
 

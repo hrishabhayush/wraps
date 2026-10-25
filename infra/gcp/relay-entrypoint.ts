@@ -106,7 +106,7 @@ async function main(): Promise<void> {
       ...relayOptions,
       wireGuardGateway: {
         endpoint: required('WG_ENDPOINT'),
-        listenPort: positivePort('WG_LISTEN_PORT', 51820),
+        listenPort: 51820,
         interfaceAddress: required('WG_INTERFACE_ADDRESS'),
         egressInterface: process.env.WG_EGRESS_INTERFACE ?? 'ens4',
         peers: JSON.parse(required('WG_PEERS_JSON')) as Array<{ publicKey: string; allowedAddress: string }>,
@@ -115,29 +115,38 @@ async function main(): Promise<void> {
     : startConfidentialRelay(relayOptions);
 
   const { proxyServer, attestationServer } = servers;
-  const ready = Promise.all([waitForListening(proxyServer), waitForListening(attestationServer)]);
-  for (const server of [proxyServer, attestationServer]) {
-    server.on('error', () => {
-      console.error('[relay] listener failed');
-      process.exitCode = 1;
-      void Promise.all([close(proxyServer), close(attestationServer)]);
-    });
-  }
-  await ready;
-
-  console.info(`[relay] ready; proxy :${positivePort('RELAY_PROXY_PORT', 443)}, attestation :${positivePort('RELAY_ATTESTATION_PORT', 8080)}`);
-
-  let stopping = false;
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = 'close' in servers
+      ? servers.close()
+      : Promise.all([close(proxyServer), close(attestationServer)]).then(() => undefined);
+    return shutdownPromise;
+  };
   const stop = () => {
-    if (stopping) return;
-    stopping = true;
-    const stopWireGuard = 'wireGuard' in servers ? servers.wireGuard.stop() : Promise.resolve();
-    void Promise.all([close(proxyServer), close(attestationServer), stopWireGuard]).catch(() => {
-      process.exitCode = 1;
-    });
+    void shutdown().catch(() => { process.exitCode = 1; });
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+
+  const listeners = [proxyServer, attestationServer];
+  const ready = Promise.all(listeners.map(waitForListening));
+  for (const server of listeners) {
+    server.on('error', () => {
+      console.error('[relay] listener failed');
+      process.exitCode = 1;
+      stop();
+    });
+  }
+  try {
+    await ready;
+  } catch (error) {
+    await shutdown().catch(() => { process.exitCode = 1; });
+    throw error;
+  }
+
+  console.info(`[relay] ready; proxy :${positivePort('RELAY_PROXY_PORT', 443)}, attestation :${positivePort('RELAY_ATTESTATION_PORT', 8080)}`);
+
 }
 
 main().catch(() => {

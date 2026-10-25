@@ -42,7 +42,7 @@ ENV NODE_ENV=production \
 
 EXPOSE 443/tcp 8080/tcp 51820/udp
 LABEL "tee.launch_policy.log_redirect"="debugonly"
-LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_LISTEN_PORT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON"
+LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON"
 LABEL "tee.launch_policy.allow_capabilities"="true"
 
 # The provider reads the Confidential Space launcher socket; TLS key material

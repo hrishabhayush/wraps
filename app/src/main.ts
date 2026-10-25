@@ -68,8 +68,14 @@ const ic = (k: string, size = 16, sw = 2) =>
 function flag(f: Flag, size: number) {
   const L: string[] = [];
   const bar = (c: string, pos: string, sz: string) => `linear-gradient(${c},${c}) ${pos}/${sz} no-repeat`;
+  if (f.canton) L.push(bar(f.canton, '0 0', '50% 57%'));
   if (f.h) L.push(`linear-gradient(${f.h.map((c, i, a) => `${c} ${(i * 100) / a.length}% ${((i + 1) * 100) / a.length}%`).join(',')})`);
   if (f.cross) L.push(bar(f.cross, 'center', '18% 58%'), bar(f.cross, 'center', '58% 18%'));
+  if (f.fullCross) {
+    const [edge, mid] = f.fullCross;
+    const diag = (deg: number) => `linear-gradient(${deg}deg, transparent 44%, ${edge} 44% 56%, transparent 56%)`;
+    L.push(bar(mid, 'center', '14% 100%'), bar(mid, 'center', '100% 14%'), bar(edge, 'center', '26% 100%'), bar(edge, 'center', '100% 26%'), diag(45), diag(-45));
+  }
   if (f.nordic) {
     const [a, b] = f.nordic;
     if (b) L.push(bar(b, '37.6% 0', '11% 100%'), bar(b, '0 50%', '100% 11%'));
@@ -300,7 +306,7 @@ async function connect(id: string) {
     // An empty wallet buys VPN_TOKENS first (RLUSD with a wallet connected, otherwise the mock rail).
     try {
       if (tk.count() === 0) await topUp(VPN_TOKENS);
-      spent = await spendAtRelay(VPN_TOKENS);
+      spent = await spendAtRelay(VPN_TOKENS, id);
     } catch (e) {
       s.stage = '';
       s.conn = { kind: 'off' };
@@ -353,11 +359,11 @@ async function topUp(n: number) {
 }
 
 /** Hands up to `n` kept tokens to the relay and brings the tunnel up. Unspent tokens go back to the wallet. */
-async function spendAtRelay(n: number): Promise<number> {
+async function spendAtRelay(n: number, nodeId: string): Promise<number> {
   const batch = tk.take(n);
   s.stage = 'paying'; render();
   try {
-    const r = await tauri.connectWith(batch);
+    const r = await tauri.connectWith(batch, nodeId);
     tk.record({ title: `VPN · ${node().city}`, detail: `${r.tokens} tokens = ${r.megabytes} MB`, usd: -r.tokens * USD_PER_TOKEN, at: Date.now() });
     return r.tokens;
   } catch (e) {

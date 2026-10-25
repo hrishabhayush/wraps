@@ -20,7 +20,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **INF-07** Firewall rule `wraps-allow-443` for VMs tagged `wraps`.
 
 ### Images and deploy (agent working on this)
-- [~] **INF-08** Dockerfiles for issuer and relay. Pin base images by digest, use lockfiles.
+- [x] **INF-08** Dockerfiles for issuer and relay. Pin base images by digest, use lockfiles.
 - [~] **INF-09** Build with Cloud Build, push to the registry, print the image digest. Write digests to `infra/gcp/expected.json`, which the SDK reads.
 - [~] **INF-10** `deploy.sh <issuer|relay> [--debug]`: Confidential Space VM, `tee-image-reference` pinned by digest, service account, tag `wraps`, 12-hour max run time that stops the VM, label `project=wraps`. Plus `stop.sh` and `status.sh`.
 - [~] **INF-11** First deploy with the debug image to read logs, then the production image for the demo.

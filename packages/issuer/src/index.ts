@@ -3,6 +3,8 @@ export * from './rail';
 export * from './rail-xrpl-evm';
 export * from './core';
 export * from './payout';
+export * from './payout-config';
+export * from './merchant-registry';
 export * from './server';
 export * from './client';
 export * from './tls';

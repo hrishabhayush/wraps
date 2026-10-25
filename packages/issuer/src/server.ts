@@ -7,10 +7,16 @@
 //   POST /settle   {merchantId, tokens}  mark spent, add to tab, signed running-total claim
 //   GET  /reserves                  signed "outstanding ≤ funds held"
 //   GET  /keys                      token key epochs with not-after times, signed with the claim key
-import { createServer, Server } from 'node:http';
+//   GET  /payouts?merchantId=<id>   signed payout records (amount, tx hash) for one merchant
+//   GET  /payouts/pending           admin: next payout batch and its transfers, nothing sent
+//   POST /payouts/run               admin: send one payout batch now
+// Admin routes need `authorization: Bearer <adminToken>`, or a loopback caller when no token is set.
+import { timingSafeEqual } from 'node:crypto';
+import { createServer, IncomingMessage, Server } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { IssuerCore, IssuerError } from './core';
 import { HttpError, RateLimiter, readJson, sendJson } from './http';
+import type { PayoutScheduler } from './payout';
 import { PAYMENT_HEADER, PaymentRequiredBody } from './protocol';
 
 export interface IssuerServerOptions {
@@ -20,7 +26,23 @@ export interface IssuerServerOptions {
   corsOrigins?: string[];
   /** Serve https with this key and self-signed certificate (PEM). */
   tls?: { keyPem: string; certPem: string };
+  /** Payout job, for the admin routes. */
+  payouts?: PayoutScheduler;
+  /** Bearer token for admin routes. Without it, only loopback callers are allowed. */
+  adminToken?: string;
 }
+
+function isAdmin(req: IncomingMessage, token?: string): boolean {
+  if (token) {
+    const got = Buffer.from(String(req.headers.authorization ?? ''));
+    const want = Buffer.from(`Bearer ${token}`);
+    return got.length === want.length && timingSafeEqual(got, want);
+  }
+  const ip = req.socket.remoteAddress ?? '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+const json = (v: unknown) => JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x)));
 
 export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions = {}): Server {
   const limiter = new RateLimiter(opts.attestationRateLimit ?? 60, 60_000);
@@ -88,6 +110,24 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       if (route === 'GET /keys') {
         await core.refreshTokenKey();
         return sendJson(res, 200, core.tokenKeys());
+      }
+
+      if (route === 'GET /payouts') {
+        const merchantId = url.searchParams.get('merchantId') ?? '';
+        if (!merchantId) throw new HttpError(400, 'merchantId required');
+        return sendJson(res, 200, { merchantId, payouts: core.payoutHistory(merchantId) });
+      }
+      if (route === 'GET /payouts/pending' || route === 'POST /payouts/run') {
+        const job = opts.payouts;
+        if (!job) throw new HttpError(404, 'not found');
+        if (!isAdmin(req, opts.adminToken)) throw new HttpError(403, 'admin only');
+        const rail = job.rail as { name?: string; canSend?: boolean; address?: string };
+        const info = { rail: rail.name ?? 'custom', canSend: rail.canSend ?? true, from: rail.address, caps: job.caps };
+        if (route === 'GET /payouts/pending') return sendJson(res, 200, json({ ...info, ...job.preview() }));
+        const paid = await job.runOnce().catch((e: Error) => {
+          throw new HttpError(409, e.message);
+        });
+        return sendJson(res, 200, { ...info, paid, unpaid: core.pendingPayouts() });
       }
 
       throw new HttpError(404, 'not found');

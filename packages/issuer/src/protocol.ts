@@ -82,6 +82,35 @@ export interface SignedClaim {
   signature: string;
 }
 
+/**
+ * One confirmed payout to a merchant, signed with the attested claim key. It links the merchant's
+ * claims to an on-chain transfer: `paidTotalTokens` is everything paid so far, and `claimSeq` /
+ * `claimTotalTokens` are the merchant's latest claim when the transfer confirmed.
+ */
+export interface PayoutRecord {
+  v: 1;
+  issuer: string;
+  merchantId: string;
+  amountTokens: number;
+  amountRlusd: string;
+  /** On-chain tx hash (XRPL EVM), or a mock reference. */
+  txRef: string;
+  /** Registered address the RLUSD went to, when the rail is on-chain. */
+  payTo?: string;
+  /** RLUSD contract and chain ID, when the rail is on-chain. */
+  token?: string;
+  chainId?: number;
+  paidTotalTokens: number;
+  claimSeq: number;
+  claimTotalTokens: number;
+  at: number;
+}
+
+export interface SignedPayoutRecord {
+  payout: PayoutRecord;
+  signature: string;
+}
+
 export interface ReservesStatement {
   v: 1;
   issuer: string;
@@ -128,6 +157,7 @@ export interface BlindTokenRequiredBody {
 const CLAIM_CONTEXT = 'wraps-claim-v1';
 const RESERVES_CONTEXT = 'wraps-reserves-v1';
 const TOKEN_KEYS_CONTEXT = 'wraps-token-keys-v1';
+const PAYOUT_CONTEXT = 'wraps-payout-v1';
 
 function framed(context: string, obj: unknown): Uint8Array {
   return new TextEncoder().encode(`${context}\0${JSON.stringify(obj)}`);
@@ -155,4 +185,12 @@ export function signTokenKeys(key: KeyObject, statement: TokenKeysStatement): Si
 
 export function verifyTokenKeys(signed: SignedTokenKeys, claimPublicKey: Uint8Array): boolean {
   return ed25519Verify(claimPublicKey, framed(TOKEN_KEYS_CONTEXT, signed.statement), fromB64u(signed.signature));
+}
+
+export function signPayoutRecord(key: KeyObject, payout: PayoutRecord): SignedPayoutRecord {
+  return { payout, signature: b64u(ed25519Sign(key, framed(PAYOUT_CONTEXT, payout))) };
+}
+
+export function verifyPayoutRecord(signed: SignedPayoutRecord, claimPublicKey: Uint8Array): boolean {
+  return ed25519Verify(claimPublicKey, framed(PAYOUT_CONTEXT, signed.payout), fromB64u(signed.signature));
 }

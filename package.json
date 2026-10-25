@@ -15,6 +15,8 @@
     "demo:gcp": "tsx scripts/demo-gcp.ts",
     "verify:gcp": "tsx scripts/verify-gcp.ts",
     "issuer": "tsx packages/issuer/src/cli.ts",
+    "payout:dry-run": "tsx packages/issuer/src/payout-cli.ts dry-run",
+    "payout:once": "tsx packages/issuer/src/payout-cli.ts once",
     "merchant": "tsx packages/merchant/src/cli.ts",
     "agent": "tsx packages/agent/src/cli.ts",
     "spybot": "tsx packages/spybot/src/cli.ts",

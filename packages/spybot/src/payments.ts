@@ -45,8 +45,9 @@ function readAmount(a: unknown): Amount | null {
 
 /**
  * Turn one `account_tx` entry into an X402Payment, or null if it is not a
- * successful Payment carrying an x402 facilitator memo. Works with
- * api_version 1 (`tx`) and 2 (`tx_json` + `hash`).
+ * successful Payment carrying an x402 facilitator memo, or the t54 v2
+ * source tag together with an invoice ID. Works with api_version 1 (`tx`)
+ * and 2 (`tx_json` + `hash`).
  */
 export function parseX402Payment(entry: any): X402Payment | null {
   const tx = entry?.tx ?? entry?.tx_json;
@@ -69,6 +70,12 @@ export function parseX402Payment(entry: any): X402Payment | null {
     } else if (data) {
       otherMemos.push(data);
     }
+  }
+  // The current t54 x402-xrpl buyer signs this tag by default. In v2 the
+  // invoice ID binds the Payment to a quoted request; the tag alone is not
+  // enough to classify a transaction as x402.
+  if (facilitator === null && tx.SourceTag === T54_SOURCE_TAG && typeof tx.InvoiceID === "string") {
+    facilitator = "t54-xrpl-x402";
   }
   if (facilitator === null) return null;
 

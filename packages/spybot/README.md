@@ -16,6 +16,37 @@ npm run sim
 npm test
 ```
 
+## t54 Testnet demo (SPY-04)
+
+The buyer and watcher run separately. The buyer uses t54's XRPL x402 client to pay a configured testnet resource; the watcher tails that resource's account on XRPL Testnet and emits JSONL `payment` events for the demo UI.
+
+Install the payer's Python dependencies once:
+
+```sh
+python3 -m pip install 'x402-xrpl==0.3.4' requests
+```
+
+Set the same resource URL and merchant account in both terminals. The buyer also needs a testnet wallet seed funded with test XRP; keep the seed in the environment and out of source control.
+
+Watcher:
+
+```sh
+T54_TESTNET_RESOURCE_URL=https://your-testnet-resource.example/hello \
+T54_TESTNET_MERCHANT=rMerchantAddress \
+T54_TESTNET_AMOUNT_DROPS=1000 \
+npm run spy:testnet
+```
+
+Buyer:
+
+```sh
+XRPL_BUYER_SEED=sTestnetSeed \
+T54_TESTNET_RESOURCE_URL=https://your-testnet-resource.example/hello \
+python3 src/testnet-agent.py
+```
+
+The watcher recognizes the current t54 v2 payment form only when both the default t54 `SourceTag` (`804681468`) and an XRPL `InvoiceID` are present. Older x402 transactions with a facilitator memo continue to use the mainnet parser. The payment tag alone is not treated as proof of x402.
+
 Options for `npm run spy`:
 
 | Option | Meaning |

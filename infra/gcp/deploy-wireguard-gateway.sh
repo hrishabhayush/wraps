@@ -34,7 +34,7 @@ if [ "${DRY_RUN}" = 0 ]; then
   node -e '
     const rule=JSON.parse(process.argv[1]);
     const allowed=rule.allowed||[];
-    if(rule.direction!=="INGRESS" || rule.priority!==800 ||
+    if(rule.direction!=="INGRESS" || rule.disabled || rule.priority!==800 ||
        (rule.sourceRanges||[]).length!==1 || rule.sourceRanges[0]!=="0.0.0.0/0" ||
        (rule.targetTags||[]).length!==1 || rule.targetTags[0]!=="wraps-wg-gateway" ||
        !String(rule.network||"").endsWith("/networks/default") ||
@@ -50,7 +50,7 @@ if [ "${DRY_RUN}" = 0 ]; then
   node -e '
     const rule=JSON.parse(process.argv[1]);
     const denied=rule.denied||[];
-    if(rule.direction!=="INGRESS" || rule.priority!==900 ||
+    if(rule.direction!=="INGRESS" || rule.disabled || rule.priority!==900 ||
        (rule.sourceRanges||[]).length!==1 || rule.sourceRanges[0]!=="0.0.0.0/0" ||
        (rule.targetTags||[]).length!==1 || rule.targetTags[0]!=="wraps-wg-gateway" ||
        !String(rule.network||"").endsWith("/networks/default") ||

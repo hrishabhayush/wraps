@@ -15,6 +15,7 @@ fi
 [ -n "${NAMES}" ] || { echo "No running wraps VMs."; exit 0; }
 for n in ${NAMES}; do
   echo "Stopping ${n}..."
-  gc compute instances stop "${n}" --zone "${GCP_ZONE}" --quiet
+  # gcloud can time out reading the reply after the stop went through; the list below shows the truth.
+  gc compute instances stop "${n}" --zone "${GCP_ZONE}" --quiet || echo "(gcloud did not confirm the stop of ${n}; see the list below)"
 done
 gc compute instances list --filter='labels.project=wraps' --format='table(name,status,labels.mode)'

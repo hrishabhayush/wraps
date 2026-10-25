@@ -28,6 +28,8 @@ if gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(
 fi
 
 echo "Creating ${NAME} (${FAMILY}, ${MACHINE_TYPE}, AMD SEV, stops after ${MAX_RUN_DURATION})..."
+# gcloud sometimes times out reading the reply even though the VM was created, so on
+# failure check whether the instance exists before giving up.
 gc compute instances create "${NAME}" \
   --zone="${GCP_ZONE}" \
   --machine-type="${MACHINE_TYPE}" \
@@ -42,7 +44,9 @@ gc compute instances create "${NAME}" \
   --tags=wraps \
   --labels="project=wraps,role=${ROLE},mode=${MODE}" \
   --max-run-duration="${MAX_RUN_DURATION}" \
-  --instance-termination-action=STOP
+  --instance-termination-action=STOP \
+|| gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null \
+|| die "could not create ${NAME}"
 
 IP="$(gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
 mkdir -p "${STATE_DIR}"

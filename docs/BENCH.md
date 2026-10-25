@@ -18,10 +18,10 @@ Latest measured run (`npm run bench -- --samples 50 --warmup 5 --trials 200 --se
 
 | Metric | Local mock flow |
 |---|---:|
-| p50 | 2.09 ms |
-| p95 | 4.09 ms |
-| min | 1.84 ms |
-| max | 4.57 ms |
+| p50 | 1.99 ms |
+| p95 | 3.80 ms |
+| min | 1.75 ms |
+| max | 4.46 ms |
 
 Earlier run (2026-10-24): p50 1.79 ms, p95 3.52 ms, min 1.37 ms, max 3.98 ms. Both are single local measurements; scheduling and machine load affect latency. The stable privacy results below are from the seeded 200-trial simulation, not observations from live network users.
 

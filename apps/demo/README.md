@@ -17,6 +17,14 @@ The SDK handles the merchant's single-use quotes (`x-blindtoken-quote`) and
 checks the issuer's signed token key epochs, so the right pane runs the same
 flow as `npm run demo:core`.
 
+## Tamper test
+
+Select **Tamper test** to point the agent at a second mock issuer whose build
+identity has a different PCR0. The SDK refuses it with `PCR_MISMATCH` before any
+top-up or purchase, and the pane shows `tamper-refused`. The merchant keeps
+trusting the original issuer. Any other failure, such as an issuer that does not
+start, shows as `error`, never as `tamper-refused`.
+
 ## Control endpoints
 
 `/api/start` and `/api/stop` start and stop the run. The server binds to

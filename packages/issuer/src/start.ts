@@ -2,7 +2,7 @@ import type { Server } from 'node:http';
 import { AttestationProvider, ConfidentialSpaceProvider, MockAttestationProvider } from '@wraps/attestation';
 import { IssuerCore } from './core';
 import { listenUrl } from './http';
-import { MockPayoutRail, PayoutCaps, PayoutScheduler } from './payout';
+import { MockPayoutRail, PayoutCaps, PayoutRail, PayoutScheduler } from './payout';
 import { MockTopUpRail, TopUpRail, VoucherRedeemedEvent } from './rail';
 import { createIssuerServer } from './server';
 import { createTlsIdentity } from './tls';
@@ -29,6 +29,10 @@ export interface StartIssuerOptions {
   corsOrigins?: string[];
   /** SR6: caps on one payout batch. */
   payoutCaps?: PayoutCaps;
+  /** Defaults to the mock payout rail. See payoutConfigFromEnv for PAYOUT_RAIL=xrpl-evm. */
+  payoutRail?: PayoutRail;
+  /** Bearer token for the payout admin routes. Without it they answer loopback callers only. */
+  adminToken?: string;
   /** SR3: token key lifetime and the least life a newly signed token gets. */
   tokenKeyLifetimeMs?: number;
   minTokenLifetimeMs?: number;
@@ -67,9 +71,9 @@ export async function startIssuer(opts: StartIssuerOptions = {}): Promise<Runnin
     minTokenLifetimeMs: opts.minTokenLifetimeMs,
     now: opts.now,
   });
-  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins });
+  const payouts = new PayoutScheduler(core, opts.payoutRail ?? new MockPayoutRail(log), opts.payoutIntervalMs ?? 30_000, opts.payoutCaps, log);
+  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins, payouts, adminToken: opts.adminToken });
   await new Promise<void>((r) => server.listen(opts.port ?? 0, opts.host ?? '127.0.0.1', r));
-  const payouts = new PayoutScheduler(core, new MockPayoutRail(log), opts.payoutIntervalMs ?? 30_000, opts.payoutCaps);
   payouts.start();
   return {
     core,

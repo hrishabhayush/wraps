@@ -18,11 +18,13 @@ import {
   AttestationResponse,
   PaymentRequirement,
   SignedClaim,
+  SignedPayoutRecord,
   SignedReserves,
   SignedTokenKeys,
   TokenKeyEpoch,
   VerifyResult,
   signClaim,
+  signPayoutRecord,
   signReserves,
   signTokenKeys,
   tokensToRlusd,
@@ -87,6 +89,15 @@ export interface PayoutLine {
   amountRlusd: string;
 }
 
+/** A payout line once its transfer is confirmed. */
+export interface PaidLine extends PayoutLine {
+  /** On-chain tx hash, or a mock reference. */
+  txRef?: string;
+  payTo?: string;
+  token?: string;
+  chainId?: number;
+}
+
 export const DEFAULT_TOKEN_KEY_LIFETIME_MS = 30 * 24 * 3600_000;
 
 export class IssuerCore {
@@ -99,6 +110,7 @@ export class IssuerCore {
   private readonly spent = new Set<string>();
   private readonly tabs = new Map<string, Tab>();
   private readonly quotes = new Map<string, Quote>();
+  private readonly payouts = new Map<string, SignedPayoutRecord[]>();
   private fundsHeld = 0;
   private unspentIssued = 0;
   private readonly log: (msg: string) => void;
@@ -161,9 +173,9 @@ export class IssuerCore {
    * redeemed, so a stale client loses nothing. RFC 9578 TokenRequest for type 0x0002 is
    * token_type (2 bytes) || truncated_token_key_id (1 byte) || blinded_msg.
    */
-  private checkSigningKey(requests: string[]) {
-    if (this.now() > this.current.notAfter) throw new IssuerError(409, 'token key expired; fetch /attestation and blind again');
-    const truncated = tokenKeyId(this.current.keys.publicKeyBytes)[31];
+  private checkSigningKey(requests: string[], epoch: KeyEpoch = this.current) {
+    if (this.now() > epoch.notAfter) throw new IssuerError(409, 'token key expired; fetch /attestation and blind again');
+    const truncated = tokenKeyId(epoch.keys.publicKeyBytes)[31];
     for (const r of requests) {
       const bytes = typeof r === 'string' ? fromB64u(r) : new Uint8Array();
       if (bytes.length < 3 || bytes[2] !== truncated) {
@@ -172,14 +184,14 @@ export class IssuerCore {
     }
   }
 
-  private epochView(e: KeyEpoch): TokenKeyEpoch {
-    return { keyId: e.keyId, publicKey: b64u(e.keys.publicKeyBytes), notBefore: e.notBefore, notAfter: e.notAfter, current: e === this.current };
+  private epochView(e: KeyEpoch, current: KeyEpoch = this.current): TokenKeyEpoch {
+    return { keyId: e.keyId, publicKey: b64u(e.keys.publicKeyBytes), notBefore: e.notBefore, notAfter: e.notAfter, current: e === current };
   }
 
   /** Every key whose tokens are still accepted, signed with the attested claim key. */
-  tokenKeys(): SignedTokenKeys {
+  tokenKeys(current: KeyEpoch = this.current): SignedTokenKeys {
     const now = this.now();
-    const keys = [...this.epochs.values()].filter((e) => e === this.current || now <= e.notAfter).map((e) => this.epochView(e));
+    const keys = [...this.epochs.values()].filter((e) => e === current || now <= e.notAfter).map((e) => this.epochView(e, current));
     return signTokenKeys(this.claimKeys.privateKey, { v: 1, issuer: this.name, keys, at: now });
   }
 
@@ -197,7 +209,12 @@ export class IssuerCore {
   async attestation(nonce: Uint8Array): Promise<AttestationResponse> {
     if (nonce.length < 16 || nonce.length > 64) throw new IssuerError(400, 'nonce must be 16 to 64 bytes');
     await this.refreshTokenKey();
-    const keys = { ...this.publicKeys };
+    // Snapshot one epoch and build every field from it, before the await. A rotation while the
+    // provider attests must not mix keys from two epochs in one response.
+    const epoch = this.current;
+    const keys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array } = { token: epoch.keys.publicKeyBytes, claim: this.publicKeys.claim };
+    if (this.publicKeys.tls) keys.tls = this.publicKeys.tls;
+    const tokenKeys = this.tokenKeys(epoch);
     const attestation = await this.opts.provider.attest(nonce, hashPublicKeys(keys));
     return {
       format: this.opts.provider.format,
@@ -208,9 +225,9 @@ export class IssuerCore {
         claim: b64u(keys.claim),
         ...(keys.tls ? { tls: b64u(keys.tls) } : {}),
       },
-      tokenKeyId: this.current.keyId,
-      tokenKeyNotAfter: this.current.notAfter,
-      tokenKeys: this.tokenKeys(),
+      tokenKeyId: epoch.keyId,
+      tokenKeyNotAfter: epoch.notAfter,
+      tokenKeys,
     };
   }
 
@@ -237,10 +254,15 @@ export class IssuerCore {
     return requirement;
   }
 
-  /** /issue with a payment attached. Redeems the payment, then signs. */
+  /**
+   * /issue with a payment attached. Signs first with the epoch captured here, then redeems, then
+   * releases the signatures. So a key rotation during the await cannot strand a paid request, and
+   * a request that cannot be signed never has its payment redeemed.
+   */
   async issuePaid(requests: string[], paymentHeader: string): Promise<string[]> {
     this.checkBatch(requests);
-    this.checkSigningKey(requests);
+    const epoch = this.current;
+    this.checkSigningKey(requests, epoch);
     let quoteId: string | undefined;
     try {
       quoteId = JSON.parse(Buffer.from(paymentHeader, 'base64url').toString('utf8')).quoteId;
@@ -254,6 +276,14 @@ export class IssuerCore {
       throw new IssuerError(402, `paid for ${q.requirement.tokens} tokens, asked for ${requests.length}: refusing to issue beyond funds`);
     }
     q.used = true;
+    let signed: string[];
+    try {
+      // Blind signatures are held back until the payment is redeemed. Nothing is released yet.
+      signed = (await epoch.issuer.issue(requests.map(fromB64u))).map(b64u);
+    } catch (e) {
+      q.used = false;
+      throw new IssuerError(400, `bad token request: ${(e as Error).message}`);
+    }
     let redeemed;
     try {
       redeemed = await this.rail.redeem(paymentHeader, q.requirement);
@@ -261,22 +291,28 @@ export class IssuerCore {
       q.used = false;
       throw new IssuerError(402, `payment refused: ${(e as Error).message}`);
     }
+    // No await from here: account for the funds and the tokens together.
     this.fundsHeld += redeemed.amountTokens;
+    this.unspentIssued += requests.length;
+    if (this.outstanding() > this.fundsHeld) {
+      this.log(`warning: outstanding ${this.outstanding()} is above funds held ${this.fundsHeld} after a paid issue`);
+    }
     this.log(`top-up redeemed: ${tokensToRlusd(redeemed.amountTokens)} RLUSD (${redeemed.txRef.slice(0, 18)}…)`);
-    return this.signBlinded(requests);
+    return signed;
   }
 
   /** Signs blinded requests. Refuses if it would push outstanding above funds held. */
   async signBlinded(requests: string[]): Promise<string[]> {
     this.checkBatch(requests);
-    this.checkSigningKey(requests);
+    const epoch = this.current;
+    this.checkSigningKey(requests, epoch);
     if (this.outstanding() + requests.length > this.fundsHeld) {
       throw new IssuerError(402, `refusing to issue beyond funds held (outstanding ${this.outstanding()}, funds ${this.fundsHeld}, asked ${requests.length})`);
     }
     // Reserve before the await so concurrent calls can't both pass the check.
     this.unspentIssued += requests.length;
     try {
-      const out = await this.current.issuer.issue(requests.map(fromB64u));
+      const out = await epoch.issuer.issue(requests.map(fromB64u));
       return out.map(b64u);
     } catch (e) {
       this.unspentIssued -= requests.length;
@@ -400,12 +436,42 @@ export class IssuerCore {
     return out;
   }
 
-  markPaid(lines: PayoutLine[]) {
+  /**
+   * Call only after the transfer is confirmed. With a txRef, a signed payout record is added to
+   * the merchant's history (GET /payouts), so the merchant can match claims to on-chain transfers.
+   */
+  markPaid(lines: PaidLine[]) {
     for (const l of lines) {
       const t = this.tabs.get(l.merchantId);
       if (!t) continue;
+      if (!Number.isInteger(l.amountTokens) || l.amountTokens <= 0) continue;
       t.paid += l.amountTokens;
       this.fundsHeld -= l.amountTokens;
+      if (l.txRef === undefined) continue;
+      const history = this.payouts.get(l.merchantId) ?? [];
+      history.push(
+        signPayoutRecord(this.claimKeys.privateKey, {
+          v: 1,
+          issuer: this.name,
+          merchantId: l.merchantId,
+          amountTokens: l.amountTokens,
+          amountRlusd: tokensToRlusd(l.amountTokens),
+          txRef: l.txRef,
+          ...(l.payTo ? { payTo: l.payTo } : {}),
+          ...(l.token ? { token: l.token } : {}),
+          ...(l.chainId !== undefined ? { chainId: l.chainId } : {}),
+          paidTotalTokens: t.paid,
+          claimSeq: t.seq,
+          claimTotalTokens: t.earned,
+          at: this.now(),
+        }),
+      );
+      this.payouts.set(l.merchantId, history);
     }
+  }
+
+  /** Signed payout records for one merchant, oldest first. */
+  payoutHistory(merchantId: string): SignedPayoutRecord[] {
+    return [...(this.payouts.get(merchantId) ?? [])];
   }
 }

@@ -5,5 +5,6 @@ export * from './core';
 export * from './payout';
 export * from './server';
 export * from './client';
+export * from './tls';
 export * from './start';
 export { readJson, sendJson, HttpError, RateLimiter, listenUrl } from './http';

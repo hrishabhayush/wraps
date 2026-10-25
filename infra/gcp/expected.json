@@ -1,0 +1,15 @@
+{
+  "audience": "https://wraps.invalid/issuer",
+  "hwModels": [
+    "GCP_AMD_SEV"
+  ],
+  "requiredSupportAttribute": "STABLE",
+  "roles": {
+    "issuer": {
+      "imageDigest": "sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea",
+      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea",
+      "tag": "1df3bee",
+      "builtAt": "2026-10-25T01:33:08.569Z"
+    }
+  }
+}

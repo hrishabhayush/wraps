@@ -48,5 +48,6 @@ export class RateLimiter {
 export function listenUrl(server: import('node:http').Server): string {
   const a = server.address();
   if (!a || typeof a === 'string') throw new Error('server not listening on TCP');
-  return `http://127.0.0.1:${a.port}`;
+  const scheme = 'setSecureContext' in server ? 'https' : 'http'; // https.Server has setSecureContext
+  return `${scheme}://127.0.0.1:${a.port}`;
 }

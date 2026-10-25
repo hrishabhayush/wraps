@@ -1,13 +1,24 @@
 import type { Server } from 'node:http';
-import { MockAttestationProvider } from '@wraps/attestation';
+import { AttestationProvider, ConfidentialSpaceProvider, MockAttestationProvider } from '@wraps/attestation';
 import { IssuerCore } from './core';
 import { listenUrl } from './http';
 import { MockPayoutRail, PayoutScheduler } from './payout';
 import { MockTopUpRail, TopUpRail, VoucherRedeemedEvent } from './rail';
 import { createIssuerServer } from './server';
+import { createTlsIdentity } from './tls';
+
+export type AttestationMode = 'mock' | 'confidential-space';
 
 export interface StartIssuerOptions {
   port?: number;
+  /** Bind address. Default 127.0.0.1. The container uses 0.0.0.0. */
+  host?: string;
+  /** mock (default) or confidential-space (inside a Confidential Space VM only). */
+  attestation?: AttestationMode;
+  /** Custom audience for Confidential Space tokens. */
+  audience?: string;
+  /** Serve https with a key made here at start-up. The key joins the attestation. */
+  tls?: boolean;
   /** Mock build name. 'issuer' matches the expected PCRs; anything else simulates a modified issuer. */
   buildName?: string;
   debugMode?: boolean;
@@ -26,20 +37,23 @@ export interface RunningIssuer {
   close(): Promise<void>;
 }
 
-/** Starts an issuer with the mock attestation, the given (default mock AP4M) rail and mock payouts. */
+function provider(opts: StartIssuerOptions): AttestationProvider {
+  if (opts.attestation === 'confidential-space') return new ConfidentialSpaceProvider({ audience: opts.audience });
+  return new MockAttestationProvider({ buildName: opts.buildName ?? 'issuer', debug: opts.debugMode });
+}
+
+/** Starts an issuer with the chosen attestation, the mock AP4M rail and mock payouts. */
 export async function startIssuer(opts: StartIssuerOptions = {}): Promise<RunningIssuer> {
   const log = opts.log ?? ((m: string) => console.log(`[issuer] ${m}`));
   const rail = opts.rail ?? new MockTopUpRail();
   rail.on('VoucherRedeemed', (e: VoucherRedeemedEvent) =>
     log(`VoucherRedeemed (mock) tx=${e.txHash.slice(0, 18)}… ${e.amountRlusd} RLUSD → ${e.payee}`),
   );
-  const core = await IssuerCore.create({
-    provider: new MockAttestationProvider({ buildName: opts.buildName ?? 'issuer', debug: opts.debugMode }),
-    rail,
-    log,
-  });
-  const server = createIssuerServer(core, { corsOrigins: opts.corsOrigins });
-  await new Promise<void>((r) => server.listen(opts.port ?? 0, '127.0.0.1', r));
+  // All keys are made here, in memory, at start-up. They die with the process.
+  const tls = opts.tls ? await createTlsIdentity() : undefined;
+  const core = await IssuerCore.create({ provider: provider(opts), rail, log, tlsPublicKey: tls?.spki });
+  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins });
+  await new Promise<void>((r) => server.listen(opts.port ?? 0, opts.host ?? '127.0.0.1', r));
   const payouts = new PayoutScheduler(core, new MockPayoutRail(log), opts.payoutIntervalMs ?? 30_000);
   payouts.start();
   return {

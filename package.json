@@ -12,6 +12,8 @@
   "scripts": {
     "demo": "tsx apps/demo/src/server.ts",
     "demo:core": "tsx scripts/demo-core.ts",
+    "demo:gcp": "tsx scripts/demo-gcp.ts",
+    "verify:gcp": "tsx scripts/verify-gcp.ts",
     "issuer": "tsx packages/issuer/src/cli.ts",
     "merchant": "tsx packages/merchant/src/cli.ts",
     "agent": "tsx packages/agent/src/cli.ts",

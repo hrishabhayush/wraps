@@ -1,0 +1,15 @@
+# Files Cloud Build does not upload. The build needs package.json,
+# package-lock.json, tsconfig.json, packages/ and infra/gcp/*.Dockerfile.
+.git
+.gitignore
+.claude
+**/node_modules
+app/
+apps/
+docs/
+scripts/
+infra/gcp/.state/
+.env
+*.key
+*.pem
+*.json.key

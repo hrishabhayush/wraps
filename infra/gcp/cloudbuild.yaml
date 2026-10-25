@@ -1,0 +1,14 @@
+# Cloud Build config. Run through build.sh, which sets the substitutions and
+# writes the resulting digest to expected.json.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'infra/gcp/${_ROLE}.Dockerfile', '-t', '${_IMAGE}:${_TAG}', '.']
+images:
+  - '${_IMAGE}:${_TAG}'
+substitutions:
+  _ROLE: issuer
+  _IMAGE: us-central1-docker.pkg.dev/wraps-hack/wraps/issuer
+  _TAG: latest
+options:
+  logging: CLOUD_LOGGING_ONLY
+timeout: 900s

@@ -4,7 +4,7 @@ import '@fontsource/geist-mono/500.css';
 import './styles.css';
 import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
-import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
+import { MERCHANT_PAYOUT, MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
 import * as tk from './tokens.ts';
 import { tick, tokensFor, clock, USD_PER_TOKEN, type Meter } from './meter.ts';
 import * as wc from './wallet.ts';
@@ -218,6 +218,7 @@ function wallet() {
         <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}</span></div>`)
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
+    ${inTauri ? `<button class="note row gap6 merchant" data-act="openTx" data-arg="${MERCHANT_PAYOUT}">${ic('wallet', 12)}<span>Merchants are paid in RLUSD at <span class="mono">${short(MERCHANT_PAYOUT)}</span> ↗</span></button>` : ''}
   </div>`;
 }
 

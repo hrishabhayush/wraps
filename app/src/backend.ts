@@ -20,6 +20,9 @@ export type Attestation =
   | { ok: true; tee: 'tdx' | 'sev' | 'sev-snp'; build: string; checkedAt: number }
   | { ok: false; reason: string; checkedAt: number };
 
+/** Where the issuer pays merchants (VPN relays and the demo API). Must match MERCHANT_PAYOUT_ADDRESSES in infra/gcp/issuer.Dockerfile. */
+export const MERCHANT_PAYOUT = '0x34A7142038CDd6946ecc8a231e49c45E62A7F562';
+
 export type Activity = { title: string; detail: string; usd: number; at: number; tx?: string };
 
 export interface Backend {

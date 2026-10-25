@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 
 export const WIREGUARD_BYTES_PER_TOKEN = 10_000_000;
 const TABLE = 'wraps_wg';
+export const WIREGUARD_BLOCKED_IPV4_DESTINATIONS = [
+  '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16',
+  '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24', '192.168.0.0/16', '198.18.0.0/15',
+  '198.51.100.0/24', '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4',
+] as const;
 
 export interface WireGuardQuotaController {
   enable(publicKey: string, address: string): Promise<void>;
@@ -19,6 +24,7 @@ export async function createWireGuardQuotaController(
       `add table inet ${TABLE}`,
       `add chain inet ${TABLE} forward { type filter hook forward priority -10; policy accept; }`,
       `add chain inet ${TABLE} peers`,
+      `add rule inet ${TABLE} forward iifname "wg0" ip daddr { ${WIREGUARD_BLOCKED_IPV4_DESTINATIONS.join(', ')} } drop`,
       `add rule inet ${TABLE} forward iifname "wg0" jump peers`,
       `add rule inet ${TABLE} forward oifname "wg0" jump peers`,
       `add rule inet ${TABLE} peers iifname "wg0" drop`,
@@ -42,7 +48,7 @@ export async function createWireGuardQuotaController(
       names.set(publicKey, name);
     },
     async usedBytes() {
-      const listing = await run('nft', ['list', 'quotas', 'inet', TABLE]);
+      const listing = await run('nft', ['list', 'quotas', 'table', 'inet', TABLE]);
       const result = new Map<string, number>();
       for (const [publicKey, name] of names) {
         const match = new RegExp(`quota\\s+${name}\\s+\\{[^}]*?used\\s+(\\d+)\\s+bytes`, 's').exec(listing);

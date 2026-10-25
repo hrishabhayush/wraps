@@ -104,9 +104,15 @@ describe('WireGuard nftables quotas', () => {
       if (args[0] === 'list') return `table inet wraps_wg { quota ${quotaName} { until 10000000 bytes used 10000000 bytes } }`;
       return '';
     });
+    const setup = calls[0].input ?? '';
+    const blockedDestinations = setup.indexOf('iifname "wg0" ip daddr { 0.0.0.0/8, 10.0.0.0/8');
+    const quotaHook = setup.indexOf('iifname "wg0" jump peers');
+    expect(blockedDestinations).toBeGreaterThanOrEqual(0);
+    expect(blockedDestinations).toBeLessThan(quotaHook);
     await quotas.enable(peerKey, '10.77.0.2');
     expect(calls.some((call) => call.args[0] === '-f' && call.input?.includes('quota name'))).toBe(true);
     expect(await quotas.usedBytes()).toEqual(new Map([[peerKey, WIREGUARD_BYTES_PER_TOKEN]]));
+    expect(calls.some((call) => call.args.join(' ') === 'list quotas table inet wraps_wg')).toBe(true);
     await quotas.reset(peerKey);
     await quotas.close();
     expect(calls.some((call) => call.args.join(' ') === 'reset quota inet wraps_wg ' + quotaName)).toBe(true);

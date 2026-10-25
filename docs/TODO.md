@@ -32,6 +32,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ### Relay networking
 - [~] **INF-27** Configure WireGuard in the Confidential Space relay runtime (PR #33 merged; depends on RLY-04 in #32 and #38). The live relay currently exits during startup; confirm kernel support, capabilities, nftables and peer traffic.
+- [~] **INF-28** Pin the relay image and deploy WireGuard with corrected Confidential Space metadata (draft PR #40; depends on merged RLY-04 #38). The live startup currently exits; diagnose the failure and validate authorized-peer traffic.
 
 ### Keys and secrets
 - [ ] **INF-15** Wallets (three different ones): agent wallet, funding wallet, issuer payout address. Private keys in a local `.env` that is never committed, or Google Secret Manager.

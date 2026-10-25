@@ -71,7 +71,7 @@ describe('HTTPS CONNECT relay', () => {
     const relayAddress = server.address();
     if (!relayAddress || typeof relayAddress === 'string') throw new Error('relay did not bind a TCP port');
 
-    const clientHello = Buffer.from([0x16, 0x03, 0x01, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00]);
+    const clientHello = validClientHello();
     const echoed = await new Promise<Buffer>((resolve, reject) => {
       const req = request({ host: '127.0.0.1', port: relayAddress.port, method: 'CONNECT', path: 'example.com:443' });
       req.on('connect', (res, socket) => {
@@ -119,7 +119,55 @@ describe('HTTPS CONNECT relay', () => {
     });
     expect(upstreamReceivedData).toBe(false);
   });
+
+  it('rejects a forged short TLS header before forwarding any data', async () => {
+    let upstreamReceivedData = false;
+    upstreamServer = createTcpServer((socket) => socket.on('data', () => { upstreamReceivedData = true; }));
+    upstreamServer.listen(0, '127.0.0.1');
+    await once(upstreamServer, 'listening');
+    const upstreamAddress = upstreamServer.address();
+    if (!upstreamAddress || typeof upstreamAddress === 'string') throw new Error('upstream did not bind a TCP port');
+    server = createRelayServer({}, {
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+      connect: () => createConnection({ host: '127.0.0.1', port: upstreamAddress.port }),
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('relay did not bind a TCP port');
+    await new Promise<void>((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port: address.port, method: 'CONNECT', path: 'example.com:443' });
+      req.on('connect', (_res, socket) => {
+        socket.once('close', resolve);
+        socket.write(Buffer.from([0x16, 0x03, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00]));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(upstreamReceivedData).toBe(false);
+  });
+
+  it('rejects IPv6 documentation and transition ranges', async () => {
+    await startDefaultRelay();
+    expect(await connectStatus(port, '[2001:db8::1]:443')).toBe(403);
+    expect(await connectStatus(port, '[3fff::1]:443')).toBe(403);
+    expect(await connectStatus(port, '[2002::1]:443')).toBe(403);
+  });
 });
+
+function validClientHello(): Buffer {
+  const body = Buffer.concat([
+    Buffer.from([0x03, 0x03]), Buffer.alloc(32),
+    Buffer.from([0x00, 0x00, 0x02, 0x13, 0x01, 0x01, 0x00]),
+  ]);
+  const handshake = Buffer.alloc(4);
+  handshake[0] = 0x01;
+  handshake.writeUIntBE(body.length, 1, 3);
+  const record = Buffer.alloc(5);
+  record[0] = 0x16; record[1] = 0x03; record[2] = 0x01;
+  record.writeUInt16BE(handshake.length + body.length, 3);
+  return Buffer.concat([record, handshake, body]);
+}
 
 function connectStatus(proxyPort: number, authority: string): Promise<number> {
   return new Promise((resolve, reject) => {

@@ -5,6 +5,8 @@ import { isIP, createConnection, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 const MAX_HEADER_SIZE = 16 * 1024;
+const MAX_CLIENT_HELLO_SIZE = 64 * 1024;
+const MAX_TLS_RECORD_SIZE = 18_432;
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 
 export interface RelayServerOptions {
@@ -150,10 +152,10 @@ async function handleConnect(
 
 /** Buffer and validate the first TLS record before forwarding any tunnel data. */
 function readTLSClientHello(client: Duplex, head: Buffer, timeoutMs: number): Promise<Buffer> {
-  if (head.length >= 6) {
-    return isTLSClientHello(head.subarray(0, 6))
-      ? Promise.resolve(head)
-      : Promise.reject(new Error('CONNECT tunnel did not start with a TLS ClientHello'));
+  const initial = inspectClientHello(head);
+  if (initial === 'valid') return Promise.resolve(head);
+  if (initial === 'invalid' || head.length > MAX_CLIENT_HELLO_SIZE) {
+    return Promise.reject(new Error('CONNECT tunnel did not start with a valid TLS ClientHello'));
   }
 
   return new Promise((resolve, reject) => {
@@ -173,12 +175,17 @@ function readTLSClientHello(client: Duplex, head: Buffer, timeoutMs: number): Pr
     const onData = (chunk: Buffer) => {
       chunks.push(chunk);
       length += chunk.length;
-      if (length < 6) return;
+      if (length > MAX_CLIENT_HELLO_SIZE) {
+        fail(new Error('TLS ClientHello exceeds the relay limit'));
+        return;
+      }
+      const prefix = Buffer.concat(chunks, length);
+      const state = inspectClientHello(prefix);
+      if (state === 'incomplete') return;
       cleanup();
       client.pause();
-      const prefix = Buffer.concat(chunks, length);
-      if (!isTLSClientHello(prefix.subarray(0, 6))) {
-        reject(new Error('CONNECT tunnel did not start with a TLS ClientHello'));
+      if (state === 'invalid') {
+        reject(new Error('CONNECT tunnel did not start with a valid TLS ClientHello'));
         return;
       }
       resolve(prefix);
@@ -194,11 +201,54 @@ function readTLSClientHello(client: Duplex, head: Buffer, timeoutMs: number): Pr
   });
 }
 
-function isTLSClientHello(prefix: Buffer): boolean {
-  if (prefix.length < 6 || prefix[0] !== 0x16 || prefix[1] !== 0x03) return false;
-  if (prefix[2] < 0x01 || prefix[2] > 0x04 || prefix[5] !== 0x01) return false;
-  const recordLength = (prefix[3] << 8) | prefix[4];
-  return recordLength > 0 && recordLength <= 18_432;
+function inspectClientHello(wire: Buffer): 'incomplete' | 'invalid' | 'valid' {
+  let offset = 0;
+  let handshake = Buffer.alloc(0);
+  while (offset < wire.length) {
+    const available = wire.length - offset;
+    if (wire[offset] !== 0x16) return 'invalid';
+    if (available >= 2 && wire[offset + 1] !== 0x03) return 'invalid';
+    if (available >= 3 && (wire[offset + 2] < 0x01 || wire[offset + 2] > 0x04)) return 'invalid';
+    if (available < 5) return 'incomplete';
+    const recordLength = wire.readUInt16BE(offset + 3);
+    if (recordLength === 0 || recordLength > MAX_TLS_RECORD_SIZE) return 'invalid';
+    if (wire.length - offset < 5 + recordLength) return 'incomplete';
+    handshake = Buffer.concat([handshake, wire.subarray(offset + 5, offset + 5 + recordLength)]);
+    if (handshake.length > MAX_CLIENT_HELLO_SIZE || (handshake.length > 0 && handshake[0] !== 0x01)) return 'invalid';
+    if (handshake.length >= 4) {
+      const bodyLength = (handshake[1] << 16) | (handshake[2] << 8) | handshake[3];
+      if (bodyLength < 41 || bodyLength > MAX_CLIENT_HELLO_SIZE) return 'invalid';
+      if (handshake.length >= 4 + bodyLength) return validateClientHelloBody(handshake.subarray(4, 4 + bodyLength)) ? 'valid' : 'invalid';
+    }
+    offset += 5 + recordLength;
+  }
+  return 'incomplete';
+}
+
+function validateClientHelloBody(body: Buffer): boolean {
+  let offset = 34; // legacy_version and random
+  if (body.length < offset + 1) return false;
+  const sessionIdLength = body[offset++];
+  if (sessionIdLength > 32 || offset + sessionIdLength + 2 > body.length) return false;
+  offset += sessionIdLength;
+  const cipherLength = body.readUInt16BE(offset); offset += 2;
+  if (cipherLength < 2 || cipherLength % 2 !== 0 || offset + cipherLength + 1 > body.length) return false;
+  offset += cipherLength;
+  const compressionLength = body[offset++];
+  if (compressionLength < 1 || offset + compressionLength > body.length) return false;
+  offset += compressionLength;
+  if (offset === body.length) return true;
+  if (offset + 2 > body.length) return false;
+  const extensionsLength = body.readUInt16BE(offset); offset += 2;
+  if (offset + extensionsLength !== body.length) return false;
+  const extensionsEnd = offset + extensionsLength;
+  while (offset < extensionsEnd) {
+    if (offset + 4 > extensionsEnd) return false;
+    const extensionLength = body.readUInt16BE(offset + 2);
+    offset += 4 + extensionLength;
+    if (offset > extensionsEnd) return false;
+  }
+  return true;
 }
 
 function respondAndClose(socket: Duplex, status: number, message: string): void {
@@ -225,8 +275,12 @@ function isPublicAddress(address: string, family: number): boolean {
   if (family !== 6 || isIP(address) !== 6 || address.includes('.')) return false;
   const value = ipv6ToBigInt(address);
   if (value === null) return false;
-  // Global unicast is 2000::/3. Exclude documentation and IPv4-mapped addresses.
-  return (value >> 125n) === 1n && (value >> 32n) !== 0x20010db8n && (value >> 32n) !== 0x0000000000000000n;
+  // Global unicast is 2000::/3. Exclude special-use, documentation, and transition ranges.
+  const inPrefix = (prefix: bigint, bits: bigint) => value >> (128n - bits) === prefix;
+  return (value >> 125n) === 1n && !(
+    inPrefix(0x20010db8n, 32n) || inPrefix(0x3fff0n, 20n) ||
+    inPrefix(0x2002n, 16n) || inPrefix(0x400200n, 23n)
+  );
 }
 
 function ipv6ToBigInt(address: string): bigint | null {

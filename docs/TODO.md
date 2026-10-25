@@ -112,7 +112,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [ ] **DEM-03** Benchmarks: payment speed (p50/p95), spy bot accuracy vs number of agents.
 - [ ] **DEM-04** Tests from SPEC §21 passing.
 - [x] **DEM-05** Update the explainer page to v4 (Confidential Space issuer, relay status, top-up; AP4M marked not implemented). (Codex)
-- [ ] **DEM-06** Pick the name. Rehearse the live run three times. Mastercard needs it live, no recording.
+- [~] **DEM-06** Pick the name. Rehearse the live run three times. Mastercard needs it live, no recording.
 - [x] **DEM-07** Merge website updates and maintain the project site (PR #31 merged; claim corrections are in `gh-pages`).
 
 ## Lane 9: Security and dependency health

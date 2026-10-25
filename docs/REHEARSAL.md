@@ -20,7 +20,7 @@ Run the complete live flow three times before demo day. Count a run only after b
    infra/gcp/status.sh issuer
    ```
 
-   If a VM is `TERMINATED`, start the existing instance and read its current external IP:
+   Each VM has a 12-hour maximum run time and stops automatically. If a VM is `TERMINATED`, start the existing instance and read its current external IP:
 
    ```sh
    gcloud --project=wraps-hack compute instances start wraps-issuer --zone=us-central1-a
@@ -65,9 +65,25 @@ For a preconfigured public HTTPS route to the local merchant, set `DEMO_MERCHANT
 
 The demo uses real issuer and relay attestations, but mock top-up and merchant payouts. AP4M is skipped.
 
+## Merchant authentication setup
+
+The live local merchant signs settlement requests. Set `MERCHANT_AUTH_PRIVATE_KEY` in the local shell or an untracked, mode-0600 env file. It must be the private key whose public key is registered for `merchant-research-data` in the issuer image's `ISSUER_MERCHANT_AUTH_KEYS` map. Never put the private key in the repo, a shared terminal transcript, or a PR. `demo:preflight` checks that the key exists and parses as Ed25519; it cannot prove that the public key matches the issuer's map. A live purchase is the end-to-end check.
+
+For a new canary, generate a merchant key with `npm run merchant:auth-key -- merchant-research-data`, keep the private line local, and add only the matching public map entry to the canary issuer configuration before building its image. Do not enable enforcement on the production issuer until every production settlement client has a registered credential.
+
 ## Current live preflight
 
-On 2026-10-25, the read-only preflight reached both VMs and the public XRPL nodes, and found `cloudflared` available. The running issuer digest was `0df7b9d4797a71aa6bb093d050bdb3f253d9987476dd3c2b8ead8c8320aaa808` and the relay digest was `c88938e820d729dcd388492ece1fa68b15d632a1113e7ef04e1cd4fafb8ba9d3`; `infra/gcp/expected.json` still contains different digests. Both Cloud Build source archives match their tagged source commits, which are on draft PR #55. With temporary digest overrides, issuer and relay attestations, TLS pins, and issuer-through-relay routing passed. The live issuer reported `legacy-open` merchant authentication, so the complete preflight remained red and no live rehearsal is counted.
+On 2026-10-25, the latest unmodified `npm run demo:preflight` reached both VMs but refused their running images: issuer reported `sha256:b02a233a401ab19b31cbb9bcfa71f1d080e67ce2d6e19c0745a2413616aa0a54` while `expected.json` requires `sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea`; relay reported `sha256:f6831b65a31668b167d5ab07e3a71b2d98f3d9fb02e20553e986218737433ef8` while `expected.json` requires `sha256:c1ffed0e504db15584d25dcdd0c742f1781e31ae7d64525c5750962d62b9d55e`. Both public XRPL nodes and `cloudflared` were reachable. A prior read-only `/health` probe reported `merchantAuth: legacy-open`; the current preflight could not verify that mode after rejecting the issuer digest. The local merchant signing key is also not configured. The relay's `/wireguard-attestation` returned a valid receipt for a 32-byte hex nonce and rejected a 16-byte nonce with HTTP 400, but authorized WireGuard packet forwarding remains unvalidated. No full live rehearsal is counted. Rebuild from the reviewed source and update the expected digests before attempting the canary; do not bless these unverified running digests.
+
+## Local mock rehearsal evidence
+
+These runs validate local behavior only and do not count toward the three live rehearsals:
+
+- `npm run demo:core` completed the mock top-up, merchant settlements, signed claim check, solvency check, and mock payout.
+- `npm run demo:core -- --tamper` refused the modified mock issuer with `PCR_MISMATCH` before top-up or purchase.
+- `npm run demo:core -- --debug-mode` refused the mock debug issuer with `DEBUG_MODE` before top-up or purchase.
+- `npm run demo:core -- --gullible` exercised the injected “buy 500 more” prompt; the SDK stopped at the 24-token daily cap.
+- `npm run bench -- --samples 50 --warmup 5 --trials 200 --seed 2026 --json` measured local mock paid-call latency at p50 2.01 ms / p95 4.03 ms (min 1.78 ms, max 4.18 ms).
 
 ## Record each rehearsal
 

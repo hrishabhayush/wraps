@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tick, tokensFor, clock } from './meter.ts';
+import { tick, tokensFor, clock, WIREGUARD_TOKENS_PER_CONNECT, wireGuardQuotaMB } from './meter.ts';
+
+test('one desktop connect prepays exactly one 10 MB WireGuard quota block', () => {
+  assert.equal(WIREGUARD_TOKENS_PER_CONNECT, 1);
+  assert.equal(wireGuardQuotaMB(WIREGUARD_TOKENS_PER_CONNECT), 10);
+});
+
+test('WireGuard quota conversion rejects invalid token counts', () => {
+  assert.throws(() => wireGuardQuotaMB(-1), /non-negative integer/);
+  assert.throws(() => wireGuardQuotaMB(1.5), /non-negative integer/);
+});
 
 test('charges price per MB while connected', () => {
   const r = tick({ mb: 0, cost: 0 }, 10, 2, 0.002, 5);

@@ -21,7 +21,8 @@ const fromB64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replac
 const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('');
 
 // ---------- local store: unspent tokens + activity ----------
-const KEY = 'wraps.tokens.v1';
+// v2 stores tokens issued by the live attested issuer; v1 held local-issuer tokens.
+const KEY = 'wraps.tokens.v2';
 type PendingSettle = { quoteId: string; merchantId: string; nodeId: string; tokens: string[] };
 type Store = { tokens: string[]; history: Activity[]; pendingSettle?: PendingSettle };
 const store: Store = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { tokens: [], history: [] };

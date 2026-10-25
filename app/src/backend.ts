@@ -1,6 +1,7 @@
 // Seam between the UI and the VPN network (nodes, attestation, tunnel). TauriBackend is the
 // real one-click VPN (attested relay + WireGuard, see src-tauri/src/vpn.rs); MockBackend is
 // for the browser dev preview. Wallet top-ups live in tokens.ts.
+import { WIREGUARD_TOKENS_PER_CONNECT } from './meter.ts';
 
 export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
 
@@ -75,7 +76,7 @@ export class TauriBackend implements Backend {
       return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
     }
   }
-  /** Buys and pays 10 tokens (100 MB), registers a fresh key, turns the tunnel on. */
-  async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: 10 }); }
+  /** Pays one 10 MB quota token, registers a fresh key, and turns the tunnel on. */
+  async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: WIREGUARD_TOKENS_PER_CONNECT }); }
   async disconnect() { await this.call('vpn_disconnect'); }
 }

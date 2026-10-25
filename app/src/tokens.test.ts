@@ -10,7 +10,7 @@ class MemoryStorage {
 
 test('APP-SEC-01 stores a quote ID before settling, signs both routes, and reuses it after an unknown outcome', async () => {
   const storage = new MemoryStorage();
-  storage.setItem('wraps.tokens.v1', JSON.stringify({ tokens: ['blind-token-1'], history: [] }));
+  storage.setItem('wraps.tokens.v2', JSON.stringify({ tokens: ['blind-token-1'], history: [] }));
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
   Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
   Object.defineProperty(globalThis, 'isTauri', { configurable: true, value: true });
@@ -57,13 +57,13 @@ test('APP-SEC-01 stores a quote ID before settling, signs both routes, and reuse
   try {
     const tokens = await import('./tokens.ts');
     await assert.rejects(tokens.spend(1, 'usc1'), /outcome is unknown/);
-    const afterUnknown = JSON.parse(storage.getItem('wraps.tokens.v1')!);
+    const afterUnknown = JSON.parse(storage.getItem('wraps.tokens.v2')!);
     assert.equal(afterUnknown.tokens.length, 0);
     assert.match(afterUnknown.pendingSettle.quoteId, /^[a-f0-9]{32}$/);
     assert.deepEqual(afterUnknown.pendingSettle.tokens, ['blind-token-1']);
 
     await tokens.spend(1, 'usc1');
-    const afterSuccess = JSON.parse(storage.getItem('wraps.tokens.v1')!);
+    const afterSuccess = JSON.parse(storage.getItem('wraps.tokens.v2')!);
     assert.equal(afterSuccess.pendingSettle, undefined);
     assert.equal(afterSuccess.tokens.length, 0);
 

@@ -1,6 +1,13 @@
 // Pay-only-while-connected billing. Pure so it can be tested without the UI.
 
 export const USD_PER_TOKEN = 0.1; // matches the issuer: 1 token = 0.10 RLUSD
+export const WIREGUARD_TOKENS_PER_CONNECT = 1;
+export const WIREGUARD_MB_PER_TOKEN = 10; // relay enforces 10,000,000 bytes per blind token
+
+export function wireGuardQuotaMB(tokens: number): number {
+  if (!Number.isInteger(tokens) || tokens < 0) throw new RangeError('quota tokens must be a non-negative integer');
+  return tokens * WIREGUARD_MB_PER_TOKEN;
+}
 
 export type Meter = { mb: number; cost: number };
 

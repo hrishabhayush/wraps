@@ -4,7 +4,8 @@
 import type { Quote } from './tokens.ts';
 
 
-export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
+// canton: top-left block (US). fullCross: [border, cross] across the whole flag (UK, simplified).
+export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string; canton?: string; fullCross?: [string, string] };
 
 export type VpnNode = {
   id: string;
@@ -61,9 +62,9 @@ export class MockBackend implements Backend {
 // reserved IP. Tokens from the one issuer work at any of them. 1 token = 10 MB = $0.10.
 // latencyMs: TCP connect time measured from the dev laptop (US West), 2026-10-25.
 const LIVE_RELAYS: VpnNode[] = [
-  { id: 'usc1', city: 'Iowa', country: 'United States', flag: { h: ['#B22234', '#FFFFFF', '#3C3B6E'] }, ip: '136.80.57.82', pricePerMB: 0.01, latencyMs: 38 },
+  { id: 'usc1', city: 'Iowa', country: 'United States', flag: { canton: '#3C3B6E', h: ['#B22234', '#FFFFFF', '#B22234', '#FFFFFF', '#B22234', '#FFFFFF', '#B22234'] }, ip: '136.80.57.82', pricePerMB: 0.01, latencyMs: 38 },
   { id: 'ams', city: 'Eemshaven', country: 'Netherlands', flag: { h: ['#AE1C28', '#FFFFFF', '#21468B'] }, ip: '34.141.178.44', pricePerMB: 0.01, latencyMs: 84 },
-  { id: 'lon', city: 'London', country: 'United Kingdom', flag: { bg: '#012169', cross: '#C8102E' }, ip: '35.234.141.198', pricePerMB: 0.01, latencyMs: 77 },
+  { id: 'lon', city: 'London', country: 'United Kingdom', flag: { bg: '#012169', fullCross: ['#FFFFFF', '#C8102E'] }, ip: '35.234.141.198', pricePerMB: 0.01, latencyMs: 77 },
 ];
 const relayIp = (nodeId: string) => (LIVE_RELAYS.find(n => n.id === nodeId) ?? LIVE_RELAYS[0]).ip;
 

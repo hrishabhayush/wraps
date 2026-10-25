@@ -8,10 +8,16 @@ use tauri_plugin_positioner::{Position, WindowExt};
 // the click that follows would immediately show it again.
 struct LastHide(Mutex<Instant>);
 
+#[tauri::command]
+fn quit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
+        .invoke_handler(tauri::generate_handler![quit])
         .manage(LastHide(Mutex::new(Instant::now() - Duration::from_secs(1))))
         .setup(|app| {
             #[cfg(target_os = "macos")]

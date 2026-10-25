@@ -60,7 +60,7 @@ export class MockBackend implements Backend {
       ? { ok: false, reason: 'Enclave build doesn’t match the audited code', checkedAt: Date.now() }
       : { ok: true, tee: 'tdx', build: 'a41f…9c', checkedAt: Date.now() };
   }
-  async connect() { await sleep(500); }
+  async connect(_nodeId: string) { await sleep(500); }
   async disconnect() {}
   async wallet() { return this.w; }
   async topUp(usd: number) {

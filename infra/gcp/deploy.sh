@@ -3,16 +3,18 @@
 #   infra/gcp/deploy.sh issuer [--replace] production image (confidential-space)
 #   ATTESTATION_AUDIENCE=... ISSUER_URL=... RELAY_HOSTNAME=... infra/gcp/deploy.sh relay
 #   Add --instance-name=wraps-relay-canary to launch a side-by-side candidate.
+#   Add --canary to add a role-specific firewall tag for source-restricted ingress rules.
 #   Add --dry-run to print the create command without changing GCP.
 # Existing VMs are preserved unless --replace is explicitly supplied.
 source "$(dirname "$0")/lib.sh"
 ROLE="${1:-}"; check_role "${ROLE}"
-MODE=prod; DRY_RUN=0; REPLACE=0; INSTANCE_NAME=''
+MODE=prod; DRY_RUN=0; REPLACE=0; CANARY=0; INSTANCE_NAME=''
 for option in "${@:2}"; do
   case "${option}" in
     --debug) die "the digest-scoped production WIF provider rejects debug workloads; use the local mock rehearsal instead" ;;
     --dry-run) DRY_RUN=1 ;;
     --replace) REPLACE=1 ;;
+    --canary) CANARY=1 ;;
     --instance-name=*) INSTANCE_NAME="${option#*=}" ;;
     *) die "unknown option: ${option}" ;;
   esac
@@ -32,6 +34,8 @@ NAME="$(instance_name "${ROLE}" "${MODE}")"
 if [ -n "${INSTANCE_NAME}" ]; then
   [[ "${INSTANCE_NAME}" =~ ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "invalid Compute Engine instance name"
   NAME="${INSTANCE_NAME}"
+elif [ "${CANARY}" = 1 ]; then
+  NAME="${NAME}-canary"
 fi
 REF="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].imageReference")" \
   || die "no image for ${ROLE} in expected.json. Run infra/gcp/build.sh ${ROLE} first."
@@ -124,6 +128,7 @@ fi
 
 VM_TAGS=wraps
 [ "${ROLE}" = relay ] && VM_TAGS=wraps,wraps-relay
+[ "${CANARY}" = 1 ] && VM_TAGS="${VM_TAGS},${ROLE}-canary"
 CREATE_ARGS=(
   compute instances create "${NAME}"
   "--zone=${GCP_ZONE}"

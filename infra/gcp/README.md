@@ -43,7 +43,7 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
 | `setup-issuer-state.sh prepare` | Creates or verifies the project-owned, dedicated regional Standard bucket and symmetric Cloud KMS key for SEC-06, then writes their public resource names under `.state/`. |
 | `setup-merchant-auth-wif.sh` | Creates a digest-scoped WIF provider and Secret Manager access for the issuer and relay image digests. |
-| `deploy.sh <role> [--replace] [--instance-name=NAME]` | Creates a production Confidential Space VM; preserves an existing VM unless replacement is explicitly requested. A named candidate can be tested side by side. |
+| `deploy.sh <role> [--replace] [--instance-name=NAME] [--canary]` | Creates a production Confidential Space VM; preserves an existing VM unless replacement is explicitly requested. A canary gets a role-specific network tag for source-restricted ingress. |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
 | `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
@@ -97,6 +97,25 @@ Secret Manager and is never printed. The local state file contains only provider
 version resource names. The state setup writes the bucket and KMS resource names in its local state
 file, verifies that the bucket belongs to this project, and refuses objects outside the issuer
 prefix before granting the issuer digest access.
+
+Canary VMs keep the normal `wraps` tag and add `issuer-canary` or `relay-canary`. Before creating
+one, add source-restricted allow and higher-priority deny rules for that role-specific tag. For an
+issuer canary, include the operator CIDR and the relay-canary IP in `ISSUER_SOURCE_RANGES`; for a
+relay canary, allow only the operator CIDR. Example for an issuer:
+
+```sh
+gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-allow \
+  --network=default --direction=INGRESS --priority=400 \
+  --allow=tcp:443,tcp:8080 --source-ranges="${ISSUER_SOURCE_RANGES}" \
+  --target-tags=issuer-canary
+gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-deny \
+  --network=default --direction=INGRESS --priority=500 --deny=all \
+  --source-ranges=0.0.0.0/0,::/0 --target-tags=issuer-canary
+```
+
+Create matching rules for `relay-canary` before deploying the relay. The lower-priority-number
+allow rule admits only the chosen source ranges; the deny rule blocks all other ingress, including
+the general `wraps` allow rule. Delete these temporary rules after removing the canary VMs.
 
 ```sh
 # 1. Create or verify the project-owned canonical state bucket and KMS key.

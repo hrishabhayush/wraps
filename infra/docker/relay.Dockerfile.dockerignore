@@ -1,0 +1,17 @@
+# BuildKit reads <Dockerfile>.dockerignore next to the Dockerfile.
+# Keep the build context small and stable, and keep secrets out of images.
+**/node_modules
+**/target
+.git
+.claude
+docs
+vendor
+infra/build
+infra/pcrs.json
+**/*.eif
+**/.env
+**/.env.*
+**/*.boot.json
+!infra/config/boot.example.json
+**/*.pem
+**/*.key

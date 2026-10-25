@@ -116,6 +116,8 @@ export async function pay(usd: number, onStage: (s: PayStage) => void) {
   const from = account();
   if (!from) throw new Error('Connect a wallet first');
   if (!cfg.payout) throw new Error('Set VITE_ISSUER_PAYOUT in app/.env');
+  const have = await balance(from);
+  if (have < priceIn(usd)) throw new Error(`Not enough ${asset}: you have ${have.toFixed(2)}, need ${priceIn(usd).toFixed(2)}`);
   const amount = toUnits(priceIn(usd).toFixed(6), cfg.token ? await tokenDecimals() : NET.native.decimals);
   const tx = cfg.token
     ? { from, to: cfg.token, data: erc20Transfer(cfg.payout, amount) }

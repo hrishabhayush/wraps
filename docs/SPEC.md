@@ -19,8 +19,9 @@ Sam is an analyst at a small crypto fund. Sam's research agent buys crypto and D
 **Sam's problem:**
 - Every payment is public: vendor, amount, exact time, forever. Like a published card statement.
 - Wallet trackers (Nansen, Arkham) label fund wallets. Arkham pays bounties to unmask owners.
-- Extra wallets don't help. On mainnet we traced 60 paying wallets to 8 funders.
-- The funding leads back to an exchange, which knows the customer.
+- Agents already rotate wallets: on mainnet, 50 payments to one merchant came from 50 different wallets.
+- 44 of the 50 were funded straight from exchange hot wallets (10M+ XRP each). The public can't cluster past an exchange, but the exchange knows who withdrew to each wallet.
+- The other 6 were all funded by one ordinary wallet, so the public can link those 6 as one owner.
 - The facilitator receives the wallet **and** the exact URL of every request.
 
 **What does not leak on-chain:** the request content, such as which stock. We don't claim it does.
@@ -191,7 +192,7 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 ## 9. The demo (3 minutes, live)
 
 1. **0:00 Sam.** "Sam's fund runs a research agent that buys data with x402."
-2. **0:15 The leak.** "Paying with x402 publishes your agent's card statement. We traced 60 'separate' agent wallets on mainnet back to 8 owners."
+2. **0:15 The leak.** "Paying with x402 publishes your agent's card statement. Agents already try to hide by rotating wallets. We traced them on mainnet: most were funded straight from an exchange, which knows who you are, and the rest link to one owner."
 3. **0:30 Left screen.** A normal agent pays with plain x402. The spy bot prints its vendors, amounts, times and funder group.
 4. **1:00 Right screen.** Our agent hits a 402 on its low balance, signs an AP4M voucher, refills. `VoucherRedeemed` on the explorer, RLUSD at the issuer.
 5. **1:30** It compares prices, buys through the relay with tokens. The spy bot sees nothing about it. The merchant sees the relay's IP.
@@ -204,7 +205,7 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 
 ## 10. The 30-second pitch
 
-> "x402 made agent payments less private than a card. Every payment publishes your agent's spending record forever, and the facilitator sees every wallet next to every URL. We traced 60 'separate' agent wallets on mainnet back to 8 owners.
+> "x402 made agent payments less private than a card. Every payment publishes your agent's spending record forever, and the facilitator sees every wallet next to every URL. Agents rotate wallets to hide, and on mainnet most of them were funded straight from an exchange, which knows who you are.
 >
 > We give agents confidential payments. The agent refills its budget on its own through Mastercard's AP4M, then pays any merchant with blind tokens our issuer can't trace, through an attested relay that hides its IP. Both run in AWS Nitro Enclaves, so you verify our code instead of trusting us. Nobody sees both who your agent is and what it buys."
 
@@ -212,7 +213,7 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 
 ## 11. Answers to have ready
 
-**"Why would an agent need privacy?"** "A card statement is private. An x402 statement is public forever. We just showed 60 wallets traced to 8 owners."
+**"Why would an agent need privacy?"** "A card statement is private. An x402 statement is public forever. Rotating wallets doesn't fix it: we showed they lead back to exchanges, or to one shared funder."
 
 **"Do you hide which stock I research?"** "No. The merchant must read the request to answer it. We hide who is asking, from the merchant and the public."
 
@@ -298,7 +299,7 @@ Hackathon: strong. Business today: tiny dollar market, a bet on growth. After th
 | A real x402 payment shows payer, merchant, amount, time, t54 memo, a UUID memo and an InvoiceID. No URL | Read from mainnet |
 | SourceTag is t54's facilitator tag (`804681468`), not per endpoint | Read from mainnet |
 | Price identifies the service when a merchant prices services differently | Checked against the hub |
-| 60 paying wallets came from 8 funders. Top funders trace to a large wallet, likely an exchange | Traced on mainnet |
+| Payer wallets rotate (50 payments, 50 wallets), and 44 of 50 were funded directly by exchange-scale hot wallets (10M to 15M XRP, tens of millions of transactions); 6 shared one ordinary funder. This is NOT one operator: exchanges fund many unrelated users. Correction to v3's "60 wallets → 8 owners" | Traced on mainnet, rechecked by the spy bot |
 | The x402 facilitator receives `resource.url`, `description`, `mimeType` and the payer wallet | x402 v2 spec |
 | t54's Trustline keeps "a signed, replayable evidence record" of agent identity, owner mandate and intent | t54 website |
 | RLUSD issuer has clawback enabled | Mainnet flag |

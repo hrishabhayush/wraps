@@ -1,5 +1,6 @@
-// Seam between the UI and the VPN network (nodes, attestation, tunnel). Still mocked: swap
-// MockBackend for the real thing later. Money and tokens are real and live in tokens.ts.
+// Seam between the UI and the VPN network (nodes, attestation, tunnel). TauriBackend is the
+// real one-click VPN (attested relay + WireGuard, see src-tauri/src/vpn.rs); MockBackend is
+// for the browser dev preview. Wallet top-ups live in tokens.ts.
 
 export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
 
@@ -14,7 +15,7 @@ export type VpnNode = {
 };
 
 export type Attestation =
-  | { ok: true; tee: 'tdx' | 'sev-snp'; build: string; checkedAt: number }
+  | { ok: true; tee: 'tdx' | 'sev' | 'sev-snp'; build: string; checkedAt: number }
   | { ok: false; reason: string; checkedAt: number };
 
 export type Activity = { title: string; detail: string; usd: number; at: number };
@@ -50,4 +51,31 @@ export class MockBackend implements Backend {
   }
   async connect(_nodeId: string) { await sleep(500); }
   async disconnect() {}
+}
+
+// The live wraps relay: Google Confidential Space (AMD SEV), reserved IP.
+const LIVE_RELAY: VpnNode = {
+  id: 'usc1', city: 'Iowa', country: 'United States',
+  flag: { h: ['#B22234', '#FFFFFF', '#3C3B6E'] },
+  ip: '136.80.57.82', pricePerMB: 0.01, latencyMs: 30, // 1 token = 10 MB = $0.10
+};
+
+/** Real backend: verify the attested relay, pay it, bring WireGuard up. No other app needed. */
+export class TauriBackend implements Backend {
+  private async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<T>(cmd, args);
+  }
+  async listNodes() { return [LIVE_RELAY]; }
+  async attest(_nodeId: string): Promise<Attestation> {
+    try {
+      const r = await this.call<{ ok: boolean; imageDigest: string }>('vpn_attest');
+      return { ok: true, tee: 'sev', build: `${r.imageDigest.slice(7, 11)}…${r.imageDigest.slice(-2)}`, checkedAt: Date.now() };
+    } catch (e) {
+      return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
+    }
+  }
+  /** Buys and pays 10 tokens (100 MB), registers a fresh key, turns the tunnel on. */
+  async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: 10 }); }
+  async disconnect() { await this.call('vpn_disconnect'); }
 }

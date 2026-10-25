@@ -78,3 +78,22 @@ The underlying issue is the role. **The buyer shouldn't settle.** The relay or m
 - `infra/gcp/README.md`, `infra/gcp/relay-deploy.md`: starting the VMs and getting IPs
 
 Ping Adarsha if anything here is unclear.
+
+---
+
+## Update: the VPN is now one click, no other apps (Oct 25)
+
+The WireGuard part is **automatic inside the app now**. The user never sees a key, a profile, a QR code or the WireGuard app. Rule from here on: **nobody should ever need a separate app or a terminal to connect.**
+
+What happens when the user clicks **Connect** in the desktop app (`TauriBackend` in `app/src/backend.ts`, Rust in `app/src-tauri/src/vpn.rs`):
+1. The app runs the bundled connect helper (`scripts/wg-join.ts`, run by a Node binary shipped inside the app). It generates a fresh WireGuard key on the device, verifies the relay's Confidential Space attestation and the issuer's, buys 10 blind tokens (mock top-up rail for now), pays the relay, and gets a tunnel address back. The relay accepts any key that pays (open registration, PR #51).
+2. macOS asks for the admin password **once** (standard system prompt), and the bundled `wireguard-go` + `wg` bring the tunnel up, set routes, and set DNS to 1.1.1.1 (`app/src-tauri/resources/wraps-tunnel.sh`).
+3. Disconnect removes the tunnel and restores DNS. The app re-checks the relay's attestation every 60 s.
+
+Build: `app/scripts/prepare-vpn.sh` assembles the bundled binaries (official Node, checksum-verified; `wg` and `wireguard-go` from Homebrew; the helper bundled with esbuild), then `tauri build`. Binaries are not committed (too big for GitHub).
+
+Still to do, in order:
+- **Pay with the user's own tokens.** The helper currently buys tokens on the mock rail. Pass the wallet's real blind tokens (from `tokens.ts`) to the helper instead, and remove the app's direct `/settle` (`tk.spend`), which the desktop app no longer calls.
+- **Top up automatically** when the 100 MB runs low (call the helper again with the same key).
+- **Show real usage** instead of the simulated meter (read `wg show <iface> transfer`).
+- **Ship it properly:** sign and notarize the app; for a fully native experience (no password prompt, VPN in System Settings) move the tunnel into a macOS Network Extension later. Intel Macs need an x86_64 build.

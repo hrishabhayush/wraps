@@ -1,0 +1,11 @@
+{
+  "name": "@wraps/enclave-common",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "In-enclave helpers: boot keys, NSM attestation, self-signed TLS, GET /attestation, boot config, safe logs.",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@peculiar/x509": "^1.12.0"
+  }
+}

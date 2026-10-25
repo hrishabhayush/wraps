@@ -1,0 +1,20 @@
+[package]
+name = "nsm-attest"
+version = "0.1.0"
+edition = "2021"
+description = "Ask the AWS Nitro Security Module (/dev/nsm) for an attestation document."
+license = "Apache-2.0"
+publish = false
+
+# Cargo.lock is generated once by infra/scripts/prepare-build.sh and committed.
+# The Dockerfiles build with --locked, so the dependency tree is fixed.
+[dependencies]
+aws-nitro-enclaves-nsm-api = "=0.4.0"
+serde_bytes = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

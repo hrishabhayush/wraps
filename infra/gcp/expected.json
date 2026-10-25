@@ -6,10 +6,10 @@
   "requiredSupportAttribute": "STABLE",
   "roles": {
     "issuer": {
-      "imageDigest": "sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea",
-      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea",
-      "tag": "1df3bee",
-      "builtAt": "2026-10-25T01:33:08.569Z"
+      "imageDigest": "sha256:0df7b9d4797a71aa6bb093d050bdb3f253d9987476dd3c2b8ead8c8320aaa808",
+      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:0df7b9d4797a71aa6bb093d050bdb3f253d9987476dd3c2b8ead8c8320aaa808",
+      "tag": "71e6f0d",
+      "builtAt": "2026-10-25T08:21:11.774Z"
     },
     "relay": {
       "imageDigest": "sha256:c1ffed0e504db15584d25dcdd0c742f1781e31ae7d64525c5750962d62b9d55e",

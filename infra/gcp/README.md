@@ -46,6 +46,8 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
 | `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
+| `mock-container-fallback.sh` | Builds and runs the issuer and relay images with mock attestation, then verifies a metered HTTPS request through the relay. |
+| `mock-container-probe.ts` | Connects the local SDK to that fallback and asserts the relay response spends one token. |
 | `expected.json` | Image digest per role, plus the policy. The SDK reads it. Commit it after each build. |
 | `.state/` | Last known VM IPs. Not committed. |
 
@@ -139,8 +141,21 @@ discarded. The issuer IP is ephemeral and can change after a stop; the relay IP 
 The relay binds the public attestation listener on 8080, which is protected by per-IP and
 aggregate rate limits and a bounded number of provider calls.
 
-`ATTESTATION=mock npm run demo:gcp` runs the same flow against a local HTTPS issuer with the
-mock attestation. Use it to rehearse without a VM.
+To rehearse the container fallback without a VM, run:
+
+```sh
+infra/gcp/mock-container-fallback.sh
+```
+
+The script builds the production issuer and relay Dockerfiles, starts both images with mock
+attestation and a temporary local relay credential on an isolated container network, and sends an
+HTTPS request to `example.com` through the relay. It exits nonzero unless the SDK verifies both
+mock attestations, pins the issuer TLS key, receives HTTP 200, and spends exactly one meter token.
+It removes the temporary containers
+and network on exit. Set `ISSUER_MERCHANT_AUTH_KEYS` to the app's public-key JSON entry to bake the
+same merchant identity into the local issuer image. Issuer bootstrap and top-up connect directly to
+the local issuer container; the paid merchant request traverses the relay. This tests the same images
+and metering path while avoiding a host route to a container's private IP.
 
 ## VM settings (from `deploy.sh`)
 

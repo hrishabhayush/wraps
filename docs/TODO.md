@@ -102,7 +102,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [ ] **DEM-02** Tamper button: restart the issuer with a different code hash, show the SDK refusing it.
 - [ ] **DEM-03** Benchmarks: payment speed (p50/p95), spy bot accuracy vs number of agents.
 - [ ] **DEM-04** Tests from SPEC §21 passing.
-- [ ] **DEM-05** Update the explainer page to v4 (relay, AP4M at top-up).
+- [x] **DEM-05** Update the explainer page to v4 (relay, AP4M at top-up). (Codex)
 - [ ] **DEM-06** Pick the name. Rehearse the live run three times. Mastercard needs it live, no recording.
 
 ---

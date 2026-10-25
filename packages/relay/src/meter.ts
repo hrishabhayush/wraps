@@ -22,6 +22,8 @@ export class BandwidthMeter {
   private totalBytes = 0;
   private settledTokens = 0;
   private queue: Promise<void> = Promise.resolve();
+  private failed = false;
+  private failureReason: unknown;
 
   constructor(
     private readonly merchantId: string,
@@ -42,7 +44,18 @@ export class BandwidthMeter {
 
   /** Settle tokens as their quota is needed, charging one token for a partial final block. */
   forward(chunk: Buffer): Promise<ForwardedChunk> {
-    const job = this.queue.then(() => this.forwardInOrder(chunk));
+    const job = this.queue.then(async () => {
+      if (this.failed) throw this.failureReason;
+      try {
+        return await this.forwardInOrder(chunk);
+      } catch (error) {
+        // Settlement may have succeeded remotely before a timeout or network
+        // failure reached us. Poison the meter so queued writes never retry it.
+        this.failed = true;
+        this.failureReason = error;
+        throw error;
+      }
+    });
     this.queue = job.then(() => undefined, () => undefined);
     return job;
   }

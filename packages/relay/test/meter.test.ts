@@ -47,6 +47,34 @@ describe('BandwidthMeter', () => {
     expect(meter.bytesUsed).toBe(0);
   });
 
+  it('does not retry an ambiguous settlement for chunks queued from both directions', async () => {
+    let attempts = 0;
+    let rejectSettlement!: (error: Error) => void;
+    let signalStarted!: () => void;
+    const settlementStarted = new Promise<void>((resolve) => { signalStarted = resolve; });
+    const unknownOutcome = new Error('settlement outcome unknown');
+    const issuer: RelayIssuer = {
+      verify: async () => true,
+      settle: async () => {
+        attempts++;
+        signalStarted();
+        return new Promise<void>((_resolve, reject) => { rejectSettlement = reject; });
+      },
+    };
+    const meter = new BandwidthMeter('relay', ['t1'], issuer, 10);
+
+    const clientToUpstream = meter.forward(Buffer.from('request'));
+    const upstreamToClient = meter.forward(Buffer.from('response'));
+    await settlementStarted;
+    rejectSettlement(unknownOutcome);
+
+    await expect(clientToUpstream).rejects.toBe(unknownOutcome);
+    await expect(upstreamToClient).rejects.toBe(unknownOutcome);
+    await expect(meter.forward(Buffer.from('later'))).rejects.toBe(unknownOutcome);
+    expect(attempts).toBe(1);
+    expect(meter.bytesUsed).toBe(0);
+  });
+
   it('uses the issuer verify and atomic settle endpoints', async () => {
     const calls: { url: string; body: unknown }[] = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {

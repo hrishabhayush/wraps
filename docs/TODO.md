@@ -45,7 +45,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [ ] **INF-19** Quicknode endpoints: XRPL mainnet (spy bot), XRPL testnet, XRPL EVM testnet if supported. Put URLs in `.env`. Join the Quicknode track.
 
 ### Run and demo day
-- [ ] **INF-20** Logs: Confidential Space production images send container logs to Cloud Logging only if redirect is on. Never log tokens, keys, IPs or merchant IDs together.
+- [x] **INF-20** Logs: Confidential Space production images send container logs to Cloud Logging only if redirect is on. Never log tokens, keys, IPs or merchant IDs together.
 - [ ] **INF-21** Demo host firewall: on the machine that runs the agent, allow outbound traffic only to the relay, so nothing leaks around the tunnel.
 - [ ] **INF-22** Demo day: start the VMs early and **don't restart them**. Keys and the spent list live in memory.
 - [ ] **INF-23** Fallback: run the same images as normal containers with mock attestation if Confidential Space breaks. Say so on stage if used.
@@ -122,9 +122,9 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ## Follow-ups (from the Oct 25 review pass)
 
-- [ ] **FUP-01** PR #42 (INF-20, production forwarding for WireGuard in the relay): rebuild the relay image from committed source. The PR records a `-dirty` digest. Then merge.
-- [ ] **FUP-02** Close PR #22 (INF-09). PR #42 supersedes it (same files, newer image).
-- [ ] **FUP-03** Stop the test and debug VMs when nobody needs them: `wraps-relay-debug`, `wraps-relay-inf09-wireguard`, `wraps-wg-client-test`. Keep `wraps-issuer`, `wraps-relay`, `wraps-wg-gateway` for the demo. Release unused reserved IPs (`wraps-relay-inf09-test-ip`, and the others after the demo).
+- [~] **FUP-01** PR #42 (INF-20, production forwarding for WireGuard in the relay): rebuilt from committed source and verified live in production with tunneled HTTPS egress. The clean digest is pinned; waiting for a human to merge PR #42.
+- [x] **FUP-02** Close PR #22 (INF-09). Its `eth0` and WireGuard endpoint fixes are folded into PR #42.
+- [x] **FUP-03** Removed the temporary test/debug VMs (`wraps-relay-debug`, `wraps-wg-client-test`, `wraps-relay-inf28-debug`, and `wraps-relay-inf09-test`; `wraps-relay-inf09-wireguard` was already absent). Released `wraps-relay-inf09-test-ip`. Kept `wraps-issuer`, `wraps-relay`, and `wraps-wg-gateway`.
 - [ ] **FUP-04** Live testnet payout: fund an issuer wallet with testnet RLUSD and XRP for gas, then follow `packages/issuer/README.md` (`payout:dry-run`, `payout:once`).
 - [ ] **FUP-05** The standalone WireGuard gateway (PR #43) runs on a plain VM, outside Confidential Space: no attestation, no token metering. Don't describe it as attested.
 

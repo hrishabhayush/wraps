@@ -29,9 +29,12 @@ tcp:443 and tcp:8080 for tag `wraps`.
 Set `WG_ENABLED=true` to start the WireGuard gateway alongside HTTPS CONNECT. The
 workload then requires `WG_ENDPOINT`, `WG_INTERFACE_ADDRESS`, and
 `WG_PEERS_JSON` (a JSON array of `{ "publicKey", "allowedAddress" }` objects).
-The gateway uses UDP 51820 and `WG_EGRESS_INTERFACE` defaults to `ens4`. Peer
-private keys must remain on clients; the deployment receives public
-keys only. Do not put client private keys or server private keys in metadata.
+Set `WG_ENDPOINT` to a bare hostname or IPv4 address; the attested receipt carries
+UDP port 51820 separately and the SDK builds `Endpoint = host:51820`. The
+Confidential Space workload's egress interface is `eth0`, which is the default for
+`WG_EGRESS_INTERFACE`. Peer private keys must remain on clients; the deployment
+receives public keys only. Do not put client private keys or server private keys
+in metadata.
 
 When enabled, the launcher grants `CAP_NET_ADMIN`, enables VM IP forwarding,
 opens UDP 51820 to the relay-only `wraps-relay` tag, and passes public peer config to

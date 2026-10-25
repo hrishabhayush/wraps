@@ -25,11 +25,15 @@ REF="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].imageRe
 
 if [ "${MODE}" = debug ]; then
   FAMILY=confidential-space-debug
-  # The image's launch policy allows log redirect on the debug image only.
+  # Debug boots always redirect output; the relay image allows sanitized logs.
   METADATA="^~^tee-image-reference=${REF}~tee-container-log-redirect=true"
 else
   FAMILY=confidential-space
   METADATA="^~^tee-image-reference=${REF}"
+  # The relay logs only fixed stages and allowlisted failure codes.
+  if [ "${ROLE}" = relay ]; then
+    METADATA="${METADATA}~tee-container-log-redirect=true"
+  fi
 fi
 
 if [ "${ROLE}" = relay ]; then
@@ -43,11 +47,14 @@ if [ "${ROLE}" = relay ]; then
     [ -n "${WG_ENDPOINT:-}" ] || die "WG_ENDPOINT is required when WG_ENABLED=true"
     [ -n "${WG_INTERFACE_ADDRESS:-}" ] || die "WG_INTERFACE_ADDRESS is required when WG_ENABLED=true"
     [ -n "${WG_PEERS_JSON:-}" ] || die "WG_PEERS_JSON is required when WG_ENABLED=true"
-    WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-ens4}"
+    case "${WG_ENDPOINT}" in
+      *:*|*/*|*' '* ) die "WG_ENDPOINT must be a bare hostname or IPv4 address; the UDP port is configured separately" ;;
+    esac
+    WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-eth0}"
     for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
       [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "WireGuard metadata values cannot contain newlines"
     done
-    WG_METADATA="tee-added-capabilities=[\"CAP_NET_ADMIN\"]~tee-env-WG_ENABLED=true~tee-env-WG_ENDPOINT=${WG_ENDPOINT}~tee-env-WG_INTERFACE_ADDRESS=${WG_INTERFACE_ADDRESS}~tee-env-WG_EGRESS_INTERFACE=${WG_EGRESS_INTERFACE}~tee-env-WG_PEERS_JSON=${WG_PEERS_JSON}"
+    WG_METADATA="tee-added-capabilities=[\"CAP_NET_ADMIN\",\"CAP_SYS_ADMIN\"]~tee-env-WG_ENABLED=true~tee-env-WG_ENDPOINT=${WG_ENDPOINT}~tee-env-WG_INTERFACE_ADDRESS=${WG_INTERFACE_ADDRESS}~tee-env-WG_EGRESS_INTERFACE=${WG_EGRESS_INTERFACE}~tee-env-WG_PEERS_JSON=${WG_PEERS_JSON}"
   fi
 
   for value in "${ATTESTATION_AUDIENCE}" "${ISSUER_URL}" "${RELAY_HOSTNAME}"; do
@@ -67,6 +74,9 @@ if [ "${ROLE}" = relay ]; then
   done
   [ -n "${META_SEPARATOR}" ] || die "could not choose a safe metadata separator"
   METADATA="^${META_SEPARATOR}^tee-image-reference=${REF}${META_SEPARATOR}tee-env-ATTESTATION_AUDIENCE=${ATTESTATION_AUDIENCE}${META_SEPARATOR}tee-env-ISSUER_URL=${ISSUER_URL}${META_SEPARATOR}tee-env-RELAY_HOSTNAME=${RELAY_HOSTNAME}"
+  if [ "${MODE}" = prod ]; then
+    METADATA="${METADATA}${META_SEPARATOR}tee-container-log-redirect=true"
+  fi
   if [ -n "${WG_METADATA}" ]; then
     WG_METADATA="${WG_METADATA//\~/${META_SEPARATOR}}"
     METADATA="${METADATA}${META_SEPARATOR}${WG_METADATA}"
@@ -107,7 +117,7 @@ if [ "${DRY_RUN}" = 1 ]; then
   if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
     printf 'DRY RUN (if firewall rule exists):'
     printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules update wraps-allow-wireguard \
-      --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+      --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
     printf '\nDRY RUN (otherwise):'
     printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
       --direction=INGRESS --priority=1000 --network=default --allow=udp:51820 \
@@ -132,7 +142,7 @@ gc "${CREATE_ARGS[@]}" \
 if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
   RULE=wraps-allow-wireguard
   if gc compute firewall-rules describe "${RULE}" >/dev/null 2>&1; then
-    gc compute firewall-rules update "${RULE}" --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+    gc compute firewall-rules update "${RULE}" --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
   else
     gc compute firewall-rules create "${RULE}" --direction=INGRESS --priority=1000 --network=default \
       --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay

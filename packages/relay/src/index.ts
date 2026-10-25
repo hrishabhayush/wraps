@@ -34,6 +34,8 @@ export interface RelayServerOptions {
   issuer?: RelayIssuer;
   /** The relay's fixed merchant account at the issuer. Defaults to `relay`. */
   merchantId?: string;
+  /** Secret loaded from Confidential Space WIF/Secret Manager by the workload entrypoint. */
+  issuerSettleKey?: string;
   issuerFetch?: typeof fetch;
 }
 
@@ -87,7 +89,7 @@ export function createRelayServer(
   options: RelayServerOptions = {},
   dependencies: Partial<RelayDependencies> = {},
 ): Server {
-  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  const issuer = issuerFromOptions(options);
   const server = createServer({ maxHeaderSize: MAX_HEADER_SIZE }, rejectHttpRequest);
   server.headersTimeout = 10_000;
   server.requestTimeout = 10_000;
@@ -123,7 +125,7 @@ export function createSecureRelayServer(
   dependencies: Partial<RelayDependencies> = {},
   issuerBootstrapUrl?: string,
 ): HttpsServer {
-  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  const issuer = issuerFromOptions(options);
   const server = createHttpsServer({
     key: options.tlsPrivateKey,
     cert: options.tlsCertificate,
@@ -213,7 +215,7 @@ export async function startConfidentialWireGuardRelay(options: ConfidentialWireG
   close(): Promise<void>;
 }> {
   const wireGuard = await startWireGuardGateway(options.wireGuardGateway);
-  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  const issuer = issuerFromOptions(options);
   if (!issuer) {
     await wireGuard.stop();
     throw new Error('WireGuard requires a configured relay issuer for token metering');
@@ -254,6 +256,15 @@ export async function startConfidentialWireGuardRelay(options: ConfidentialWireG
     await wireGuard.stop();
     throw error;
   }
+}
+
+function issuerFromOptions(options: RelayServerOptions): RelayIssuer | undefined {
+  if (options.issuer) return options.issuer;
+  if (!options.issuerUrl) return undefined;
+  return new HttpRelayIssuer(options.issuerUrl, options.issuerFetch, undefined, {
+    settleKey: options.issuerSettleKey,
+    merchantId: options.merchantId,
+  });
 }
 
 function closeServer(server: Server | HttpsServer): Promise<void> {

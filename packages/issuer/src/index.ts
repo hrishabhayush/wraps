@@ -6,6 +6,7 @@ export * from './payout';
 export * from './payout-config';
 export * from './merchant-registry';
 export * from './merchant-auth';
+export * from './confidential-secret';
 export * from './state-store';
 export * from './server';
 export * from './client';

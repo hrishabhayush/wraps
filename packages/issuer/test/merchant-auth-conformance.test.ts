@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { b64u, fromB64u, generateEd25519, MockAttestationProvider } from '@wraps/attestation';
 import { blindTokens, finalizeTokens, serializeToken } from '@wraps/tokens';
-import { getMerchantAuthMode, merchantAuthConfigFromEnv, MockTopUpWallet, signMerchantRequest, startIssuer } from '../src/index';
+import { assertConfidentialSpaceMerchantAuth, getMerchantAuthMode, merchantAuthConfigFromEnv, MockTopUpWallet, signMerchantRequest, startIssuer } from '../src/index';
 
 const quiet = () => {};
 
@@ -101,6 +101,14 @@ describe('SEC-04 merchant request authentication', () => {
     } finally {
       await issuer.close();
     }
+  });
+
+  it('SEC-04: production configuration refuses legacy-open mode and empty credential maps', () => {
+    expect(() => assertConfidentialSpaceMerchantAuth(merchantAuthConfigFromEnv({}))).toThrow('requires ISSUER_MERCHANT_AUTH_KEYS or a relay credential');
+    expect(() => assertConfidentialSpaceMerchantAuth(merchantAuthConfigFromEnv({ ISSUER_MERCHANT_AUTH_KEYS: '{}' }))).toThrow('requires ISSUER_MERCHANT_AUTH_KEYS or a relay credential');
+    expect(() => assertConfidentialSpaceMerchantAuth(merchantAuthConfigFromEnv({ ISSUER_MERCHANT_AUTH_KEYS: JSON.stringify({ merchant: b64u(generateEd25519().publicKeyBytes) }) }))).not.toThrow();
+    expect(() => assertConfidentialSpaceMerchantAuth(merchantAuthConfigFromEnv({ ISSUER_MERCHANT_AUTH_KEYS: '{"merchant":"cHVi"}' }))).toThrow('valid base64url Ed25519 SPKI');
+    expect(() => assertConfidentialSpaceMerchantAuth(merchantAuthConfigFromEnv({ ISSUER_RELAY_SETTLE_KEY: 'relay-secret' }))).not.toThrow();
   });
 
   it('SEC-04: allows the fixed relay ID only with its separately configured legacy key', async () => {

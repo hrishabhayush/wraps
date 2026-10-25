@@ -1,4 +1,5 @@
-import { lookup, type LookupAddress } from 'node:dns/promises';
+import type { LookupAddress } from 'node:dns';
+import { lookup } from 'node:dns/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, createConnection } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -143,7 +144,9 @@ function isPublicAddress(address: string, family: number): boolean {
       (a === 203 && b === 0 && c === 113)
     );
   }
-  if (family !== 6 || isIP(address) !== 6) return false;
+  // Embedded IPv4 forms need their own IPv4 range check; reject them here so
+  // they cannot bypass the IPv6 global-unicast test or trigger parser errors.
+  if (family !== 6 || isIP(address) !== 6 || address.includes('.')) return false;
   const value = ipv6ToBigInt(address);
   if (value === null) return false;
   // Global unicast is 2000::/3. Exclude documentation and IPv4-mapped addresses.

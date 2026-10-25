@@ -38,6 +38,20 @@ if [ "${ROLE}" = relay ]; then
   [ -n "${RELAY_HOSTNAME:-}" ] || die "RELAY_HOSTNAME is required for relay"
   [[ "${ISSUER_URL}" == https://* ]] || die "ISSUER_URL must use HTTPS"
 
+  WG_METADATA=''
+  if [ "${WG_ENABLED:-false}" = true ]; then
+    [ -n "${WG_ENDPOINT:-}" ] || die "WG_ENDPOINT is required when WG_ENABLED=true"
+    [ -n "${WG_INTERFACE_ADDRESS:-}" ] || die "WG_INTERFACE_ADDRESS is required when WG_ENABLED=true"
+    [ -n "${WG_PEERS_JSON:-}" ] || die "WG_PEERS_JSON is required when WG_ENABLED=true"
+    WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}"
+    WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-ens4}"
+    [[ "${WG_LISTEN_PORT}" =~ ^[0-9]+$ ]] && [ "${WG_LISTEN_PORT}" -ge 1 ] && [ "${WG_LISTEN_PORT}" -le 65535 ] || die "WG_LISTEN_PORT must be a UDP port"
+    for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_LISTEN_PORT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
+      [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "WireGuard metadata values cannot contain newlines"
+    done
+    WG_METADATA="tee-added-capabilities=[\"CAP_NET_ADMIN\"]~tee-env-WG_ENABLED=true~tee-env-WG_ENDPOINT=${WG_ENDPOINT}~tee-env-WG_LISTEN_PORT=${WG_LISTEN_PORT}~tee-env-WG_INTERFACE_ADDRESS=${WG_INTERFACE_ADDRESS}~tee-env-WG_EGRESS_INTERFACE=${WG_EGRESS_INTERFACE}~tee-env-WG_PEERS_JSON=${WG_PEERS_JSON}"
+  fi
+
   for value in "${ATTESTATION_AUDIENCE}" "${ISSUER_URL}" "${RELAY_HOSTNAME}"; do
     [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "relay metadata values cannot contain newlines"
   done
@@ -48,13 +62,17 @@ if [ "${ROLE}" = relay ]; then
   META_SEPARATOR=''
   for ((i = 0; i < ${#separator}; i++)); do
     candidate="${separator:i:1}"
-    if [[ "${REF}${ATTESTATION_AUDIENCE}${ISSUER_URL}${RELAY_HOSTNAME}" != *"${candidate}"* ]]; then
+    if [[ "${REF}${ATTESTATION_AUDIENCE}${ISSUER_URL}${RELAY_HOSTNAME}${WG_METADATA}" != *"${candidate}"* ]]; then
       META_SEPARATOR="${candidate}"
       break
     fi
   done
   [ -n "${META_SEPARATOR}" ] || die "could not choose a safe metadata separator"
   METADATA="^${META_SEPARATOR}^tee-image-reference=${REF}${META_SEPARATOR}tee-env-ATTESTATION_AUDIENCE=${ATTESTATION_AUDIENCE}${META_SEPARATOR}tee-env-ISSUER_URL=${ISSUER_URL}${META_SEPARATOR}tee-env-RELAY_HOSTNAME=${RELAY_HOSTNAME}"
+  if [ -n "${WG_METADATA}" ]; then
+    WG_METADATA="${WG_METADATA//~/${META_SEPARATOR}}"
+    METADATA="${METADATA}${META_SEPARATOR}${WG_METADATA}"
+  fi
 fi
 
 CREATE_ARGS=(
@@ -78,6 +96,9 @@ if [ "${ROLE}" = relay ] && [ -n "${RELAY_ADDRESS:-}" ]; then
   [[ "${RELAY_ADDRESS}" != *$'\n'* && "${RELAY_ADDRESS}" != *$'\r'* ]] || die "RELAY_ADDRESS cannot contain newlines"
   CREATE_ARGS+=("--address=${RELAY_ADDRESS}")
 fi
+if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+  CREATE_ARGS+=(--can-ip-forward)
+fi
 
 if [ "${DRY_RUN}" = 1 ]; then
   printf 'DRY RUN:'
@@ -97,6 +118,16 @@ echo "Creating ${NAME} (${FAMILY}, ${MACHINE_TYPE}, AMD SEV, stops after ${MAX_R
 gc "${CREATE_ARGS[@]}" \
 || gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null \
 || die "could not create ${NAME}"
+
+if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+  RULE=wraps-allow-wireguard
+  if gc compute firewall-rules describe "${RULE}" >/dev/null 2>&1; then
+    gc compute firewall-rules update "${RULE}" --allow="udp:${WG_LISTEN_PORT}" --source-ranges=0.0.0.0/0 --target-tags=wraps
+  else
+    gc compute firewall-rules create "${RULE}" --direction=INGRESS --priority=1000 --network=default \
+      --action=ALLOW --allow="udp:${WG_LISTEN_PORT}" --source-ranges=0.0.0.0/0 --target-tags=wraps
+  fi
+fi
 
 IP="$(gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
 mkdir -p "${STATE_DIR}"

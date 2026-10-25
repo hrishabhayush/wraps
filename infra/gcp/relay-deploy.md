@@ -9,6 +9,10 @@ ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
 ISSUER_URL='https://35.255.13.114' \
 RELAY_HOSTNAME='34.68.188.111' \
 RELAY_ADDRESS='34.68.188.111' \
+WG_ENABLED=true \
+WG_ENDPOINT='34.68.188.111' \
+WG_INTERFACE_ADDRESS='10.77.0.1/24' \
+WG_PEERS_JSON='[{"publicKey":"CLIENT_PUBLIC_KEY_BASE64","allowedAddress":"10.77.0.2/32"}]' \
 infra/gcp/deploy.sh relay --dry-run
 ```
 
@@ -29,10 +33,8 @@ workload then requires `WG_ENDPOINT`, `WG_INTERFACE_ADDRESS`, and
 `ens4`. Peer private keys must remain on clients; the deployment receives public
 keys only. Do not put client private keys or server private keys in metadata.
 
-The image includes the WireGuard and firewall utilities, exposes UDP 51820, and
-opts into Confidential Space's capability launch policy for `CAP_NET_ADMIN`.
-The VM launch metadata must grant `tee-added-capabilities=["CAP_NET_ADMIN"]`,
-and the VPC firewall must allow UDP 51820 to the relay's `wraps` tagged VM. The
-gateway fails closed if it cannot establish its interface or forwarding policy.
-The current launcher does not configure the capability metadata or firewall
-rule automatically; those are required operator steps before enabling WG.
+When enabled, the launcher grants `CAP_NET_ADMIN`, enables VM IP forwarding,
+opens the selected UDP port to the `wraps` tag, and passes public peer config to
+the workload. The VM keeps the required `n2d-standard-2` machine type,
+`project=wraps` label, and 12-hour stop limit. Peer private keys stay on clients.
+The gateway fails closed if it cannot establish its interface or forwarding policy.

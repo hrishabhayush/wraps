@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
 
-/// A helper started by `vpn_quote`, waiting for the user's wallet to pay its RLUSD quote.
+/// A helper started by `topup_quote`, waiting for the user's wallet to pay its RLUSD quote.
 #[derive(Default)]
 pub struct PendingJoin(Mutex<Option<(Child, BufReader<ChildStdout>)>>);
 
@@ -30,17 +30,32 @@ fn resource(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     if path.exists() { Ok(path) } else { Err(format!("missing bundled file {name}")) }
 }
 
-/// Runs the bundled join helper and returns its one-line JSON result.
-fn helper(app: &AppHandle, args: &[&str]) -> Result<Value, String> {
+/// Runs the bundled join helper and returns its one-line JSON result. `input` goes to its stdin.
+/// A failure that the helper describes as JSON (`{"error", "unspent"}`) comes back as that JSON text.
+fn helper(app: &AppHandle, args: &[&str], input: Option<&str>) -> Result<Value, String> {
     let node = bin_dir()?.join("node");
     let script = resource(app, "wraps-connect.mjs")?;
-    let out = Command::new(node).arg(script).args(args).output().map_err(|e| format!("could not start the connect helper: {e}"))?;
-    if !out.status.success() {
-        return Err(helper_error(&out.stderr));
+    let mut child = Command::new(node)
+        .arg(script)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start the connect helper: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Some(text) = input { writeln!(stdin, "{text}").map_err(|e| e.to_string())?; }
     }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let last = stdout.lines().last().ok_or("connect helper printed nothing")?;
-    serde_json::from_str(last).map_err(|e| format!("bad helper output: {e}"))
+    let last = stdout.lines().last().and_then(|l| serde_json::from_str::<Value>(l).ok());
+    if !out.status.success() {
+        return Err(match last {
+            Some(v) if v.get("error").is_some() => v.to_string(),
+            _ => helper_error(&out.stderr),
+        });
+    }
+    last.ok_or_else(|| "connect helper printed no result".into())
 }
 
 fn helper_error(stderr: &[u8]) -> String {
@@ -84,7 +99,7 @@ fn tunnel(app: &AppHandle, args: &[&str]) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn vpn_attest(app: AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || helper(&app, &["--json", "--attest-only"]))
+    tauri::async_runtime::spawn_blocking(move || helper(&app, &["--json", "--attest-only"], None))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -118,27 +133,41 @@ fn bring_up(app: &AppHandle, joined: Value) -> Result<Value, String> {
     }).unwrap_or(Value::Null))
 }
 
-/// Mock rail: the helper buys tokens itself, pays the relay, and the tunnel comes up.
+/// Pays the relay with the wallet's kept tokens (10 MB each) and brings the tunnel up.
+/// On failure the error is JSON with the tokens the relay did not take (`unspent`).
 #[tauri::command]
-pub async fn vpn_connect(app: AppHandle, tokens: u32) -> Result<Value, String> {
+pub async fn vpn_connect(app: AppHandle, tokens: Vec<String>) -> Result<Value, String> {
+    if tokens.is_empty() || tokens.len() > 20 { return Err("connect needs 1 to 20 tokens".into()); }
     tauri::async_runtime::spawn_blocking(move || {
-        let tokens = tokens.clamp(1, 20).to_string();
-        let joined = helper(&app, &["--json", "--tokens", &tokens])?;
-        bring_up(&app, joined)
+        let kept = serde_json::to_string(&tokens).map_err(|e| e.to_string())?;
+        let joined = helper(&app, &["--json", "--spend"], Some(&kept))?;
+        // The relay has the tokens now: if the tunnel fails, none come back to the wallet.
+        bring_up(&app, joined).map_err(|e| serde_json::json!({ "error": e, "unspent": [] }).to_string())
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// RLUSD, step 1: verify the relay and issuer, and return the issuer's quote for the wallet to pay.
+/// Mock rail top-up: returns `{"tokens": [...]}` for the wallet to keep.
 #[tauri::command]
-pub async fn vpn_quote(app: AppHandle, pending: State<'_, PendingJoin>, tokens: u32) -> Result<Value, String> {
+pub async fn topup_mock(app: AppHandle, tokens: u32) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let tokens = tokens.clamp(1, 200).to_string();
+        helper(&app, &["--json", "--buy", &tokens], None)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// RLUSD top-up, step 1: verify the issuer and return its quote for the user's wallet to pay.
+#[tauri::command]
+pub async fn topup_quote(app: AppHandle, pending: State<'_, PendingJoin>, tokens: u32) -> Result<Value, String> {
     if let Some((mut old, _)) = pending.0.lock().unwrap().take() { let _ = old.kill(); let _ = old.wait(); }
     let (child, out, quote) = tauri::async_runtime::spawn_blocking(move || {
-        let tokens = tokens.clamp(1, 20).to_string();
+        let tokens = tokens.clamp(1, 200).to_string();
         let mut child = Command::new(bin_dir()?.join("node"))
             .arg(resource(&app, "wraps-connect.mjs")?)
-            .args(["--json", "--pay", "rlusd", "--tokens", &tokens])
+            .args(["--json", "--buy", &tokens, "--pay", "rlusd"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -155,17 +184,17 @@ pub async fn vpn_quote(app: AppHandle, pending: State<'_, PendingJoin>, tokens: 
     Ok(quote)
 }
 
-/// RLUSD, step 2: hand the paid transaction to the helper; it mints tokens, pays the relay, and the tunnel comes up.
+/// RLUSD top-up, step 2: the quote is paid in `tx_hash`; returns `{"tokens": [...], "txHash"}`.
 #[tauri::command]
-pub async fn vpn_connect_paid(app: AppHandle, pending: State<'_, PendingJoin>, tx_hash: String) -> Result<Value, String> {
+pub async fn topup_paid(pending: State<'_, PendingJoin>, tx_hash: String) -> Result<Value, String> {
     let (mut child, mut out) = pending.0.lock().unwrap().take().ok_or("no quote is waiting for payment")?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut stdin = child.stdin.take().ok_or("helper input closed")?;
         writeln!(stdin, "{tx_hash}").map_err(|e| e.to_string())?;
         drop(stdin);
-        let joined = next_json(&mut child, &mut out)?;
+        let bought = next_json(&mut child, &mut out)?;
         let _ = child.wait();
-        bring_up(&app, joined)
+        Ok(bought)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -173,7 +202,7 @@ pub async fn vpn_connect_paid(app: AppHandle, pending: State<'_, PendingJoin>, t
 
 /// Stops a helper whose quote won't be paid.
 #[tauri::command]
-pub fn vpn_cancel(pending: State<'_, PendingJoin>) {
+pub fn topup_cancel(pending: State<'_, PendingJoin>) {
     if let Some((mut child, _)) = pending.0.lock().unwrap().take() { let _ = child.kill(); let _ = child.wait(); }
 }
 

@@ -25,7 +25,6 @@ export type Activity = { title: string; detail: string; usd: number; at: number;
 export interface Backend {
   listNodes(): Promise<VpnNode[]>;
   attest(nodeId: string): Promise<Attestation>;
-  connect(nodeId: string): Promise<void>;
   disconnect(): Promise<void>;
 }
 
@@ -77,13 +76,15 @@ export class TauriBackend implements Backend {
       return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
     }
   }
-  /** Mock rail: buys and pays 10 tokens (100 MB), registers a fresh key, turns the tunnel on. */
-  async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: 10 }); }
-  /** RLUSD: verifies relay and issuer, returns the issuer's quote for `tokens` (10 MB each). */
-  async quote(tokens: number) { return this.call<Quote>('vpn_quote', { tokens }); }
-  /** RLUSD: the quote is paid in `txHash`; mint tokens, pay the relay, turn the tunnel on. */
-  async connectPaid(txHash: string) { await this.call('vpn_connect_paid', { txHash }); }
-  async cancel() { await this.call('vpn_cancel'); }
+  /** Pays the relay with these kept tokens (10 MB each), registers a fresh key, turns the tunnel on. */
+  async connectWith(tokens: string[]) { return this.call<{ tokens: number; megabytes: number }>('vpn_connect', { tokens }); }
+  /** Mock rail top-up from the live issuer. Returns the tokens for the wallet to keep. */
+  async topUpMock(n: number) { return (await this.call<{ tokens: string[] }>('topup_mock', { tokens: n })).tokens; }
+  /** RLUSD top-up, step 1: the attested issuer's quote for `n` tokens. */
+  async topUpQuote(n: number) { return this.call<Quote>('topup_quote', { tokens: n }); }
+  /** RLUSD top-up, step 2: the quote is paid in `txHash`. Returns the tokens for the wallet to keep. */
+  async topUpPaid(txHash: string) { return (await this.call<{ tokens: string[] }>('topup_paid', { txHash })).tokens; }
+  async topUpCancel() { await this.call('topup_cancel'); }
   async openTx(txHash: string) { await this.call('open_tx', { txHash }); }
   async disconnect() { await this.call('vpn_disconnect'); }
 }

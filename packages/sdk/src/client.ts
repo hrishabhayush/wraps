@@ -16,7 +16,7 @@ import {
   issuerTransport,
   tokensToRlusd,
 } from '@wraps/issuer';
-import { Token, TokenVerifier, blindTokens, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
+import { Token, TokenVerifier, blindTokens, deserializeToken, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
 import type { PinnedRelayTransport } from './relay';
 import { deriveWireGuardPublicKey, isVerifiedWireGuardReceipt, registerWireGuardPeer as registerPeer, WireGuardRegistrationError, type VerifiedWireGuardReceipt } from './wireguard.js';
 
@@ -143,6 +143,34 @@ export class PrivatePayClient {
   get balance(): number {
     return this.tokens.length;
   }
+  /** The spendable tokens, serialized, so an app can keep them between runs. */
+  exportTokens(): string[] {
+    return this.tokens.map(serializeToken);
+  }
+
+  /** Adds tokens kept from an earlier run. Each must verify under the attested issuer key. */
+  async importTokens(serialized: string[]): Promise<number> {
+    this.attested();
+    const fresh = serialized.map(deserializeToken);
+    for (const t of fresh) {
+      if (!(await this.tokenVerifier!.verify(t))) throw new Error('a kept token does not verify under the attested issuer key');
+    }
+    this.tokens.push(...fresh);
+    return this.balance;
+  }
+
+  /** Asks the issuer (read-only /verify) and drops kept tokens that are spent, expired or bad. Returns how many were dropped. */
+  async dropSpentTokens(): Promise<number> {
+    if (this.tokens.length === 0) return 0;
+    const v = await this.post('/verify', { tokens: this.tokens.map(serializeToken) });
+    if (v.status !== 200 || !Array.isArray(v.body.results) || v.body.results.length !== this.tokens.length) {
+      throw new Error(`issuer /verify failed: ${v.body?.error ?? v.status}`);
+    }
+    const before = this.tokens.length;
+    this.tokens = this.tokens.filter((_, i) => v.body.results[i].ok);
+    return before - this.tokens.length;
+  }
+
   /** Tokens held by payments whose outcome is not final yet. */
   get reservedTokens(): number {
     let n = 0;

@@ -84,7 +84,11 @@ export class WireGuardTokenMeter {
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
-      const status = message === 'unknown peer' ? 404 : message === 'invalid tokens' ? 401 : message === 'duplicate or excessive token batch' ? 409 : 503;
+      const status = message === 'unknown peer' ? 404
+        : message === 'invalid tokens' ? 401
+          : message === 'duplicate or excessive token batch' ? 409
+            : message === 'request body too large' ? 413
+              : error instanceof SyntaxError ? 400 : 503;
       return this.respond(res, status, status === 503 ? 'peer registration failed' : message);
     }
   }

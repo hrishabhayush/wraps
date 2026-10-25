@@ -18,7 +18,7 @@ export async function readJson(req: IncomingMessage, limit = 1_000_000): Promise
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers });
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store, private', ...headers });
   res.end(JSON.stringify(body));
 }
 

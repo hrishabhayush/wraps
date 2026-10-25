@@ -7,6 +7,7 @@ import {
   BlindTokenRequiredBody,
   PAYMENT_HEADER,
   PaymentRequiredBody,
+  QUOTE_HEADER,
   TopUpWallet,
   Transport,
   fetchAttestedIssuer,
@@ -172,6 +173,11 @@ export class PrivatePayClient {
     const body = (await first.json()) as BlindTokenRequiredBody;
     this.checkChallenge(first, body);
     const price = body.price;
+    // SR1: a quote made for another resource must not be paid from this call.
+    if (body.resource !== undefined) {
+      const u = new URL(url);
+      if (body.resource !== u.pathname + u.search) this.refuse('BAD_QUOTE', `402 quote is for ${body.resource}, not ${u.pathname + u.search}`);
+    }
 
     if (price > this.opts.caps.perCallTokens) {
       return this.refuse('PER_CALL_CAP', `price ${price} is above the per-call cap of ${this.opts.caps.perCallTokens}`);
@@ -186,6 +192,8 @@ export class PrivatePayClient {
     const pay = this.tokens.splice(0, price);
     const headers = new Headers(init.headers);
     headers.set('authorization', encodeAuthorization(pay));
+    // M3: name the merchant's single-use quote, so the payment is bound to this resource and price.
+    if (body.quoteId) headers.set(QUOTE_HEADER, body.quoteId);
     const res = await this.transport(url, { ...init, headers });
     this.emit({ type: 'paid', url, price, balance: this.balance, spentToday: this.spent.tokens });
     return res;

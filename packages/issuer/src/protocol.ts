@@ -34,6 +34,36 @@ export interface AttestationResponse {
   issuerName: string;
   /** base64url public keys. Their hashPublicKeys() is in the attestation. "tls" is the SPKI of the TLS key, if served over https. */
   publicKeys: { token: string; claim: string; tls?: string };
+  /** Hex RFC 9578 token_key_id of the current token key (SHA-256 of its bytes). */
+  tokenKeyId?: string;
+  /** Unix ms after which tokens signed with the current key are refused (SR3). */
+  tokenKeyNotAfter?: number;
+  /** All accepted token keys with their validity windows, signed with the attested claim key. */
+  tokenKeys?: SignedTokenKeys;
+}
+
+/** One issuer token-signing key epoch (SR3: tokens expire with their key). */
+export interface TokenKeyEpoch {
+  /** Hex token_key_id. */
+  keyId: string;
+  /** base64url SPKI bytes. */
+  publicKey: string;
+  notBefore: number;
+  notAfter: number;
+  /** The key new tokens are signed with. */
+  current: boolean;
+}
+
+export interface TokenKeysStatement {
+  v: 1;
+  issuer: string;
+  keys: TokenKeyEpoch[];
+  at: number;
+}
+
+export interface SignedTokenKeys {
+  statement: TokenKeysStatement;
+  signature: string;
 }
 
 /** Running total the issuer owes a merchant. Signed with the attested claim key. */
@@ -73,6 +103,12 @@ export interface VerifyResult {
   results: { ok: boolean; reason?: string }[];
 }
 
+/**
+ * Header a paying client sends with its tokens: the quoteId from the merchant's 402.
+ * It binds the payment to one resource and one price (SR1, M3).
+ */
+export const QUOTE_HEADER = 'x-blindtoken-quote';
+
 /** 402 a merchant sends for the blind token scheme. */
 export interface BlindTokenRequiredBody {
   scheme: 'blindtoken';
@@ -81,10 +117,17 @@ export interface BlindTokenRequiredBody {
   service: string;
   issuer: string;
   issuerName: string;
+  /** Single-use quote for this resource and price. Send it back in the QUOTE_HEADER. */
+  quoteId?: string;
+  /** Path and query the quote is for. */
+  resource?: string;
+  /** Unix ms. A payment after this is refused as stale (SR5). */
+  expiresAt?: number;
 }
 
 const CLAIM_CONTEXT = 'wraps-claim-v1';
 const RESERVES_CONTEXT = 'wraps-reserves-v1';
+const TOKEN_KEYS_CONTEXT = 'wraps-token-keys-v1';
 
 function framed(context: string, obj: unknown): Uint8Array {
   return new TextEncoder().encode(`${context}\0${JSON.stringify(obj)}`);
@@ -104,4 +147,12 @@ export function signReserves(key: KeyObject, reserves: ReservesStatement): Signe
 
 export function verifyReserves(signed: SignedReserves, claimPublicKey: Uint8Array): boolean {
   return ed25519Verify(claimPublicKey, framed(RESERVES_CONTEXT, signed.reserves), fromB64u(signed.signature));
+}
+
+export function signTokenKeys(key: KeyObject, statement: TokenKeysStatement): SignedTokenKeys {
+  return { statement, signature: b64u(ed25519Sign(key, framed(TOKEN_KEYS_CONTEXT, statement))) };
+}
+
+export function verifyTokenKeys(signed: SignedTokenKeys, claimPublicKey: Uint8Array): boolean {
+  return ed25519Verify(claimPublicKey, framed(TOKEN_KEYS_CONTEXT, signed.statement), fromB64u(signed.signature));
 }

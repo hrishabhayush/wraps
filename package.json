@@ -19,6 +19,7 @@
     "agent": "tsx packages/agent/src/cli.ts",
     "spybot": "tsx packages/spybot/src/cli.ts",
     "test": "vitest run",
+    "test:conformance": "vitest run conformance --reporter=json --outputFile=node_modules/.cache/conformance.json > /dev/null 2>&1; node -e \"const r=require('./node_modules/.cache/conformance.json');let p=0,f=0;for(const t of r.testResults)for(const a of t.assertionResults){const ok=a.status==='passed';ok?p++:f++;console.log((ok?'PASS  ':'FAIL  ')+a.title)}console.log('\\\\n'+p+' passed, '+f+' failed');process.exit(f||!r.success?1:0)\"",
     "bench": "tsx scripts/bench.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

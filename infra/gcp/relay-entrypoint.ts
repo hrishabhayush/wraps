@@ -1,5 +1,4 @@
 import { isIP } from 'node:net';
-import { spawn } from 'node:child_process';
 import type { Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { AttestationProvider, AttestationVerifier } from '@wraps/attestation';
@@ -50,14 +49,6 @@ function waitForListening(server: HttpServer | HttpsServer): Promise<void> {
   return new Promise((resolve, reject) => {
     server.once('listening', resolve);
     server.once('error', reject);
-  });
-}
-
-function runCommand(command: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`${command} exited with ${code}`)));
   });
 }
 
@@ -121,10 +112,9 @@ async function main(): Promise<void> {
     attestationPort: positivePort('RELAY_ATTESTATION_PORT', 8080),
   };
   const wireGuardEnabled = process.env.WG_ENABLED === 'true';
-  if (wireGuardEnabled) {
-    startupStep = 'wireguard-forwarding';
-    await runCommand('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
-  }
+  // The VM is created with --can-ip-forward, which enables this host setting.
+  // Confidential Space exposes /proc/sys read-only inside the workload, so do
+  // not try to rewrite it here; startWireGuardGateway verifies the value.
   startupStep = 'relay-listeners';
   const servers = wireGuardEnabled
     ? await startConfidentialWireGuardRelay({

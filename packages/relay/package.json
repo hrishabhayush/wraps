@@ -4,11 +4,16 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@peculiar/x509": "^1.14.3",
+    "@wraps/attestation": "*",
     "@wraps/tokens": "*"
   },
   "scripts": {
     "typecheck": "tsc -p ../../tsconfig.json --noEmit",
     "test": "vitest run"
   },
-  "exports": "./src/index.ts"
+  "exports": {
+    ".": "./src/index.ts",
+    "./attestation": "./src/attestation.ts"
+  }
 }

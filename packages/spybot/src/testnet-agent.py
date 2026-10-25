@@ -7,7 +7,8 @@ import sys
 
 import requests
 from xrpl.wallet import Wallet
-from x402_xrpl.clients import decode_payment_response, x402_requests
+from x402_xrpl.clients.base import decode_payment_response
+from x402_xrpl.clients.requests import x402_requests
 
 
 def required(name: str) -> str:

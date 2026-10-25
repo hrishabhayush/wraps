@@ -18,20 +18,28 @@ npm test
 
 ## t54 Testnet demo (SPY-04)
 
-The buyer and watcher run separately. The buyer uses t54's XRPL x402 client to pay a configured testnet resource; the watcher tails that resource's account on XRPL Testnet and emits JSONL `payment` events for the demo UI.
+The merchant, buyer, and watcher run separately. The local FastAPI merchant protects `/hello` with t54's XRPL x402 middleware; the buyer pays it on XRPL Testnet, and the watcher tails the merchant account and emits JSONL `payment` events for the demo UI.
 
-Install the payer's Python dependencies once:
+Install the Python dependencies once (Python 3.11+):
 
 ```sh
-python3 -m pip install 'x402-xrpl==0.3.4' requests
+python3 -m pip install 'x402-xrpl==0.3.4' requests fastapi uvicorn
 ```
 
-Set the same resource URL and merchant account in both terminals. The buyer also needs a testnet wallet seed funded with test XRP; keep the seed in the environment and out of source control.
+Create two XRPL Testnet wallets and fund them from the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets). Keep their seeds in environment variables and out of source control. Start the merchant:
+
+```sh
+XRPL_MERCHANT_SEED=sMerchantSeed \
+T54_TESTNET_FACILITATOR_URL=https://xrpl-facilitator-testnet.t54.ai \
+uvicorn src.testnet-merchant:app --host 127.0.0.1 --port 8787
+```
+
+The same resource URL and merchant account go to the watcher and buyer:
 
 Watcher:
 
 ```sh
-T54_TESTNET_RESOURCE_URL=https://your-testnet-resource.example/hello \
+T54_TESTNET_RESOURCE_URL=http://127.0.0.1:8787/hello \
 T54_TESTNET_MERCHANT=rMerchantAddress \
 T54_TESTNET_AMOUNT_DROPS=1000 \
 npm run spy:testnet
@@ -41,7 +49,7 @@ Buyer:
 
 ```sh
 XRPL_BUYER_SEED=sTestnetSeed \
-T54_TESTNET_RESOURCE_URL=https://your-testnet-resource.example/hello \
+T54_TESTNET_RESOURCE_URL=http://127.0.0.1:8787/hello \
 python3 src/testnet-agent.py
 ```
 

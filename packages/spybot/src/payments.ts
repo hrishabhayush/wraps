@@ -208,23 +208,31 @@ export async function* followPayments(
   while (!opts.signal?.aborted) {
     let marker: unknown;
     let maxSeen = min - 1;
-    do {
-      const res: any = await rpc.request("account_tx", {
-        account: merchant,
-        ledger_index_min: min,
-        ledger_index_max: -1,
-        forward: true,
-        limit: 200,
-        ...(marker ? { marker } : {}),
-      });
-      for (const entry of res.transactions ?? []) {
-        const p = parseX402Payment(entry);
-        const ledger = (entry.tx ?? entry.tx_json)?.ledger_index ?? entry.ledger_index;
-        if (typeof ledger === "number") maxSeen = Math.max(maxSeen, ledger);
-        if (p && p.merchant === merchant) yield p;
-      }
-      marker = res.marker;
-    } while (marker && !opts.signal?.aborted);
+    try {
+      do {
+        const res: any = await rpc.request("account_tx", {
+          account: merchant,
+          ledger_index_min: min,
+          ledger_index_max: -1,
+          forward: true,
+          limit: 200,
+          ...(marker ? { marker } : {}),
+        });
+        for (const entry of res.transactions ?? []) {
+          const p = parseX402Payment(entry);
+          const ledger = (entry.tx ?? entry.tx_json)?.ledger_index ?? entry.ledger_index;
+          if (typeof ledger === "number") maxSeen = Math.max(maxSeen, ledger);
+          if (p && p.merchant === merchant) yield p;
+        }
+        marker = res.marker;
+      } while (marker && !opts.signal?.aborted);
+    } catch (error) {
+      // XRPL rejects a range whose minimum is one ledger beyond the current
+      // validated ledger. That is the normal idle state while following.
+      if ((error as { code?: string }).code !== "lgrIdxsInvalid") throw error;
+      await sleep(opts.intervalMs ?? 4000);
+      continue;
+    }
     min = maxSeen + 1;
     await sleep(opts.intervalMs ?? 4000);
   }

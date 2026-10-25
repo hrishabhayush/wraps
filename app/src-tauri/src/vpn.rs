@@ -213,12 +213,15 @@ pub async fn vpn_disconnect(app: AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
-/// Opens a transaction on the XRPL EVM testnet explorer in the default browser.
+/// Opens a transaction (0x + 64 hex) or an address (0x + 40 hex) on the XRPL EVM testnet explorer.
 #[tauri::command]
 pub fn open_tx(tx_hash: String) -> Result<(), String> {
-    if !(tx_hash.len() == 66 && tx_hash.starts_with("0x") && tx_hash[2..].chars().all(|c| c.is_ascii_hexdigit())) {
-        return Err("bad transaction hash".into());
-    }
-    Command::new("open").arg(format!("https://explorer.testnet.xrplevm.org/tx/{tx_hash}")).spawn().map_err(|e| e.to_string())?;
+    let hex = tx_hash.starts_with("0x") && tx_hash[2..].chars().all(|c| c.is_ascii_hexdigit());
+    let path = match tx_hash.len() {
+        66 if hex => "tx",
+        42 if hex => "address",
+        _ => return Err("bad transaction hash or address".into()),
+    };
+    Command::new("open").arg(format!("https://explorer.testnet.xrplevm.org/{path}/{tx_hash}")).spawn().map_err(|e| e.to_string())?;
     Ok(())
 }

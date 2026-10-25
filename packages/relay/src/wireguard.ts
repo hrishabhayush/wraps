@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
-import { access, mkdtemp, rm, statfs, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, statfs, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, join } from 'node:path';
 
@@ -52,7 +51,7 @@ export interface RunningWireGuardGateway {
 /**
  * Start a kernel WireGuard gateway with pre-authorized peers.
  *
- * The workload needs the `wg`/`wg-quick` tools, /dev/net/tun, and CAP_NET_ADMIN.
+ * The workload needs kernel WireGuard support, `wg`/`wg-quick`, and CAP_NET_ADMIN.
  * These privileges must be supplied by the Confidential Space runtime, not by an
  * unrestricted/privileged container. If they are unavailable, startup fails closed.
  * IPv4 Internet egress is NATed; private, local, link-local, and reserved IPv4
@@ -63,12 +62,6 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
   const run = options.runCommand ?? runSystemCommand;
   const runtimeDirectory = options.runtimeDirectory ?? DEFAULT_RUNTIME_DIRECTORY;
   if (options.requireTmpfs !== false) await assertTmpfs(runtimeDirectory);
-  try {
-    await access('/dev/net/tun', constants.R_OK | constants.W_OK);
-  } catch {
-    throw new Error('WireGuard requires readable and writable /dev/net/tun');
-  }
-
   const privateKey = (await run('wg', ['genkey'])).trim();
   validateWireGuardKey(privateKey, 'generated private key');
   const publicKey = (await run('wg', ['pubkey'], `${privateKey}\n`)).trim();
@@ -119,7 +112,7 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
   } catch {
     try { await run('wg-quick', ['down', configPath]); } catch { /* clean partial setup best-effort */ }
     await rm(privateDirectory, { recursive: true, force: true });
-    throw new Error('Could not start WireGuard; verify wg-quick, TUN access, CAP_NET_ADMIN, and the host firewall tools');
+    throw new Error('Could not start WireGuard; verify kernel WireGuard support, CAP_NET_ADMIN, and the host firewall tools');
   }
 
   const identity: WireGuardGatewayIdentity = {

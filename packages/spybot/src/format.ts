@@ -6,12 +6,17 @@ export function formatAmount(n: number): string {
   return String(Number(n.toPrecision(12)));
 }
 
+function truncate(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, n - 1).trimEnd() + "…";
+}
+
 export function describeMatch(m: ServiceMatch): string {
   switch (m.kind) {
     case "service":
-      return `${m.merchantLabel} "${m.entry.service}"`;
+      // "~" marks a best price match: the hub does not show the merchant's whole catalog.
+      return `${m.merchantLabel} ${m.exact ? "" : "~"}"${truncate(m.entry.service, 60)}"`;
     case "merchant":
-      return `${m.merchantLabel} (${m.candidates} services at this price)`;
+      return `${m.merchantLabel} (${m.candidates}${m.partial ? "+" : ""} services at this price)`;
     case "unmatched-price":
       return `${m.merchantLabel} (price not in directory)`;
     case "unlisted":

@@ -56,15 +56,22 @@ describe("parseX402Payment", () => {
 describe("matchService", () => {
   const p = parseX402Payment(entry)!;
 
-  it("names the service when one service has the price", () => {
-    const m = matchService(p, [card("X Tweets by IDs", 0.006), card("Other", 0.012)]);
-    expect(m.kind).toBe("service");
+  it("names the service when the full catalog has one service at the price", () => {
+    const m = matchService(p, { entries: [card("X Tweets by IDs", 0.006), card("Other", 0.012)], complete: true });
+    expect(m).toMatchObject({ kind: "service", exact: true });
     expect(formatPayment(p, m)).toMatch(/  rJmsb9…  →  AskSurf "X Tweets by IDs"  0\.006 RLUSD$/);
+  });
+
+  it("marks a best price match with ~ when the catalog is partial", () => {
+    const m = matchService(p, [card("X Tweets by IDs", 0.006)]);
+    expect(m).toMatchObject({ kind: "service", exact: false });
+    expect(formatPayment(p, m)).toContain('AskSurf ~"X Tweets by IDs"');
   });
 
   it("reports only the merchant when several services share the price", () => {
     const m = matchService(p, [card("A", 0.006), card("B", 0.006)]);
-    expect(m).toMatchObject({ kind: "merchant", candidates: 2 });
+    expect(m).toMatchObject({ kind: "merchant", candidates: 2, partial: true });
+    expect(formatPayment(p, m)).toContain("AskSurf (2+ services at this price)");
   });
 
   it("says so when the price is not listed", () => {

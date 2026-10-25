@@ -31,7 +31,26 @@ export interface Directory {
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
-function decodeEntities(s: string): string {
+/**
+ * Parse a hub price span. `amount` is "0.006"; `rawCurrency` is one of
+ * "RLUSD", "XRP", "Unverified RLUSD", "IOU USDC · rGm7WCVp…uWhE";
+ * `attrs` may hold `title="Issuer: r..."`.
+ */
+export function parsePriceText(
+  amount: string,
+  rawCurrency: string,
+  attrs = "",
+): Pick<DirectoryEntry, "price" | "currency" | "issuer" | "verified"> | null {
+  const price = Number(amount);
+  if (!Number.isFinite(price)) return null;
+  const verified = !/unverified/i.test(rawCurrency);
+  const currency = text(rawCurrency).replace(/^(Unverified|IOU)\s+/i, "").split(/\s|·/)[0];
+  if (!currency) return null;
+  const issuer = attrs.match(/title="Issuer:\s*(r\w+)"/)?.[1];
+  return { price, currency, ...(issuer ? { issuer } : {}), verified };
+}
+
+export function decodeEntities(s: string): string {
   return s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e: string) => {
     if (e[0] === "#") {
       const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
@@ -73,24 +92,11 @@ export function parseDirectory(html: string): DirectoryEntry[] {
     const priceSpan = body.match(/<span\b([^>]*)>\s*([\d.]+)\s+([^<]+?)\s*<\/span>/);
     if (!priceSpan) continue;
     const [, attrs, amount, rawCurrency] = priceSpan;
-    const price = Number(amount);
-    if (!Number.isFinite(price)) continue;
+    const parsed = parsePriceText(amount, rawCurrency, attrs);
+    if (!parsed) continue;
 
-    // "RLUSD", "XRP", "Unverified RLUSD", "IOU USDC · rGm7WCVp…uWhE"
-    const verified = !/unverified/i.test(rawCurrency);
-    const currency = text(rawCurrency).replace(/^(Unverified|IOU)\s+/i, "").split(/\s|·/)[0];
-    const issuer = attrs.match(/title="Issuer:\s*(r\w+)"/)?.[1];
-
-    const entry: DirectoryEntry = {
-      address,
-      service: text(h3[1]),
-      host: p ? text(p[1]) : "",
-      price,
-      currency,
-      ...(issuer ? { issuer } : {}),
-      verified,
-    };
-    const key = `${address}|${entry.service}|${price}|${currency}`;
+    const entry: DirectoryEntry = { address, service: text(h3[1]), host: p ? text(p[1]) : "", ...parsed };
+    const key = `${address}|${entry.service}|${entry.price}|${entry.currency}`;
     if (!entries.has(key)) entries.set(key, entry);
   }
 

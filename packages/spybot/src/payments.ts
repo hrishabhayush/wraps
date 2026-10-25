@@ -99,14 +99,25 @@ export function parseX402Payment(entry: any): X402Payment | null {
 }
 
 export type ServiceMatch =
-  /** Exactly one listed service has this price. */
-  | { kind: "service"; merchantLabel: string; entry: DirectoryEntry }
-  /** Several listed services share this price: we know only the merchant. */
-  | { kind: "merchant"; merchantLabel: string; candidates: number }
-  /** The merchant is listed but no service has this price. */
+  /**
+   * Exactly one known service has this price. `exact` is true only when we
+   * hold the merchant's whole catalog; otherwise it is the best price match
+   * among the services the hub shows.
+   */
+  | { kind: "service"; merchantLabel: string; entry: DirectoryEntry; exact: boolean }
+  /** Several services share this price: we know only the merchant. */
+  | { kind: "merchant"; merchantLabel: string; candidates: number; partial: boolean }
+  /** The merchant is listed but no known service has this price. */
   | { kind: "unmatched-price"; merchantLabel: string }
   /** The address is not in the directory. */
   | { kind: "unlisted"; merchantLabel: string };
+
+/** What we know about one merchant's services. */
+export interface MerchantServices {
+  entries: DirectoryEntry[];
+  /** True when `entries` is the merchant's whole catalog. */
+  complete: boolean;
+}
 
 const EPS = 1e-9;
 
@@ -115,19 +126,23 @@ export function merchantLabel(address: string, entries: DirectoryEntry[] | undef
   return e?.merchant ?? e?.host ?? shortAddr(address);
 }
 
-/** Name the service by matching the paid amount to the directory price. */
-export function matchService(p: X402Payment, entries: DirectoryEntry[] | undefined): ServiceMatch {
-  const label = merchantLabel(p.merchant, entries);
-  if (!entries?.length) return { kind: "unlisted", merchantLabel: label };
-  const hits = entries.filter(
+/**
+ * Name the service by matching the paid amount to listed prices.
+ * Pass a bare entry list (treated as incomplete) or a MerchantServices.
+ */
+export function matchService(p: X402Payment, known: DirectoryEntry[] | MerchantServices | undefined): ServiceMatch {
+  const ms: MerchantServices | undefined = Array.isArray(known) ? { entries: known, complete: false } : known;
+  const label = merchantLabel(p.merchant, ms?.entries);
+  if (!ms?.entries.length) return { kind: "unlisted", merchantLabel: label };
+  const hits = ms.entries.filter(
     (e) =>
       e.currency === p.currency &&
       (!e.issuer || !p.issuer || e.issuer === p.issuer) &&
       Math.abs(e.price - p.amount) < EPS,
   );
   const services = new Set(hits.map((h) => h.service));
-  if (services.size === 1) return { kind: "service", merchantLabel: label, entry: hits[0] };
-  if (services.size > 1) return { kind: "merchant", merchantLabel: label, candidates: services.size };
+  if (services.size === 1) return { kind: "service", merchantLabel: label, entry: hits[0], exact: ms.complete };
+  if (services.size > 1) return { kind: "merchant", merchantLabel: label, candidates: services.size, partial: !ms.complete };
   return { kind: "unmatched-price", merchantLabel: label };
 }
 

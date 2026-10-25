@@ -13,6 +13,7 @@ Usage: npm run spy -- [options]
   --follow            Keep polling for new payments.
   --no-cluster        Skip funder clustering.
   --no-upstream       Do not look one hop above each funder.
+  --no-catalog        Use only the hub home page, not merchant pages.
   --quicknode <url>   Use a Quicknode XRPL endpoint (or env QUICKNODE_XRPL_URL).
   --cache <path>      Directory cache file.
   --json              Print events as JSON lines (for piping to a web page).
@@ -26,6 +27,7 @@ const { values } = parseArgs({
     follow: { type: "boolean", default: false },
     "no-cluster": { type: "boolean", default: false },
     "no-upstream": { type: "boolean", default: false },
+    "no-catalog": { type: "boolean", default: false },
     quicknode: { type: "string" },
     cache: { type: "string" },
     json: { type: "boolean", default: false },
@@ -47,6 +49,7 @@ const spy = new SpyBot({
   follow: values.follow,
   cluster: !values["no-cluster"],
   upstream: !values["no-upstream"],
+  catalog: !values["no-catalog"],
   quicknodeUrl,
   cachePath: values.cache,
 });
@@ -55,7 +58,7 @@ const log = (s: string) => process.stdout.write(s + "\n");
 const err = (s: string) => process.stderr.write(s + "\n");
 
 if (values.json) {
-  for (const ev of ["directory", "payment", "funder", "cluster", "warning", "done"] as const) {
+  for (const ev of ["directory", "catalog", "payment", "funder", "cluster", "warning", "done"] as const) {
     spy.on(ev, (data?: unknown) => log(JSON.stringify({ event: ev, data: data instanceof Error ? data.message : data })));
   }
 } else {
@@ -63,6 +66,12 @@ if (values.json) {
     err(`directory: ${d.count} services from xrpl-ai.org${d.fromCache ? ` (cache from ${d.fetchedAt})` : ""}`),
   );
   err(`watching ${merchants.map((m) => shortAddr(m, 6, 4)).join(", ")} via ${quicknodeUrl ? "Quicknode" : "public nodes"}`);
+  spy.on("catalog", (c) =>
+    err(
+      `catalog ${shortAddr(c.address, 6, 4)}: hub shows ${c.seen} of ${c.total ?? "?"} APIs` +
+        (c.complete ? " (complete)" : ' ("~" = best price match among those)'),
+    ),
+  );
   spy.on("payment", ({ payment, match }) => log(formatPayment(payment, match)));
   spy.on("progress", ({ done, total }) => {
     if (process.stderr.isTTY) process.stderr.write(`\rtracing funders ${done}/${total}`);

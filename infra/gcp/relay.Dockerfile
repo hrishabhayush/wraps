@@ -6,13 +6,16 @@ WORKDIR /repo
 COPY package.json package-lock.json tsconfig.json ./
 COPY infra/gcp/relay-entrypoint.ts ./infra/gcp/relay-entrypoint.ts
 COPY packages/relay/ ./packages/relay/
+COPY packages/issuer/ ./packages/issuer/
 COPY packages/attestation/ ./packages/attestation/
 COPY packages/tokens/ ./packages/tokens/
+COPY infra/gcp/expected.json ./infra/gcp/expected.json
 
 # The lockfile pins all workspace dependencies. Only the relay's required
 # workspaces and the root build tools are installed into this build stage.
 RUN npm ci --no-audit --no-fund --ignore-scripts --include-workspace-root \
     --workspace @wraps/relay \
+    --workspace @wraps/issuer \
     --workspace @wraps/attestation \
     --workspace @wraps/tokens
 RUN ./node_modules/.bin/esbuild infra/gcp/relay-entrypoint.ts \
@@ -24,8 +27,11 @@ RUN ./node_modules/.bin/esbuild infra/gcp/relay-entrypoint.ts \
 FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09
 WORKDIR /app
 COPY --from=build /out/relay.mjs ./relay.mjs
+COPY infra/gcp/expected.json ./expected.json
 
 ENV NODE_ENV=production \
+    ATTESTATION=confidential-space \
+    EXPECTED_JSON=/app/expected.json \
     RELAY_PROXY_HOST=0.0.0.0 \
     RELAY_PROXY_PORT=443 \
     RELAY_ATTESTATION_HOST=0.0.0.0 \

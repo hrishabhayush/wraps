@@ -1,8 +1,18 @@
 import { isIP } from 'node:net';
 import type { Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
-import { ConfidentialSpaceProvider } from '@wraps/attestation';
+import type { AttestationProvider, AttestationVerifier } from '@wraps/attestation';
 import { createRelayTlsIdentity, startConfidentialRelay } from '@wraps/relay';
+
+type AttestationRuntime = {
+  ConfidentialSpaceProvider: new (options: { audience: string }) => AttestationProvider;
+  verifierFromEnv: (role: 'issuer') => AttestationVerifier;
+};
+
+type IssuerRuntime = {
+  fetchAttestedIssuer: (issuerUrl: string, verifier: AttestationVerifier) => Promise<unknown>;
+  issuerTransport: (attestedIssuer: unknown) => unknown;
+};
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -53,12 +63,25 @@ async function main(): Promise<void> {
   if (issuerUrl.protocol !== 'https:') throw new Error('ISSUER_URL must use HTTPS');
   const hostname = validateRelayHost(required('RELAY_HOSTNAME'));
 
+  // These APIs are supplied by the GCP attestation and issuer runtime branches.
+  // Keep the structural boundary local so this infra entrypoint can be integrated
+  // while those dependency branches remain stacked separately.
+  const attestationRuntime = await import('@wraps/attestation') as unknown as AttestationRuntime;
+  const issuerRuntime = await import('@wraps/issuer') as unknown as IssuerRuntime;
+  const issuerVerifier = attestationRuntime.verifierFromEnv('issuer');
+  const attestedIssuer = await issuerRuntime.fetchAttestedIssuer(
+    issuerUrl.toString().replace(/\/$/, ''),
+    issuerVerifier,
+  );
+  const issuerFetch = issuerRuntime.issuerTransport(attestedIssuer) as typeof fetch;
+
   // Both the TLS identity and its private key are created in the workload's
   // process memory. The relay attestation endpoint binds this cert's SPKI.
   const identity = await createRelayTlsIdentity(hostname);
-  const provider = new ConfidentialSpaceProvider({ audience });
+  const provider = new attestationRuntime.ConfidentialSpaceProvider({ audience });
   const servers = startConfidentialRelay({
     issuerUrl: issuerUrl.toString(),
+    issuerFetch,
     tlsCertificate: identity.certPem,
     tlsPrivateKey: identity.keyPem,
     attestationProvider: provider,

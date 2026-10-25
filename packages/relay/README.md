@@ -42,21 +42,25 @@ shared with the HTTPS proxy listener; the attestation endpoint hashes the
 certificate's SPKI so the SDK can pin the same key.
 
 The receipt listener is separate HTTP because the SDK-02 transport fetches its
-nonce-bound receipt over HTTP by default. Start it on a dedicated port and set
-the SDK's `attestationUrl` explicitly, for example
-`http://relay.example:8080/attestation`; set the proxy URL to the HTTPS
+nonce-bound receipt over HTTP by default. `startConfidentialRelay()` starts
+both listeners; set the SDK's `attestationUrl` explicitly, for example
+`http://relay.example:8080/attestation`, and set the proxy URL to the HTTPS
 listener, such as `https://relay.example:443`. The endpoint disables caching
 and limits each client IP to 60 requests per minute by default. The Cloud
 firewall must allow the selected attestation port from the demo agent.
 
 ```ts
-import { startRelayAttestationServer } from '@wraps/relay/attestation';
+import { startConfidentialRelay } from '@wraps/relay';
 
-const server = startRelayAttestationServer({
-  host: '0.0.0.0',
-  port: 8080,
+const servers = startConfidentialRelay({
+  issuerUrl: process.env.ISSUER_URL,
   tlsCertificate: certificatePem,
-  provider: confidentialSpaceAttestationProvider,
+  tlsPrivateKey: privateKeyPem,
+  attestationProvider: confidentialSpaceAttestationProvider,
+  proxyHost: '0.0.0.0',
+  proxyPort: 443,
+  attestationHost: '0.0.0.0',
+  attestationPort: 8080,
 });
 ```
 

@@ -20,14 +20,16 @@ RUN mkdir /out && npx esbuild packages/issuer/src/cli.ts \
 # ---- runtime: node and one bundled file ------------------------------------------
 FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09
 COPY --from=build /out/issuer.mjs /app/issuer.mjs
+# Fixed wallet key (git-ignored, made by hand once): the wallet and its AP4M registration survive restarts.
+COPY infra/gcp/secrets/issuer-wallet.secret /app/issuer-wallet.secret
 
 # Fixed in the image, so the operator cannot change them: no allow_env_override label.
-# Money: the issuer makes its own XRPL EVM wallet in memory at boot (ISSUER_WALLET=enclave) and names
-# it in the attestation. Users top up by paying it RLUSD (or on the mock rail for the agent demo); every
+# Money: the issuer uses one fixed XRPL EVM wallet (ISSUER_WALLET_KEY_FILE, readable by anyone who can
+# pull this image) and names it in the attestation. Users top up by paying it RLUSD (or on the mock rail for the agent demo); every
 # 2 minutes it pays merchants' earned tabs through its own Mastercard AP4M Channel (PAYOUT_RAIL=ap4m).
 # Register the wallet address for the team in the AP4M portal first; until then payouts wait.
-# The key dies with the VM, so before a planned restart call POST /sweep: it sends everything to
-# ISSUER_SWEEP_TO and nowhere else. The AP4M toolkit needs Node 22.13+ (node:sqlite).
+# The key survives restarts. POST /sweep still empties the wallet to ISSUER_SWEEP_TO and nowhere else.
+# The AP4M toolkit needs Node 22.13+ (node:sqlite).
 ENV NODE_ENV=production \
     TZ=UTC \
     ATTESTATION=confidential-space \
@@ -36,6 +38,7 @@ ENV NODE_ENV=production \
     ISSUER_PORT=443 \
     ISSUER_RAIL=mock,xrpl-evm \
     ISSUER_WALLET=enclave \
+    ISSUER_WALLET_KEY_FILE=/app/issuer-wallet.secret \
     ISSUER_SWEEP_TO=0x34A7142038CDd6946ecc8a231e49c45E62A7F562 \
     RLUSD_ADDRESS=0x27b57a9D0b8d24EB97259c4E2279e45255e016f3 \
     XRPL_EVM_RPC=https://rpc.testnet.xrplevm.org/ \

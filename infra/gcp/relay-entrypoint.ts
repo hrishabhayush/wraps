@@ -14,8 +14,17 @@ type IssuerRuntime = {
   issuerTransport: (attestedIssuer: unknown) => unknown;
 };
 
+type StartupStep = 'configuration' | 'loading-runtime' | 'issuer-attestation' | 'tls-identity' | 'relay-listeners';
+const STARTUP_EXIT_CODES: Record<StartupStep, number> = {
+  configuration: 10,
+  'loading-runtime': 11,
+  'issuer-attestation': 12,
+  'tls-identity': 13,
+  'relay-listeners': 14,
+};
+
 // Keep startup diagnostics useful without exposing URLs, keys, nonces, or tokens.
-let startupStep = 'configuration';
+let startupStep: StartupStep = 'configuration';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -149,7 +158,7 @@ async function main(): Promise<void> {
   for (const server of listeners) {
     server.on('error', () => {
       console.error('[relay] listener failed');
-      process.exitCode = 1;
+      process.exitCode = 15;
       stop();
     });
   }
@@ -167,5 +176,7 @@ async function main(): Promise<void> {
 main().catch(() => {
   // Never log URLs, keys, nonces, credentials, or attestation token contents.
   console.error(`[relay] startup failed during ${startupStep}`);
-  process.exitCode = 1;
+  // The Confidential Space production image intentionally hides container logs.
+  // Distinct nonzero codes expose the failing stage without revealing error data.
+  process.exitCode = STARTUP_EXIT_CODES[startupStep];
 });

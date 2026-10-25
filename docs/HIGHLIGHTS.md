@@ -26,7 +26,7 @@ Last updated: Oct 24, 2026.
 
 ## 2. Blind tokens on the IETF standard
 
-**Claim:** "Payments use Privacy Pass tokens (RFC 9578, blind RSA). The issuer signs tokens it never sees, so it can't link a payment to the agent, even if it logs everything."
+**Claim:** "Payments use Privacy Pass tokens (RFC 9578, blind RSA). Blind issuance prevents the issuer from cryptographically linking a token's later redemption to its blinded issuance request. It does not hide top-up identity or network metadata from the issuer."
 
 | Proof | Status |
 |---|---|

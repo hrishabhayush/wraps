@@ -8,6 +8,7 @@ import { createWireGuardAttestationResponse } from '../src/attestation.js';
 import { startWireGuardGateway } from '../src/wireguard.js';
 import { WIREGUARD_BYTES_PER_TOKEN, createWireGuardQuotaController } from '../src/wireguard-quota.js';
 import { WireGuardTokenMeter } from '../src/wireguard-meter.js';
+import { relaySettlementQuoteId } from '../src/meter.js';
 
 const serverKey = Buffer.alloc(32, 7).toString('base64');
 const peerKey = Buffer.alloc(32, 8).toString('base64');
@@ -130,7 +131,7 @@ describe('WireGuard prepaid token meter', () => {
       reset,
       close: vi.fn(async () => {}),
     };
-    const settle = vi.fn(async () => {});
+    const settle = vi.fn(async (_merchantId: string, _token: string, _quoteId: string) => {});
     const meter = new WireGuardTokenMeter([peer], 'relay', {
       verify: async () => true,
       settle,
@@ -152,6 +153,73 @@ describe('WireGuard prepaid token meter', () => {
       expect(reset).toHaveBeenCalledTimes(2);
       expect(usage.get(peerKey)).toBe(0);
       expect(settle).toHaveBeenCalledTimes(3);
+      expect(settle.mock.calls.map(([, , quoteId]) => quoteId)).toEqual([
+        relaySettlementQuoteId('wireguard-registration', peerKey, 'token-1'),
+        relaySettlementQuoteId('wireguard-registration', peerKey, 'token-2'),
+        relaySettlementQuoteId('wireguard-registration', peerKey, 'token-3'),
+      ]);
+    } finally {
+      meter.close();
+    }
+  });
+
+  it('replays a completed registration without settling or granting another quota block', async () => {
+    const usage = new Map<string, number>();
+    const enable = vi.fn(async (key: string) => { usage.set(key, 0); });
+    const settle = vi.fn(async (_merchantId: string, _token: string, _quoteId: string) => {});
+    let verifies = 0;
+    const meter = new WireGuardTokenMeter([peer], 'relay', {
+      verify: async () => { verifies++; return true; },
+      settle,
+    }, {
+      enable,
+      usedBytes: async () => new Map(usage),
+      reset: async () => { usage.set(peerKey, 0); },
+      close: async () => {},
+    }, 10);
+    try {
+      const first = await meter.register(peerKey, ['retry-token']);
+      const retry = await meter.register(peerKey, ['retry-token']);
+      expect(retry).toBe(first);
+      expect(verifies).toBe(1);
+      expect(settle).toHaveBeenCalledTimes(1);
+      expect(enable).toHaveBeenCalledTimes(1);
+    } finally {
+      meter.close();
+    }
+  });
+
+  it('reuses the quote ID when settlement succeeded but quota setup must be retried', async () => {
+    const usage = new Map<string, number>();
+    const settle = vi.fn(async (_merchantId: string, _token: string, _quoteId: string) => {});
+    const settleStatus = vi.fn(async () => ({ status: 'settled-by-you' }));
+    const enable = vi.fn(async (key: string) => {
+      if (enable.mock.calls.length === 1) throw new Error('quota unavailable');
+      usage.set(key, 0);
+    });
+    let verifies = 0;
+    const meter = new WireGuardTokenMeter([peer], 'relay', {
+      verify: async () => { verifies++; return verifies === 1; },
+      settle,
+      settleStatus,
+    }, {
+      enable,
+      usedBytes: async () => new Map(usage),
+      reset: async () => { usage.set(peerKey, 0); },
+      close: async () => {},
+    }, 10);
+    try {
+      await expect(meter.register(peerKey, ['retry-after-quota-failure'])).rejects.toThrow('quota-failed');
+      const address = await meter.register(peerKey, ['retry-after-quota-failure']);
+      expect(address).toBe(peer.allowedAddress);
+      expect(settle).toHaveBeenCalledTimes(2);
+      expect(settle.mock.calls[0][2]).toBe(settle.mock.calls[1][2]);
+      expect(settleStatus).toHaveBeenCalledWith(
+        'relay',
+        relaySettlementQuoteId('wireguard-registration', peerKey, 'retry-after-quota-failure'),
+        ['retry-after-quota-failure'],
+      );
+      expect(enable).toHaveBeenCalledTimes(2);
     } finally {
       meter.close();
     }

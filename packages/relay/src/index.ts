@@ -10,6 +10,7 @@ import { BandwidthMeter, HttpRelayIssuer, MAX_TOKENS_PER_TUNNEL, type RelayIssue
 import { startRelayAttestationServer, type RelayAttestationListenOptions } from './attestation.js';
 export type { RelayIssuer } from './meter.js';
 export * from './attestation.js';
+export * from './tls-identity.js';
 
 const MAX_HEADER_SIZE = 16 * 1024;
 const MAX_CLIENT_HELLO_SIZE = 64 * 1024;

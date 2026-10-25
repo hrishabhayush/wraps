@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@peculiar/x509": "^1.14.3",
     "@wraps/attestation": "*",
     "@wraps/tokens": "*"
   },

@@ -20,9 +20,11 @@ available locally, verify the network and balance with Foundry:
 
 ```sh
 export RPC_URL_TESTNET=https://rpc.testnet.xrplevm.org
+export AGENT_ADDRESS=0xYourAgentAddress
+export ISSUER_ADDRESS=0xYourIssuerAddress
 cast chain-id --rpc-url "$RPC_URL_TESTNET" # must print 1449000
-cast balance --rpc-url "$RPC_URL_TESTNET" 0x<agent-address>
-cast balance --rpc-url "$RPC_URL_TESTNET" 0x<issuer-address>
+cast balance --rpc-url "$RPC_URL_TESTNET" "$AGENT_ADDRESS"
+cast balance --rpc-url "$RPC_URL_TESTNET" "$ISSUER_ADDRESS"
 ```
 
 If either balance is zero or too small for the required testnet operation, request XRP for that

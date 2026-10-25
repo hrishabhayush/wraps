@@ -107,7 +107,7 @@ Folder: `infra/`
 
 ## Lane 8: Demo and pitch (folder `apps/demo`, `docs/`)
 
-- [ ] **DEM-01** Split-screen page: spy bot left, our agent right, live events.
+- [x] **DEM-01** Split-screen page: spy bot left, our agent right, live events. (Codex)
 - [ ] **DEM-02** Tamper button: restart the issuer with a different code hash, show the SDK refusing it.
 - [ ] **DEM-03** Benchmarks: payment speed (p50/p95), spy bot accuracy vs number of agents.
 - [ ] **DEM-04** Tests from SPEC §21 passing.

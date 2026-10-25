@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0e13" />
+    <title>Wraps · Live privacy demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0e13;
+        --panel: #11161d;
+        --panel-2: #171e27;
+        --line: #26313d;
+        --muted: #8b98a7;
+        --text: #eef3f8;
+        --green: #77e2b8;
+        --blue: #89bcff;
+        --amber: #f0c777;
+        --red: #ff918e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(ellipse at 50% -25%, #1e2b39 0, transparent 55%), var(--bg);
+        color: var(--text);
+        font: 14px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      button { font: inherit; }
+      .shell { max-width: 1440px; margin: auto; padding: 28px clamp(16px, 3vw, 42px) 40px; }
+      header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 26px; }
+      .brand { display: flex; align-items: center; gap: 12px; }
+      .mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: #18392f; color: var(--green); font-weight: 800; font-size: 18px; }
+      .brand-name { font-size: 15px; font-weight: 700; letter-spacing: .02em; }
+      .brand-sub { color: var(--muted); font-size: 12px; margin-top: 1px; }
+      .controls { display: flex; align-items: center; gap: 10px; }
+      .live-state { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin-right: 6px; }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: #596471; }
+      .dot.on { background: var(--green); box-shadow: 0 0 12px #77e2b888; }
+      .btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); padding: 9px 14px; border-radius: 9px; cursor: pointer; }
+      .btn:hover { border-color: #526273; }
+      .btn.primary { background: var(--green); color: #07140f; border-color: var(--green); font-weight: 750; }
+      .btn:disabled { opacity: .5; cursor: wait; }
+      .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 4px 0 22px; }
+      h1 { font-size: clamp(23px, 3vw, 34px); line-height: 1.15; letter-spacing: -.035em; margin: 0; }
+      .intro p { color: var(--muted); margin: 9px 0 0; max-width: 670px; }
+      .legend { color: var(--muted); font-size: 11px; white-space: nowrap; }
+      .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+      .panel { border: 1px solid var(--line); border-radius: 15px; background: linear-gradient(155deg, #151c24, #10151b 66%); min-width: 0; overflow: hidden; }
+      .panel-head { display: flex; justify-content: space-between; gap: 18px; align-items: center; padding: 18px 20px; border-bottom: 1px solid var(--line); }
+      .panel-title { display: flex; align-items: center; gap: 11px; }
+      .panel-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #1e2935; color: var(--blue); font-size: 16px; }
+      .right .panel-icon { color: var(--green); background: #18332b; }
+      h2 { font-size: 14px; margin: 0; font-weight: 700; }
+      .panel-kicker { font-size: 11px; color: var(--muted); margin-top: 2px; }
+      .tag { border: 1px solid #344252; border-radius: 999px; color: #a7b4c2; padding: 4px 8px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+      .right .tag { color: var(--green); border-color: #315849; }
+      .panel-caption { color: var(--muted); padding: 13px 20px; border-bottom: 1px solid #202a34; font-size: 11px; min-height: 43px; }
+      .feed { height: min(58vh, 580px); min-height: 330px; overflow: auto; padding: 13px; display: flex; flex-direction: column; gap: 8px; scrollbar-color: #3a4755 transparent; }
+      .empty { border: 1px dashed #34404d; color: #788696; border-radius: 10px; padding: 25px 16px; text-align: center; margin: auto 0; }
+      .event { border: 1px solid #27323d; background: #11171e; border-radius: 10px; padding: 11px 12px; animation: enter .22s ease-out; }
+      @keyframes enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+      .event-top { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 5px; }
+      .event-type { color: var(--blue); font: 650 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em; }
+      .right .event-type { color: var(--green); }
+      .event-time { color: #718090; font-size: 10px; white-space: nowrap; }
+      .event-body { color: #d2dbe4; overflow-wrap: anywhere; font-size: 12px; white-space: pre-wrap; }
+      .system { margin-top: 16px; color: #778595; font-size: 11px; text-align: center; }
+      @media (max-width: 800px) {
+        header { align-items: flex-start; }
+        .intro { align-items: flex-start; flex-direction: column; gap: 8px; }
+        .columns { grid-template-columns: 1fr; }
+        .feed { height: 40vh; min-height: 250px; }
+      }
+      @media (max-width: 520px) {
+        .shell { padding: 18px 12px 28px; }
+        header { flex-direction: column; }
+        .controls { width: 100%; justify-content: space-between; }
+        .live-state { margin-right: auto; }
+        .legend { white-space: normal; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div class="brand">
+          <div class="mark">w</div>
+          <div><div class="brand-name">WRAPS / LIVE LAB</div><div class="brand-sub">Private payments for autonomous agents</div></div>
+        </div>
+        <div class="controls">
+          <div class="live-state"><span id="dot" class="dot"></span><span id="state">Connecting to event stream</span></div>
+          <button id="stop" class="btn" disabled>Stop</button>
+          <button id="start" class="btn primary">Start live demo</button>
+        </div>
+      </header>
+
+      <section class="intro">
+        <div>
+          <h1>One agent pays in public.<br />One agent pays privately.</h1>
+          <p>Watch the XRPL spy bot observe ordinary x402 payments while our local agent buys research with blind tokens. The two feeds are independent.</p>
+        </div>
+        <div class="legend">Live XRPL mainnet observer · local mock issuer and merchant</div>
+      </section>
+
+      <section class="columns" aria-label="Live demo events">
+        <article class="panel left">
+          <div class="panel-head">
+            <div class="panel-title"><div class="panel-icon">⌕</div><div><h2>Public x402 payments</h2><div class="panel-kicker">XRPL AI Hub merchant · on-chain events</div></div></div>
+            <span class="tag">Spy bot</span>
+          </div>
+          <div class="panel-caption">The bot can see payer, merchant, amount, time, and a best-effort service match.</div>
+          <div id="spy-feed" class="feed"><div class="empty">Start the demo to load public payment activity.</div></div>
+        </article>
+
+        <article class="panel right">
+          <div class="panel-head">
+            <div class="panel-title"><div class="panel-icon">◈</div><div><h2>Blind-token research agent</h2><div class="panel-kicker">Mock attestation · local issuer · local merchant</div></div></div>
+            <span class="tag">Private flow</span>
+          </div>
+          <div class="panel-caption">The issuer sees a top-up. The merchant settles tokens without learning which agent bought the call.</div>
+          <div id="agent-feed" class="feed"><div class="empty">The local agent is idle.</div></div>
+        </article>
+      </section>
+      <div class="system">This page uses mock attestation and a mock top-up rail. The left feed reads public XRPL data when network access is available.</div>
+    </main>
+    <script>
+      const $ = (selector) => document.querySelector(selector);
+      const source = new EventSource('/events');
+      const seen = new Set();
+      source.onopen = () => { $('#state').textContent = 'Event stream connected'; };
+      source.onerror = () => { $('#state').textContent = 'Reconnecting to event stream'; };
+      source.onmessage = ({ data }) => {
+        const event = JSON.parse(data);
+        if (seen.has(event.id)) return;
+        seen.add(event.id);
+        if (event.panel === 'system' && event.type === 'status') {
+          $('#dot').classList.toggle('on', Boolean(event.data.running));
+          $('#state').textContent = event.data.message;
+          $('#start').disabled = Boolean(event.data.running);
+          $('#stop').disabled = !event.data.running;
+          return;
+        }
+        if (event.panel !== 'spy' && event.panel !== 'agent') return;
+        const feed = event.panel === 'spy' ? $('#spy-feed') : $('#agent-feed');
+        const empty = feed.querySelector('.empty');
+        if (empty) empty.remove();
+        const card = document.createElement('div');
+        card.className = 'event';
+        const top = document.createElement('div');
+        top.className = 'event-top';
+        const type = document.createElement('span');
+        type.className = 'event-type';
+        type.textContent = event.type.replaceAll(':', ' · ');
+        const time = document.createElement('span');
+        time.className = 'event-time';
+        time.textContent = new Date(event.at).toLocaleTimeString();
+        top.append(type, time);
+        const body = document.createElement('div');
+        body.className = 'event-body';
+        body.textContent = eventText(event);
+        card.append(top, body);
+        feed.prepend(card);
+        while (feed.children.length > 80) feed.lastElementChild.remove();
+      };
+      function eventText(event) {
+        const d = event.data;
+        if (event.type === 'payment' && d?.payment) {
+          const p = d.payment;
+          const match = d.match?.entry?.service ?? d.match?.merchantLabel ?? 'unmatched service';
+          return `${p.payer} → ${p.merchant}\n${p.amount} ${p.currency} · ${match} · ledger ${p.ledger}`;
+        }
+        if (event.type === 'reasoning' || event.type === 'warning' || event.type === 'error' || event.type === 'status' || event.type === 'issuer' || event.type === 'merchant' || event.type === 'retry') {
+          return d?.message ?? JSON.stringify(d);
+        }
+        if (event.type === 'funder') return `${d.account} funded ${d.funder ?? 'unknown'}${d.likelyExchange ? ' · likely exchange' : ''}`;
+        return d == null ? 'Event received.' : JSON.stringify(d);
+      }
+      $('#start').addEventListener('click', async () => {
+        $('#start').disabled = true;
+        await fetch('/api/start', { method: 'POST' });
+        const status = await fetch('/api/status').then((r) => r.json());
+        $('#dot').classList.toggle('on', status.running);
+        $('#state').textContent = status.running ? 'Live demo running' : 'Ready';
+        $('#stop').disabled = !status.running;
+      });
+      $('#stop').addEventListener('click', async () => {
+        $('#stop').disabled = true;
+        await fetch('/api/stop', { method: 'POST' });
+      });
+      fetch('/api/status').then((r) => r.json()).then((s) => {
+        $('#dot').classList.toggle('on', s.running);
+        $('#state').textContent = s.running ? 'Live demo running' : 'Ready to start';
+        $('#start').disabled = s.running;
+        $('#stop').disabled = !s.running;
+      });
+    </script>
+  </body>
+</html>

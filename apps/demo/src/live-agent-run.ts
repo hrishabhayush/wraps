@@ -1,11 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
-import { AttestationError, type ConfidentialSpaceDetails, type VerifiedAttestation } from '@wraps/attestation';
-import { ResearchAgent, DEMO_TASKS } from '@wraps/agent';
+import { AttestationError } from '@wraps/attestation';
 import { Merchant } from '@wraps/merchant';
-import { MockTopUpWallet, PrivatePayClient, createPinnedRelayTransport, type PinnedRelayTransport } from '@wraps/sdk';
-import { createLiveVerifier, mismatchedDigest, resolveLiveConfig, vmAvailabilityHint, LiveConfigError, type LiveDemoConfig } from '../../../scripts/live-config';
+import { createLiveVerifier, LiveConfigError, resolveLiveConfig, type LiveDemoConfig } from '../../../scripts/live-config';
+import { runIsolatedAgentWorker, type AgentWorkerResult } from './worker-process';
 
 export type LivePublish = (type: string, data?: unknown) => void;
 
@@ -15,139 +14,65 @@ export interface LiveAgentOutcome {
 
 export interface LiveAgentDependencies {
   resolveConfig(): Promise<LiveDemoConfig>;
-  createRelay(config: LiveDemoConfig): Promise<PinnedRelayTransport>;
+  createMerchant(config: LiveDemoConfig, publish: LivePublish): Promise<{ url: string; close(): Promise<void> }>;
   createTunnel(localMerchantUrl: string): Promise<{ url: string; close(): Promise<void> }>;
+  runWorker(input: {
+    config: LiveDemoConfig;
+    merchantUrl: string;
+    tamper?: boolean;
+    signal?: AbortSignal;
+    publish(name: string, data: unknown): void;
+  }): Promise<AgentWorkerResult>;
 }
 
 const defaultDependencies: LiveAgentDependencies = {
   resolveConfig: () => resolveLiveConfig(),
-  createRelay: (config) => createPinnedRelayTransport({
-    relayUrl: config.relayUrl,
-    issuerUrl: config.issuerUrl,
-    attestationUrl: config.relayAttestationUrl,
-    verifier: createLiveVerifier(config, 'relay'),
-  }),
+  createMerchant: createLocalMerchant,
   createTunnel: startCloudflareTunnel,
+  runWorker: runIsolatedAgentWorker,
 };
 
-/** Live right-pane flow: verify the relay and issuer, then use the relay for every merchant call. */
+/**
+ * The host owns only the UI, spy, merchant and Cloudflare tunnel. The private
+ * agent runs in a separate container whose OUTPUT policy allows only the
+ * numeric relay IP on TCP 443/8080.
+ */
 export async function runLivePrivateAgent(
   publish: LivePublish,
-  opts: { tamper?: boolean; dependencies?: LiveAgentDependencies } = {},
+  opts: { tamper?: boolean; dependencies?: LiveAgentDependencies; signal?: AbortSignal } = {},
 ): Promise<LiveAgentOutcome> {
-  const tamper = opts.tamper ?? false;
   const deps = opts.dependencies ?? defaultDependencies;
-  let relay: PinnedRelayTransport | undefined;
-  let merchant: Merchant | undefined;
+  let merchant: { url: string; close(): Promise<void> } | undefined;
   let tunnel: { url: string; close(): Promise<void> } | undefined;
   let config: LiveDemoConfig | undefined;
-  let currentRole: 'issuer' | 'relay' | 'merchant' | undefined;
   try {
     publish('step', { message: 'Reading live service addresses and expected image digests.' });
-    const liveConfig = await deps.resolveConfig();
-    config = liveConfig;
-
-    publish('step', { message: 'Requesting and verifying the relay’s nonce-bound Confidential Space attestation.' });
-    currentRole = 'relay';
-    relay = await deps.createRelay(liveConfig);
-    publish('attestation-verification', verificationSummary(
-      'Relay', relay.relay.attestation, liveConfig.expected.relayDigest, relay.relay.tunnelKey.byteLength > 0,
-    ));
-
-    publish('step', { message: 'Connecting to the live issuer through the pinned relay.' });
-    currentRole = 'issuer';
-    const issuerDigest = tamper ? mismatchedDigest(liveConfig.expected.issuerDigest) : liveConfig.expected.issuerDigest;
-    const verifier = createLiveVerifier(liveConfig, 'issuer', issuerDigest);
-    const sdk = new PrivatePayClient({
-      issuerUrl: liveConfig.issuerUrl,
-      verifier,
-      wallet: new MockTopUpWallet(),
-      relayTransport: relay,
-      caps: { perCallTokens: 5, dailyTokens: 24, maxTopUpTokens: 20 },
-      onEvent: (event) => publish(`sdk:${event.type}`, event),
-    });
-
-    let attested;
-    try {
-      attested = await sdk.connect();
-    } catch (error) {
-      if (tamper && error instanceof AttestationError && error.code === 'IMAGE_MISMATCH') {
-        publish('attestation-verification', {
-          title: 'Relay TLS connection verified',
-          passed: true,
-          checks: [{ name: 'TLS key pinned', value: 'yes; live issuer response arrived over the attested relay certificate', expected: 'yes', passed: true }],
-        });
-        publish('tamper-refused', {
-          code: error.code,
-          expectedDigest: issuerDigest,
-          message: `Live issuer refused the deliberately wrong expected digest (${issuerDigest}). ${error.message}`,
-        });
-        return { fallbackAvailable: false };
-      }
-      throw error;
+    config = await deps.resolveConfig();
+    if (isIP(config.relayIp) !== 4 || isIP(config.issuerIp) !== 4) {
+      throw new LiveConfigError('The isolated agent requires numeric IPv4 issuer and relay addresses so it can run without DNS.', 'relay');
     }
+    if (opts.signal?.aborted) return { fallbackAvailable: false };
 
-    publish('attestation-verification', {
-      title: 'Relay TLS connection verified',
-      passed: true,
-      checks: [{ name: 'TLS key pinned', value: 'yes; issuer CONNECT succeeded over the attested relay certificate', expected: 'yes', passed: true }],
-    });
-    publish('attestation-verification', verificationSummary(
-      'Issuer', attested.attestation, liveConfig.expected.issuerDigest, Boolean(attested.tlsKey),
-    ));
-    if (tamper) {
-      publish('error', { message: 'The live issuer accepted the deliberately wrong expected digest. Tamper verification failed.' });
-      return { fallbackAvailable: false };
-    }
+    publish('step', { message: 'Starting the local merchant on the host, outside the agent container.' });
+    merchant = await deps.createMerchant(config, publish);
 
-    publish('step', { message: 'Starting the local merchant against the live, attested issuer.' });
-    currentRole = 'merchant';
-    merchant = new Merchant({
-      issuerUrl: liveConfig.issuerUrl,
-      verifier: createLiveVerifier(liveConfig, 'issuer'),
-      log: (message) => publish('merchant', { message }),
-    });
-    const localMerchantUrl = await merchant.start();
-    let lastClientIp: string | undefined;
-    merchant.server?.on('request', (request: IncomingMessage) => {
-      const forwarded = forwardedClientIp(request);
-      if (!forwarded || forwarded === lastClientIp) return;
-      lastClientIp = forwarded;
-      publish('merchant-ip', {
-        address: forwarded,
-        source: request.headers['cf-connecting-ip'] ? 'Cloudflare CF-Connecting-IP' : 'X-Forwarded-For',
-        relayIp: liveConfig.relayIp,
-        matchesRelayIp: isSameAddress(forwarded, liveConfig.relayIp),
-        message: `Local merchant received forwarded client IP ${forwarded} from the attested relay path.`,
-      });
-    });
-
-    publish('step', { message: 'Opening an HTTPS Cloudflare Tunnel so the GCP relay can reach the local merchant.' });
+    publish('step', { message: 'Opening the host HTTPS tunnel so the GCP relay can reach the local merchant.' });
     tunnel = process.env.DEMO_MERCHANT_URL
       ? { url: publicMerchantUrl(process.env.DEMO_MERCHANT_URL), close: async () => {} }
-      : await deps.createTunnel(localMerchantUrl);
-    publish('step', {
-      message: `Local merchant is reachable at ${tunnel.url}. The agent will send metered HTTPS requests through the attested relay.`,
-    });
+      : await deps.createTunnel(merchant.url);
 
-    publish('step', { message: 'Top-up: requesting 20 blind tokens from the verified issuer. The demo wallet uses the mock rail; AP4M is skipped.' });
-    await sdk.topUp(20);
-
-    const results = await new ResearchAgent({
-      sdk,
+    if (opts.signal?.aborted) return { fallbackAvailable: false };
+    publish('step', { message: 'Starting the agent in a container with default-drop egress and a relay-only allowlist.' });
+    return await deps.runWorker({
+      config,
       merchantUrl: tunnel.url,
-      print: (message) => publish('reasoning', { message }),
-    }).run([DEMO_TASKS[0]]);
-    if (!results.some((result) => result.bought.length > 0)) {
-      throw new Error('No merchant purchase completed. Check the HTTPS merchant tunnel or DEMO_MERCHANT_URL.');
-    }
-    publish('complete', { message: 'Live issuer and relay verified; the research purchase ran through the attested relay. AP4M top-up was skipped; mock rail used.' });
-    return { fallbackAvailable: false };
+      tamper: opts.tamper,
+      signal: opts.signal,
+      publish,
+    });
   } catch (error) {
-    let detail = errorMessage(error);
-    if (config && (currentRole === 'issuer' || currentRole === 'relay') && isAvailabilityFailure(error)) {
-      detail = `${detail}\n${await vmAvailabilityHint(currentRole)}`;
-    }
+    if (opts.signal?.aborted) return { fallbackAvailable: false };
+    const detail = errorText(error);
     if (!isAvailabilityFailure(error)) {
       publish('live-refused', {
         message: `Live verification failed: ${detail}\nNo local fallback is offered for an attestation or key-pin refusal. No top-up or purchase was sent.`,
@@ -163,28 +88,30 @@ export async function runLivePrivateAgent(
   } finally {
     await tunnel?.close().catch(() => {});
     await merchant?.close().catch(() => {});
-    await relay?.close().catch(() => {});
   }
 }
 
-function verificationSummary(
-  role: 'Issuer' | 'Relay',
-  attestation: VerifiedAttestation,
-  expectedDigest: string,
-  tlsKeyPinned: boolean,
-) {
-  const details = (attestation as VerifiedAttestation & { details?: ConfidentialSpaceDetails }).details;
-  return {
-    title: `${role} Confidential Space attestation verified`,
-    passed: attestation.measurement === expectedDigest && tlsKeyPinned,
-    checks: [
-      { name: 'hwmodel', value: details?.hwmodel ?? 'unavailable', expected: 'GCP_AMD_SEV', passed: details?.hwmodel === 'GCP_AMD_SEV' },
-      { name: 'swname', value: details?.swname ?? 'unavailable', expected: 'CONFIDENTIAL_SPACE', passed: details?.swname === 'CONFIDENTIAL_SPACE' },
-      { name: 'dbgstat', value: details?.dbgstat ?? 'unavailable', expected: 'disabled-since-boot', passed: details?.dbgstat === 'disabled-since-boot' },
-      { name: 'image digest', value: attestation.measurement, expected: expectedDigest, passed: attestation.measurement === expectedDigest },
-      { name: 'TLS key pinned', value: tlsKeyPinned ? 'yes' : 'no', expected: 'yes', passed: tlsKeyPinned },
-    ],
-  };
+async function createLocalMerchant(config: LiveDemoConfig, publish: LivePublish): Promise<{ url: string; close(): Promise<void> }> {
+  const merchant = new Merchant({
+    issuerUrl: config.issuerUrl,
+    verifier: createLiveVerifier(config, 'issuer'),
+    log: (message) => publish('merchant', { message }),
+  });
+  const url = await merchant.start();
+  let lastClientIp: string | undefined;
+  merchant.server?.on('request', (request: IncomingMessage) => {
+    const forwarded = forwardedClientIp(request);
+    if (!forwarded || forwarded === lastClientIp) return;
+    lastClientIp = forwarded;
+    publish('merchant-ip', {
+      address: forwarded,
+      source: request.headers['cf-connecting-ip'] ? 'Cloudflare CF-Connecting-IP' : 'X-Forwarded-For',
+      relayIp: config.relayIp,
+      matchesRelayIp: isSameAddress(forwarded, config.relayIp),
+      message: `Local merchant received forwarded client IP ${forwarded} from the attested relay path.`,
+    });
+  });
+  return { url, close: () => merchant.close() };
 }
 
 function forwardedClientIp(request: IncomingMessage): string | undefined {
@@ -269,15 +196,14 @@ async function stopChild(child: ChildProcess): Promise<void> {
   });
 }
 
-function errorMessage(error: unknown): string {
+function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 function isAvailabilityFailure(error: unknown): boolean {
   if (error instanceof LiveConfigError) return true;
-  const message = errorMessage(error);
   if (error instanceof AttestationError) {
-    return error.code === 'MALFORMED' && /request failed|HTTP 5\d\d|timed out|fetch failed|ECONN|EHOSTUNREACH|ENETUNREACH|socket/i.test(message);
+    return error.code === 'MALFORMED' && /request failed|HTTP 5\d\d|timed out|fetch failed|ECONN|EHOSTUNREACH|ENETUNREACH|socket/i.test(error.message);
   }
-  return /could not start cloudflared|cloudflared did not return|cloudflared exited|DEMO_MERCHANT_URL|no merchant purchase completed|fetch failed|ECONN|EHOSTUNREACH|ENETUNREACH|EADDRINUSE|ETIMEDOUT|timed out|not configured|not set|is missing|still starting/i.test(message);
+  return /could not build the isolated agent worker|isolated agent worker exited|isolated agent worker image|could not start cloudflared|cloudflared did not return|cloudflared exited|DEMO_MERCHANT_URL|no merchant purchase completed|fetch failed|ECONN|EHOSTUNREACH|ENETUNREACH|EADDRINUSE|ETIMEDOUT|timed out|not configured|not set|is missing|still starting/i.test(errorText(error));
 }

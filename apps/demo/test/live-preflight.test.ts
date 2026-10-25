@@ -5,8 +5,8 @@ import type { PinnedRelayTransport } from '@wraps/sdk';
 import type { AttestedIssuer } from '@wraps/issuer';
 
 const config = parseLiveConfig({
-  ISSUER_URL: 'https://issuer.example',
-  RELAY_URL: 'https://relay.example',
+  ISSUER_URL: 'https://34.123.78.11',
+  RELAY_URL: 'https://136.80.57.82',
 });
 
 function fakeIssuer(measurement = config.expected.issuerDigest): AttestedIssuer {
@@ -64,6 +64,7 @@ function deps(overrides: Partial<PreflightDependencies> = {}): PreflightDependen
     probeXrplNode: vi.fn(async () => {}),
     vmHint: vi.fn(async (role) => `check VM for ${role}`),
     checkMerchantTunnel: vi.fn(async () => 'cloudflared available'),
+    checkAgentContainerRuntime: vi.fn(async () => 'Docker Engine available'),
     ...overrides,
   };
 }
@@ -76,6 +77,8 @@ describe('live demo preflight checklist', () => {
     expect(result.checks.map((check) => check.name)).toContain('Issuer attestation verifies');
     expect(result.checks.map((check) => check.name)).toContain('Issuer merchant authentication mode');
     expect(result.checks.map((check) => check.name)).toContain('Relay image digest matches expected.json');
+    expect(result.checks.map((check) => check.name)).toContain('Isolated agent container runtime available');
+    expect(result.checks.map((check) => check.name)).toContain('Isolated worker endpoints use numeric IPv4 addresses');
     expect(lines.some((line) => line.startsWith('✓ PASS'))).toBe(true);
     expect(lines.at(-1)).toBe('All live demo checks passed.');
   });

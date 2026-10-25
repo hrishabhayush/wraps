@@ -48,6 +48,7 @@ export class LiveDemoController implements DemoController {
   private spy?: SpyBot;
   private spyRun?: Promise<unknown>;
   private agentRun?: Promise<void>;
+  private liveAbort?: AbortController;
 
   constructor(private publish: PublishFn, private opts: LiveControllerOptions) {}
 
@@ -71,8 +72,10 @@ export class LiveDemoController implements DemoController {
     const agentPublish = (type: string, data: unknown = null) => this.publish('agent', type, data);
     const liveRunner = this.opts.runLive ?? runLivePrivateAgent;
     const mockRunner = this.opts.runMock ?? runPrivateAgent;
-    const agentRun = this.opts.liveMode && mode !== 'mock'
-      ? liveRunner(agentPublish, { tamper: mode === 'tamper' })
+    const liveRun = this.opts.liveMode && mode !== 'mock';
+    this.liveAbort = liveRun ? new AbortController() : undefined;
+    const agentRun = liveRun
+      ? liveRunner(agentPublish, { tamper: mode === 'tamper', signal: this.liveAbort!.signal })
       : mockRunner(agentPublish, { tamper: mode === 'tamper' });
     const trackedRun = Promise.resolve(agentRun).then((outcome) => {
       if (outcome && outcome.fallbackAvailable && this.running) {
@@ -92,6 +95,7 @@ export class LiveDemoController implements DemoController {
     this.agentRun = trackedRun;
     void trackedRun.finally(() => {
       if (this.agentRun === trackedRun) this.agentRun = undefined;
+      if (this.liveAbort) this.liveAbort = undefined;
       if (this.running) {
         this.publish('agent', 'status', { message: 'The right-pane run has ended. The spy bot is still watching.' });
         if (!this.fallbackAvailable) {
@@ -140,6 +144,8 @@ export class LiveDemoController implements DemoController {
   async stop(): Promise<void> {
     if (!this.running) return;
     this.running = false;
+    this.liveAbort?.abort();
+    this.liveAbort = undefined;
     this.spy?.stop();
     await Promise.allSettled([this.spyRun, this.agentRun].filter((task): task is Promise<unknown> => Boolean(task)));
     this.spy = undefined;

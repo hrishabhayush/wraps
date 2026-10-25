@@ -34,6 +34,7 @@ export interface PreflightDependencies {
   probeXrplNode(url: string): Promise<void>;
   vmHint(role: 'issuer' | 'relay'): Promise<string>;
   checkMerchantTunnel(): Promise<string>;
+  checkAgentContainerRuntime(): Promise<string>;
 }
 
 const defaultDependencies: PreflightDependencies = {
@@ -51,6 +52,7 @@ const defaultDependencies: PreflightDependencies = {
   probeXrplNode: probeXrplNode,
   vmHint: vmAvailabilityHint,
   checkMerchantTunnel,
+  checkAgentContainerRuntime,
 };
 
 /** Executes a fully injectable checklist so tests never depend on live services. */
@@ -64,6 +66,10 @@ export async function runLivePreflight(
   const add = (name: string, passed: boolean, detail: string) => checks.push({ name, passed, detail });
   let issuer: AttestedIssuer | undefined;
   let relay: PinnedRelayTransport | undefined;
+
+  const numericEndpoints = isIP(config.issuerIp) === 4 && isIP(config.relayIp) === 4;
+  add('Isolated worker endpoints use numeric IPv4 addresses', numericEndpoints,
+    numericEndpoints ? `issuer ${config.issuerIp}; relay ${config.relayIp}; container DNS stays disabled` : 'Set ISSUER_IP and RELAY_IP to numeric IPv4 addresses for the container allowlist.');
 
   if (unavailable.issuer) {
     add('Issuer reachable', false, unavailable.issuer);
@@ -172,6 +178,12 @@ export async function runLivePreflight(
     add('Local merchant HTTPS tunnel available', false, errorMessage(error));
   }
 
+  try {
+    add('Isolated agent container runtime available', true, await deps.checkAgentContainerRuntime());
+  } catch (error) {
+    add('Isolated agent container runtime available', false, errorMessage(error));
+  }
+
   await relay?.close().catch(() => {});
   const passed = checks.every((check) => check.passed);
   write('Live demo preflight');
@@ -277,6 +289,17 @@ async function checkMerchantTunnel(): Promise<string> {
     return `cloudflared available: ${(stdout || stderr).trim()}`;
   } catch {
     throw new Error('cloudflared is missing. Install it with `brew install cloudflared`, or set DEMO_MERCHANT_URL to a public HTTPS route for the local merchant.');
+  }
+}
+
+async function checkAgentContainerRuntime(): Promise<string> {
+  try {
+    const { stdout } = await execFile('docker', ['info', '--format', '{{.ServerVersion}}'], { timeout: 5_000, maxBuffer: 16 * 1024 });
+    const version = stdout.trim();
+    if (!version) throw new Error('Docker Engine did not return a version');
+    return `Docker Engine available: ${version}`;
+  } catch {
+    throw new Error('Docker Engine is unavailable. Start Docker Desktop; the live agent runs in a local container with relay-only egress.');
   }
 }
 

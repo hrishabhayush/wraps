@@ -17,6 +17,14 @@ The SDK handles the merchant's single-use quotes (`x-blindtoken-quote`) and
 checks the issuer's signed token key epochs, so the right pane runs the same
 flow as `npm run demo:core`.
 
+For the live flow, start Docker Desktop and run `npm run demo:live`. The UI,
+XRPL spy, local merchant and Cloudflare Tunnel stay on the host. Only the
+right-pane agent runs in a container. Its firewall drops outbound traffic by
+default and allows only the numeric relay IP on TCP 443 and 8080; DNS is
+blocked. The worker image is built from an allowlisted temporary context, and
+the only host file mounted into it is the public `infra/gcp/expected.json`.
+`npm run demo:preflight` checks that Docker Engine is available before a run.
+
 ## Tamper test
 
 Select **Tamper test** to point the agent at a second mock issuer whose build
@@ -49,4 +57,7 @@ read-only.
 
 ## Tests
 
-`npm test` runs `apps/demo/test` after the package tests.
+`npm test` runs `apps/demo/test` after the package tests. The local firewall
+check is `scripts/test-demo-agent-egress.sh`; it uses an internal Docker bridge
+and mock endpoints to verify allowed relay traffic and denied non-relay and DNS
+traffic without changing host network settings.

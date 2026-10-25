@@ -10,8 +10,9 @@ describe('live demo fallback', () => {
     const result = await runLivePrivateAgent((type, data) => events.push({ type, data }), {
       dependencies: {
         resolveConfig: async () => { throw new LiveConfigError('issuer VM is TERMINATED; start it with gcloud compute instances start wraps-issuer', 'issuer'); },
-        createRelay: async () => { throw new Error('must not be called'); },
+        createMerchant: async () => { throw new Error('must not be called'); },
         createTunnel: async () => { throw new Error('must not be called'); },
+        runWorker: async () => { throw new Error('must not be called'); },
       },
     });
     expect(result.fallbackAvailable).toBe(true);
@@ -48,5 +49,24 @@ describe('live demo fallback', () => {
     expect(events.some((event) => event.panel === 'system' && /Local mock run started/.test((event.data as any).message))).toBe(true);
 
     await controller.stop();
+  });
+
+  it('aborts the isolated live worker when the demo is stopped', async () => {
+    let workerSignal: AbortSignal | undefined;
+    const liveRun = vi.fn((_publish: (type: string, data?: unknown) => void, opts: { signal?: AbortSignal }) => {
+      workerSignal = opts.signal;
+      return new Promise<{ fallbackAvailable: boolean }>((resolve) => {
+        opts.signal?.addEventListener('abort', () => resolve({ fallbackAvailable: false }), { once: true });
+      });
+    });
+    const controller = new LiveDemoController(() => {}, {
+      cache: {} as never,
+      liveMode: true,
+      startSpy: async () => {},
+      runLive: liveRun as never,
+    });
+    controller.start();
+    await controller.stop();
+    expect(workerSignal?.aborted).toBe(true);
   });
 });

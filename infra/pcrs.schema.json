@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "infra/pcrs.schema.json",
+  "title": "Expected Nitro Enclave measurements",
+  "description": "Written by infra/scripts/build-eif.sh. The SDK compares the PCRs in each live attestation document with these values. See infra/README.md, section 'pcrs.json for the SDK team'.",
+  "type": "object",
+  "required": ["schemaVersion", "hashAlgorithm", "enclaves"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "hashAlgorithm": { "const": "SHA384" },
+    "enclaves": {
+      "type": "object",
+      "propertyNames": { "enum": ["issuer", "relay"] },
+      "additionalProperties": { "$ref": "#/$defs/enclave" }
+    }
+  },
+  "$defs": {
+    "pcr": {
+      "description": "Lowercase hex SHA-384, 96 characters. All zeros means debug mode and must be rejected.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{96}$",
+      "not": { "pattern": "^0{96}$" }
+    },
+    "enclave": {
+      "type": "object",
+      "required": ["pcr0", "pcr1", "pcr2"],
+      "properties": {
+        "pcr0": { "$ref": "#/$defs/pcr", "description": "Hash of the whole enclave image. The SDK MUST check this." },
+        "pcr1": { "$ref": "#/$defs/pcr", "description": "Hash of the Linux kernel and boot ramdisk. Changes with the nitro-cli version." },
+        "pcr2": { "$ref": "#/$defs/pcr", "description": "Hash of the application (user ramdisk)." },
+        "imageId": { "type": "string", "description": "Docker image ID the EIF was built from. Informational." },
+        "gitCommit": { "type": "string", "description": "Commit the image was built from. A '-dirty' suffix means uncommitted changes; do not publish those." },
+        "nitroCliVersion": { "type": "string" },
+        "builtAt": { "type": "string", "format": "date-time" },
+        "reproducibilityChecked": { "type": "boolean", "description": "True if build-eif.sh --check rebuilt without cache and got the same PCR0." }
+      }
+    }
+  }
+}

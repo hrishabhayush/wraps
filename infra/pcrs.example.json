@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "hashAlgorithm": "SHA384",
+  "enclaves": {
+    "issuer": {
+      "pcr0": "8f2b1c6a4d3e5f7091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7e1",
+      "pcr1": "4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493",
+      "pcr2": "c1d2e3f405162738495a6b7c8d9eaf0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9fa0b",
+      "imageId": "sha256:3f1a0000000000000000000000000000000000000000000000000000000000aa",
+      "gitCommit": "9426acd0000000000000000000000000000000ff",
+      "nitroCliVersion": "1.4.2",
+      "builtAt": "2026-10-24T18:00:00Z",
+      "reproducibilityChecked": true
+    },
+    "relay": {
+      "pcr0": "a7c3e9f1b2d4f6a8c0e2f4a6c8e0f2a4c6e8f0a2c4e6f8a0c2e4f6a8c0e2f4a6c8e0f2a4c6e8f0a2c4e6f8a0c2e4f6e1",
+      "pcr1": "4b4d5b3661b3efc12920900c80e126e4ce783c522de6c02a2a5bf7af3a2b9327b86776f188e4be1c1c404a129dbda493",
+      "pcr2": "d2e3f405162738495a6b7c8d9eaf0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c",
+      "imageId": "sha256:5b2c0000000000000000000000000000000000000000000000000000000000bb",
+      "gitCommit": "9426acd0000000000000000000000000000000ff",
+      "nitroCliVersion": "1.4.2",
+      "builtAt": "2026-10-24T18:05:00Z",
+      "reproducibilityChecked": true
+    }
+  }
+}

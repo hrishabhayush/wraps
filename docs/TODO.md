@@ -77,6 +77,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **RLY-02** Charges one blind token per 10,000,000 tunnel bytes, settled through the issuer. Partial blocks are charged; tunnels close at quota. (Codex)
 - [x] **RLY-03** Wire into the relay enclave (INF-10 to INF-14). (Codex)
 - [~] **RLY-04** Add an attested WireGuard gateway with prepaid, metered peer quotas (PRs #32 and #38 merged). Live Confidential Space startup and authorized-peer traffic validation are still needed; tracked in INF-27 and INF-28.
+- [ ] **RLY-05** Serve and test the nonce-bound WireGuard attestation receipt at `/wireguard-attestation`.
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
 

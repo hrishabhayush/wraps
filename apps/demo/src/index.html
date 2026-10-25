@@ -177,17 +177,29 @@
         if (event.type === 'funder') return `${d.account} funded ${d.funder ?? 'unknown'}${d.likelyExchange ? ' · likely exchange' : ''}`;
         return d == null ? 'Event received.' : JSON.stringify(d);
       }
+      // When DEMO_HOST is not loopback, the server prints a URL with #token=... for Start and Stop.
+      const controlToken = new URLSearchParams(location.hash.slice(1)).get('token');
+      async function control(path) {
+        const res = await fetch(path, { method: 'POST', headers: controlToken ? { 'x-demo-token': controlToken } : {} });
+        if (res.status === 403) {
+          const body = await res.json().catch(() => ({}));
+          $('#state').textContent = `Control refused: ${body.error ?? 'forbidden'}`;
+        }
+        return res;
+      }
       $('#start').addEventListener('click', async () => {
         $('#start').disabled = true;
-        await fetch('/api/start', { method: 'POST' });
+        const res = await control('/api/start');
         const status = await fetch('/api/status').then((r) => r.json());
         $('#dot').classList.toggle('on', status.running);
-        $('#state').textContent = status.running ? 'Live demo running' : 'Ready';
+        if (res.status !== 403) $('#state').textContent = status.running ? 'Live demo running' : 'Ready';
+        $('#start').disabled = status.running;
         $('#stop').disabled = !status.running;
       });
       $('#stop').addEventListener('click', async () => {
         $('#stop').disabled = true;
-        await fetch('/api/stop', { method: 'POST' });
+        const res = await control('/api/stop');
+        if (!res.ok) $('#stop').disabled = false;
       });
       fetch('/api/status').then((r) => r.json()).then((s) => {
         $('#dot').classList.toggle('on', s.running);

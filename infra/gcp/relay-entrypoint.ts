@@ -2,7 +2,7 @@ import { isIP } from 'node:net';
 import type { Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { AttestationProvider, AttestationVerifier } from '@wraps/attestation';
-import { createRelayTlsIdentity, startConfidentialRelay } from '@wraps/relay';
+import { createRelayTlsIdentity, startConfidentialRelay, startConfidentialWireGuardRelay } from '@wraps/relay';
 
 type AttestationRuntime = {
   ConfidentialSpaceProvider: new (options: { audience: string }) => AttestationProvider;
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   // process memory. The relay attestation endpoint binds this cert's SPKI.
   const identity = await createRelayTlsIdentity(hostname);
   const provider = new attestationRuntime.ConfidentialSpaceProvider({ audience });
-  const servers = startConfidentialRelay({
+  const relayOptions = {
     issuerUrl: issuerUrl.toString(),
     issuerFetch,
     tlsCertificate: identity.certPem,
@@ -89,7 +89,20 @@ async function main(): Promise<void> {
     proxyPort: positivePort('RELAY_PROXY_PORT', 443),
     attestationHost: process.env.RELAY_ATTESTATION_HOST ?? '0.0.0.0',
     attestationPort: positivePort('RELAY_ATTESTATION_PORT', 8080),
-  });
+  };
+  const wireGuardEnabled = process.env.WG_ENABLED === 'true';
+  const servers = wireGuardEnabled
+    ? await startConfidentialWireGuardRelay({
+      ...relayOptions,
+      wireGuardGateway: {
+        endpoint: required('WG_ENDPOINT'),
+        listenPort: positivePort('WG_LISTEN_PORT', 51820),
+        interfaceAddress: required('WG_INTERFACE_ADDRESS'),
+        egressInterface: process.env.WG_EGRESS_INTERFACE ?? 'ens4',
+        peers: JSON.parse(required('WG_PEERS_JSON')) as Array<{ publicKey: string; allowedAddress: string }>,
+      },
+    })
+    : startConfidentialRelay(relayOptions);
 
   const { proxyServer, attestationServer } = servers;
   const ready = Promise.all([waitForListening(proxyServer), waitForListening(attestationServer)]);
@@ -108,7 +121,8 @@ async function main(): Promise<void> {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    void Promise.all([close(proxyServer), close(attestationServer)]).catch(() => {
+    const stopWireGuard = 'wireGuard' in servers ? servers.wireGuard.stop() : Promise.resolve();
+    void Promise.all([close(proxyServer), close(attestationServer), stopWireGuard]).catch(() => {
       process.exitCode = 1;
     });
   };

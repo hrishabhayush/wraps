@@ -20,3 +20,19 @@ and 12-hour stop limit. If `RELAY_ADDRESS` is set, the VM receives that reserved
 it must match `RELAY_HOSTNAME` (or be the IP that the hostname resolves to). The hostname is
 used for the TLS certificate SAN and must match the SDK proxy hostname. The firewall must permit
 tcp:443 and tcp:8080 for tag `wraps`.
+# Optional WireGuard runtime
+
+Set `WG_ENABLED=true` to start the WireGuard gateway alongside HTTPS CONNECT. The
+workload then requires `WG_ENDPOINT`, `WG_INTERFACE_ADDRESS`, and
+`WG_PEERS_JSON` (a JSON array of `{ "publicKey", "allowedAddress" }` objects).
+`WG_LISTEN_PORT` defaults to 51820/UDP and `WG_EGRESS_INTERFACE` defaults to
+`ens4`. Peer private keys must remain on clients; the deployment receives public
+keys only. Do not put client private keys or server private keys in metadata.
+
+The image includes the WireGuard and firewall utilities, exposes UDP 51820, and
+opts into Confidential Space's capability launch policy for `CAP_NET_ADMIN`.
+The VM launch metadata must grant `tee-added-capabilities=["CAP_NET_ADMIN"]`,
+and the VPC firewall must allow UDP 51820 to the relay's `wraps` tagged VM. The
+gateway fails closed if it cannot establish its interface or forwarding policy.
+The current launcher does not configure the capability metadata or firewall
+rule automatically; those are required operator steps before enabling WG.

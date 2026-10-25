@@ -208,6 +208,7 @@ function wallet() {
         <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}</span></div>`)
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
+    ${inTauri ? '<button class="link small" data-act="copyMerchantAuthKey">Copy issuer public-key entry</button>' : ''}
   </div>`;
 }
 
@@ -349,6 +350,15 @@ const actions: Record<string, (arg: string) => unknown> = {
     refreshBalance();
   },
   copyUri: async () => { await navigator.clipboard.writeText(s.uri); toast('Link copied'); },
+  copyMerchantAuthKey: async () => {
+    try {
+      const publicKey = await tk.merchantAuthPublicKey();
+      await navigator.clipboard.writeText(JSON.stringify({ [`node:${s.nodeId}`]: publicKey }));
+      toast('Public-key entry copied; private key stays in Keychain');
+    } catch (e) {
+      toast((e as Error).message.slice(0, 90));
+    }
+  },
   cancelWc: () => { s.qr = s.uri = ''; render(); },
   disconnectWallet: async () => { await wc.disconnect(); refreshBalance(); },
   quit: async () => {

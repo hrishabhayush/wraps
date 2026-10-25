@@ -11,7 +11,7 @@ const TOKEN_TYPE = 0x0002;
 
 /** Must match the issuer's RLUSD_PER_TOKEN (packages/issuer/src/protocol.ts). */
 export const USD_PER_TOKEN = 0.1;
-export const ISSUER_URL = (import.meta.env.VITE_ISSUER_URL as string) || 'http://127.0.0.1:4001';
+export const ISSUER_URL = (import.meta.env?.VITE_ISSUER_URL as string) || 'http://127.0.0.1:4001';
 export const WALLET_SCHEME = 'xrpl-evm-erc20-transfer';
 
 export type Quote = { scheme: string; amountRlusd: string; tokens: number; payTo: string; quoteId: string; expiresAt: number };
@@ -22,9 +22,11 @@ const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).
 
 // ---------- local store: unspent tokens + activity ----------
 const KEY = 'wraps.tokens.v1';
-type Store = { tokens: string[]; history: Activity[] };
+type PendingSettle = { quoteId: string; merchantId: string; nodeId: string; tokens: string[] };
+type Store = { tokens: string[]; history: Activity[]; pendingSettle?: PendingSettle };
 const store: Store = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { tokens: [], history: [] };
 const save = () => localStorage.setItem(KEY, JSON.stringify(store));
+let settleQueue: Promise<void> = Promise.resolve();
 
 export const count = () => store.tokens.length;
 export const usd = () => count() * USD_PER_TOKEN;
@@ -36,14 +38,54 @@ export function record(a: Activity) {
 }
 
 // ---------- issuer API ----------
-async function call(path: string, body?: unknown) {
+async function callRaw(path: string, body?: string, extraHeaders: Record<string, string> = {}) {
   let r: Response;
   try {
-    r = await fetch(ISSUER_URL + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    r = await fetch(ISSUER_URL + path, body === undefined ? {} : {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...extraHeaders },
+      body,
+    });
   } catch {
-    throw new Error(`Can't reach the Wraps issuer at ${ISSUER_URL}`);
+    return { status: 0, body: { error: `Can't reach the Wraps issuer at ${ISSUER_URL}` } };
   }
   return { status: r.status, body: await r.json().catch(() => ({})) };
+}
+
+async function call(path: string, body?: unknown) {
+  return callRaw(path, body === undefined ? undefined : JSON.stringify(body));
+}
+
+function isLoopbackIssuer(): boolean {
+  try {
+    return ['127.0.0.1', '::1', '[::1]', 'localhost'].includes(new URL(ISSUER_URL).hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function merchantAuthHeaders(merchantId: string, path: string, body: string): Promise<Record<string, string>> {
+  const { invoke, isTauri } = await import('@tauri-apps/api/core');
+  if (!isTauri()) {
+    // Browser-only local previews keep working against an intentionally legacy-open loopback issuer.
+    // A remote issuer must never receive an unsigned desktop-app settlement.
+    if (isLoopbackIssuer()) return {};
+    throw new Error('Merchant authentication requires the Wraps desktop app');
+  }
+  return invoke<Record<string, string>>('merchant_auth_headers', { merchantId, method: 'POST', path, body });
+}
+
+async function callMerchant(path: '/settle' | '/settle/status', merchantId: string, body: unknown) {
+  const serialized = JSON.stringify(body);
+  const headers = await merchantAuthHeaders(merchantId, path, serialized);
+  return callRaw(path, serialized, headers);
+}
+
+/** Public key for adding this installation's app merchant IDs to the issuer's immutable key map. */
+export async function merchantAuthPublicKey(): Promise<string> {
+  const { invoke, isTauri } = await import('@tauri-apps/api/core');
+  if (!isTauri()) throw new Error('The merchant public key is available from the Wraps desktop app');
+  return invoke<string>('merchant_auth_public_key');
 }
 
 // ponytail: mock attestation is fetched but not verified here; the Nitro verifier is SDK-01.
@@ -91,10 +133,112 @@ export async function buy(n: number, pay: (q: Quote) => Promise<string>) {
 // ponytail: the app settles directly with the issuer; with a real relay the node would do this.
 /** Spends `n` tokens at a node. Throws if there aren't enough. */
 export async function spend(n: number, nodeId: string) {
+  const job = settleQueue.then(() => spendInOrder(n, nodeId));
+  settleQueue = job.then(() => undefined, () => undefined);
+  return job;
+}
+
+async function spendInOrder(n: number, nodeId: string): Promise<void> {
+  if (!Number.isInteger(n) || n < 1) throw new Error('Spend amount must be a positive integer');
+  const merchantId = `node:${nodeId}`;
+
+  if (store.pendingSettle) {
+    const pending = store.pendingSettle;
+    if (!isPendingSettle(pending)) throw new Error('Saved settlement record is invalid; refusing to reuse its tokens');
+    const isRetry = pending.merchantId === merchantId && pending.nodeId === nodeId && pending.tokens.length === n;
+    await submitPendingSettle(pending, true);
+    if (isRetry) return;
+  }
+
   if (count() < n) throw new Error('Out of tokens');
   const batch = store.tokens.splice(0, n);
-  save();
-  const r = await call('/settle', { merchantId: `node:${nodeId}`, tokens: batch }).catch(e => ({ status: 0, body: { error: (e as Error).message } }));
-  if (r.status === 0 || r.status >= 500) { store.tokens.unshift(...batch); save(); } // network trouble: keep them
-  if (r.status !== 200) throw new Error(r.body.error ?? 'issuer refused the tokens');
+  const quoteId = [...crypto.getRandomValues(new Uint8Array(16))].map(x => x.toString(16).padStart(2, '0')).join('');
+  const pending: PendingSettle = { quoteId, merchantId, nodeId, tokens: batch };
+  store.pendingSettle = pending;
+  try {
+    save();
+  } catch {
+    store.tokens.unshift(...batch);
+    delete store.pendingSettle;
+    throw new Error('Could not save the pending spend; tokens remain available');
+  }
+  await submitPendingSettle(pending, false);
+}
+
+function isPendingSettle(value: PendingSettle): boolean {
+  return typeof value.quoteId === 'string'
+    && /^[A-Za-z0-9_-]{1,128}$/.test(value.quoteId)
+    && typeof value.nodeId === 'string'
+    && value.merchantId === `node:${value.nodeId}`
+    && Array.isArray(value.tokens)
+    && value.tokens.length > 0
+    && value.tokens.every(token => typeof token === 'string' && token.length > 0);
+}
+
+type SettlementStatus = 'settled-by-you' | 'settled-by-other' | 'unspent' | 'expired';
+
+async function querySettleStatus(pending: PendingSettle): Promise<SettlementStatus> {
+  const r = await callMerchant('/settle/status', pending.merchantId, {
+    merchantId: pending.merchantId,
+    quoteId: pending.quoteId,
+    tokens: pending.tokens,
+  });
+  const status = typeof r.body === 'object' && r.body !== null
+    ? (r.body as { status?: unknown }).status
+    : undefined;
+  if (r.status !== 200 || typeof status !== 'string' || !['settled-by-you', 'settled-by-other', 'unspent', 'expired'].includes(status)) {
+    throw new Error('Settlement status is unavailable; retry this same spend to resolve it');
+  }
+  return status as SettlementStatus;
+}
+
+function completePendingSettle(pending: PendingSettle) {
+  if (store.pendingSettle?.quoteId === pending.quoteId) {
+    delete store.pendingSettle;
+    try {
+      save();
+    } catch {
+      store.pendingSettle = pending;
+      throw new Error('Settlement was confirmed, but its local record could not be updated; retry the same spend');
+    }
+  }
+}
+
+function rejectSpentPendingSettle(pending: PendingSettle, status: 'settled-by-other' | 'expired'): never {
+  completePendingSettle(pending);
+  throw new Error(status === 'expired'
+    ? 'The pending token batch expired and was discarded'
+    : 'The pending token batch was settled elsewhere and was discarded');
+}
+
+async function submitPendingSettle(pending: PendingSettle, checkBeforeRetry: boolean): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (checkBeforeRetry && attempt === 0) {
+      const current = await querySettleStatus(pending);
+      if (current === 'settled-by-you') { completePendingSettle(pending); return; }
+      if (current === 'settled-by-other' || current === 'expired') rejectSpentPendingSettle(pending, current);
+    }
+
+    const response = await callMerchant('/settle', pending.merchantId, {
+      merchantId: pending.merchantId,
+      quoteId: pending.quoteId,
+      tokens: pending.tokens,
+    });
+    if (response.status === 200) { completePendingSettle(pending); return; }
+
+    if (response.status === 0 || response.status >= 500 || response.status === 409) {
+      let current: SettlementStatus;
+      try {
+        current = await querySettleStatus(pending);
+      } catch {
+        throw new Error('Settlement outcome is unknown; retry this same spend to resolve it');
+      }
+      if (current === 'settled-by-you') { completePendingSettle(pending); return; }
+      if (current === 'settled-by-other' || current === 'expired') rejectSpentPendingSettle(pending, current);
+      if (attempt === 0) continue; // Same persisted quote ID and token batch; issuer replay is idempotent.
+      throw new Error('Settlement remains unconfirmed; retry this same spend to resolve it');
+    }
+
+    throw new Error(response.body.error ?? 'issuer refused the tokens; retry this same spend after fixing the request');
+  }
 }

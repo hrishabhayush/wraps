@@ -117,7 +117,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 - [ ] **SEC-01** Resolve or document the production dependency audit findings. `npm audit --omit=dev` currently reports 5 findings (1 moderate, 4 high): `ws` through `viem` has a reported npm fix; `sjcl` through the Cloudflare PrivatePass dependency chain has no fix reported.
 - [ ] **SEC-04** Merchant authentication on `/settle` and `/settle/status`. The issuer enforces credentials when `ISSUER_MERCHANT_AUTH_KEYS` or `ISSUER_RELAY_SETTLE_KEY` is set and otherwise logs/reports legacy-open mode. Relay client support is implemented, but its image needs rebuilding/redeployment with the key; the desktop app still needs request credentials before enforcement is enabled in production.
-- [ ] **APP-SEC-01** Teammate: `app/src/tokens.ts` must stop settling directly as `node:<id>` without a credential before enforcement is turned on in production.
+- [x] **APP-SEC-01** Teammate: `app/src/tokens.ts` must stop settling directly as `node:<id>` without a credential before enforcement is turned on in production.
 - [~] **SEC-05** Make relay and app settles idempotent by sending a quote ID, like the merchant does (PR #44 only covers quote-ID settles).
 - [ ] **SEC-06** Persist issuer state (spent list, settlement records, in-flight payouts) safely across restarts. A hash-chained file store is available for local/non-enclave runs; the current Confidential Space image remains in-memory until attestation-bound encrypted storage is implemented.
 

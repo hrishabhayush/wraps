@@ -1,0 +1,14 @@
+{
+  "name": "@wraps/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@wraps/attestation": "*",
+    "@wraps/issuer": "*",
+    "@wraps/merchant": "*",
+    "@wraps/sdk": "*",
+    "@wraps/tokens": "*"
+  }
+}

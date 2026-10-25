@@ -1,0 +1,11 @@
+{
+  "name": "@wraps/tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@cloudflare/blindrsa-ts": "^0.4.0",
+    "@cloudflare/privacypass-ts": "^0.9.0"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "wraps",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo": "tsx apps/demo/src/server.ts",
+    "demo:core": "tsx scripts/demo-core.ts",
+    "issuer": "tsx packages/issuer/src/cli.ts",
+    "merchant": "tsx packages/merchant/src/cli.ts",
+    "agent": "tsx packages/agent/src/cli.ts",
+    "spybot": "tsx packages/spybot/src/cli.ts",
+    "test": "vitest run",
+    "bench": "tsx scripts/bench.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

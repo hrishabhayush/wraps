@@ -79,7 +79,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
 
 - [~] **SDK-01** Verify issuer and relay attestations (mock verifier first, then the Confidential Space verifier against `infra/gcp/expected.json`). Reject debug images, wrong image digests, wrong keys, reused nonces. Mock verifier done; Confidential Space verifier in progress.
-- [ ] **SDK-02** Tunnel through the relay, pinned to its attested key.
+- [x] **SDK-02** Tunnel through the relay, pinned to its attested key.
 - [~] **SDK-03** Top-up: hit the issuer's 402, sign the AP4M voucher, receive and unblind tokens. (core agent) Mock wallet done; the real AP4M voucher is PAY-03.
 - [x] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment. (core agent)
 - [x] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning. (core agent)

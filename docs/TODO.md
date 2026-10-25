@@ -128,6 +128,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **FUP-03** Removed the temporary test/debug VMs (`wraps-relay-debug`, `wraps-wg-client-test`, `wraps-relay-inf28-debug`, and `wraps-relay-inf09-test`; `wraps-relay-inf09-wireguard` was already absent). Released `wraps-relay-inf09-test-ip`. Kept `wraps-issuer`, `wraps-relay`, and `wraps-wg-gateway`.
 - [ ] **FUP-04** Live testnet payout: fund an issuer wallet with testnet RLUSD and XRP for gas, then follow `packages/issuer/README.md` (`payout:dry-run`, `payout:once`).
 - [ ] **FUP-05** The standalone WireGuard gateway (PR #43) runs on a plain VM, outside Confidential Space: no attestation, no token metering. Don't describe it as attested.
+- [~] **APP-USE-01** Desktop VPN uses the existing relay quota accurately: consume one 10 MB quota token on connect, show the remaining blind-token wallet balance, and label prepaid quota without presenting simulated traffic as actual usage.
 
 ---
 

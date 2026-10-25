@@ -72,5 +72,5 @@ const port = addr && typeof addr === 'object' ? addr.port : '?';
 console.log(
   `[issuer] listening on ${tls ? 'https' : 'http'}://${process.env.ISSUER_HOST ?? '0.0.0.0'}:${port} ` +
     `(attestation: ${attestation}${attestation === 'mock' ? ', MOCK' : ''}; top-ups: ${railNames.map((r) => (r === 'xrpl-evm' ? 'XRPL EVM RLUSD' : 'MOCK AP4M')).join(' + ')}; ` +
-    `${payout.name === 'xrpl-evm' ? `RLUSD payouts on XRPL EVM from ${payout.address} to ${payout.registry.size} merchants` : 'MOCK payouts'})`,
+    `${payout.name === 'xrpl-evm' ? `RLUSD payouts on XRPL EVM from ${payout.address} to ${payout.registry.size} merchants` : payout.name === 'ap4m' ? `payouts through Mastercard AP4M from ${payout.address}` : 'MOCK payouts'})`,
 );

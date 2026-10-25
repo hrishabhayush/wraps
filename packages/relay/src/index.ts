@@ -1,11 +1,15 @@
 import type { LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { isIP, createConnection, type Socket } from 'node:net';
 import { Transform, type Duplex } from 'node:stream';
+import type { AttestationProvider } from '@wraps/attestation';
 import { parseAuthorization, serializeToken, tokenId } from '@wraps/tokens';
 import { BandwidthMeter, HttpRelayIssuer, MAX_TOKENS_PER_TUNNEL, type RelayIssuer } from './meter.js';
+import { startRelayAttestationServer, type RelayAttestationListenOptions } from './attestation.js';
 export type { RelayIssuer } from './meter.js';
+export * from './attestation.js';
 
 const MAX_HEADER_SIZE = 16 * 1024;
 const MAX_CLIENT_HELLO_SIZE = 64 * 1024;
@@ -33,6 +37,28 @@ export interface RelayListenOptions extends RelayServerOptions {
   /** Defaults to loopback because CONNECT destinations have no user authentication. */
   host?: string;
   port?: number;
+}
+
+export interface SecureRelayListenOptions extends RelayServerOptions {
+  /** Self-signed certificate generated inside the Confidential Space workload. */
+  tlsCertificate: string | Buffer;
+  /** The private key matching `tlsCertificate`, generated inside the workload. */
+  tlsPrivateKey: string | Buffer;
+  /** Defaults to loopback; use an explicit workload interface when exposing the proxy. */
+  host?: string;
+  /** Defaults to 8443. */
+  port?: number;
+}
+
+export interface ConfidentialRelayOptions extends RelayServerOptions {
+  tlsCertificate: string | Buffer;
+  tlsPrivateKey: string | Buffer;
+  attestationProvider: AttestationProvider;
+  proxyHost?: string;
+  proxyPort?: number;
+  attestationHost?: string;
+  attestationPort?: number;
+  attestationRequestsPerMinute?: number;
 }
 
 interface Authority {
@@ -73,6 +99,66 @@ export function startRelayServer(options: RelayListenOptions = {}): Server {
   const server = createRelayServer(options);
   server.listen(options.port ?? 0, options.host ?? '127.0.0.1');
   return server;
+}
+
+/** Create an HTTPS CONNECT listener; origin TLS remains end-to-end through the tunnel. */
+export function createSecureRelayServer(
+  options: SecureRelayListenOptions,
+  dependencies: Partial<RelayDependencies> = {},
+): HttpsServer {
+  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  const server = createHttpsServer({
+    key: options.tlsPrivateKey,
+    cert: options.tlsCertificate,
+    minVersion: 'TLSv1.2',
+    ALPNProtocols: ['http/1.1'],
+    maxHeaderSize: MAX_HEADER_SIZE,
+  }, rejectHttpRequest);
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 10_000;
+  const resolve = dependencies.resolve ?? ((host: string) => lookup(host, { all: true, verbatim: true }));
+  const connect = dependencies.connect ?? ((host: string, family: 4 | 6, port: number) => createConnection({ host, family, port }));
+
+  server.on('connect', (req, client, head) => {
+    void handleConnect(
+      req,
+      client,
+      head,
+      options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
+      resolve,
+      connect,
+      issuer,
+      options.merchantId ?? 'relay',
+    );
+  });
+  return server;
+}
+
+/** Start the HTTPS CONNECT proxy on loopback by default. */
+export function startSecureRelayServer(options: SecureRelayListenOptions): HttpsServer {
+  const server = createSecureRelayServer(options);
+  server.listen(options.port ?? 8443, options.host ?? '127.0.0.1');
+  return server;
+}
+
+/** Start the TLS-pinned proxy and its separate nonce-bound HTTP receipt listener. */
+export function startConfidentialRelay(options: ConfidentialRelayOptions): {
+  proxyServer: HttpsServer;
+  attestationServer: Server;
+} {
+  const proxyServer = startSecureRelayServer({
+    ...options,
+    host: options.proxyHost ?? '127.0.0.1',
+    port: options.proxyPort ?? 8443,
+  });
+  const attestationServer = startRelayAttestationServer({
+    tlsCertificate: typeof options.tlsCertificate === 'string' ? options.tlsCertificate : options.tlsCertificate.toString(),
+    provider: options.attestationProvider,
+    host: options.attestationHost ?? '127.0.0.1',
+    port: options.attestationPort ?? 8080,
+    requestsPerMinute: options.attestationRequestsPerMinute,
+  } satisfies RelayAttestationListenOptions);
+  return { proxyServer, attestationServer };
 }
 
 function rejectHttpRequest(_req: IncomingMessage, res: ServerResponse): void {

@@ -137,7 +137,7 @@ export class TokenVerifier {
 }
 
 export async function importTokenPublicKey(publicKeyBytes: Uint8Array): Promise<CryptoKey> {
-  const spki = convertRSASSAPSSToEnc(publicKeyBytes);
+  const spki = new Uint8Array(convertRSASSAPSSToEnc(publicKeyBytes));
   return crypto.subtle.importKey('spki', spki, { name: 'RSA-PSS', hash: 'SHA-384' }, true, ['verify']);
 }
 

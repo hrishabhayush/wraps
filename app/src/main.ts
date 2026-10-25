@@ -4,9 +4,9 @@ import '@fontsource/geist-mono/500.css';
 import './styles.css';
 import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
-import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
+import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode, type VpnConnectResult } from './backend.ts';
 import * as tk from './tokens.ts';
-import { tick, tokensFor, clock, USD_PER_TOKEN, type Meter } from './meter.ts';
+import { tick, tokensFor, clock, USD_PER_TOKEN, WIREGUARD_MB_PER_TOKEN, wireGuardQuotaMB, type Meter } from './meter.ts';
 import * as wc from './wallet.ts';
 import { short } from './chain.ts';
 import QRCode from 'qrcode';
@@ -121,11 +121,12 @@ function home() {
     connected: on ? `<span class="g">${ic('shield', 12, 2.2)}</span>TEE attested · ${ago(c.att.checkedAt)}` : '',
     refused: c.kind === 'refused' ? `<span class="r">${ic('alert', 12, 2.2)}</span>${esc(c.reason)}` : '',
   }[c.kind];
-  const m = on ? c.meter : { mb: 0, cost: 0 };
+  const m = on && !realVpn ? c.meter : { mb: 0, cost: 0 };
+  const walletLabel = `${tk.count()} blind tokens · ${usd(tk.usd())}`;
   return `<div class="panel">
     <header class="row between">
       <div class="row brand">${mark(20)}<span>wraps</span></div>
-      <button class="chip" data-act="go" data-arg="wallet">${usd(tk.usd())}</button>
+      <button class="chip" data-act="go" data-arg="wallet" aria-label="Wallet balance: ${esc(walletLabel)}">${tk.count()} tokens · ${usd(tk.usd())}</button>
     </header>
     <section class="card status row between">
       <div class="col">
@@ -143,15 +144,25 @@ function home() {
         <div class="col grow"><div class="row gap5"><b>${esc(n.city)}</b>${badge(n.id)}</div><span class="mono muted">IP ${n.ip}</span></div>
         <button class="link row gap5" data-act="go" data-arg="nodes">${bars(n.latencyMs)}Change${ic('down', 14)}</button>
       </div>
-      <div class="row gap8">
-        <div class="tile"><span class="circ">${ic('upload', 14)}</span><div class="col"><small>Upload</small><b>${on ? `${c.up} Mbps` : '—'}</b></div></div>
-        <div class="tile"><span class="circ">${ic('download', 14)}</span><div class="col"><small>Download</small><b>${on ? `${c.down} Mbps` : '—'}</b></div></div>
-      </div>
-      <div class="meter row between">
-        <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? 'Metered · this session' : `Billed only while connected`}</span>
-          <span class="mono">${m.mb.toFixed(1)} MB × $${n.pricePerMB}</span></div>
-        <span class="cost mono">$${m.cost.toFixed(m.cost < 1 ? 3 : 2)}</span>
-      </div>
+      ${realVpn
+        ? `<div class="row gap8">
+            <div class="tile"><span class="circ">${ic('download', 14)}</span><div class="col"><small>Prepaid relay quota</small><b>${on ? `${wireGuardQuotaMB(c.spent)} MB` : `${WIREGUARD_MB_PER_TOKEN} MB / token`}</b></div></div>
+            <div class="tile"><span class="circ">${ic('wallet', 14)}</span><div class="col"><small>Blind-token wallet</small><b>${tk.count()} available</b></div></div>
+          </div>
+          <div class="meter row between">
+            <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? 'Quota prepaid at connect' : 'One token prepays 10 MB'}</span>
+              <span class="mono">${on ? `${c.spent} wallet token${c.spent === 1 ? '' : 's'} · live byte usage is not reported` : 'One wallet token prepays 10 MB; usage is not reported'}</span></div>
+            <span class="cost mono">${on ? `${c.spent} token${c.spent === 1 ? '' : 's'}` : '—'}</span>
+          </div>`
+        : `<div class="row gap8">
+            <div class="tile"><span class="circ">${ic('upload', 14)}</span><div class="col"><small>Upload · preview</small><b>${on ? `${c.up} Mbps` : '—'}</b></div></div>
+            <div class="tile"><span class="circ">${ic('download', 14)}</span><div class="col"><small>Download · preview</small><b>${on ? `${c.down} Mbps` : '—'}</b></div></div>
+          </div>
+          <div class="meter row between">
+            <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? 'Simulated metering · browser preview' : 'Preview meter'}</span>
+              <span class="mono">${m.mb.toFixed(1)} MB × $${n.pricePerMB}</span></div>
+            <span class="cost mono">$${m.cost.toFixed(m.cost < 1 ? 3 : 2)}</span>
+          </div>`}
     </section>
     <footer class="row gap6">
       <button class="ghost" data-act="go" data-arg="nodes">${ic('globe', 14)}Nodes</button>
@@ -191,7 +202,7 @@ function wallet() {
       <small>Private balance</small>
       <div class="big">${usd(bal)}</div>
       <small>≈ ${(bal / node().pricePerMB / 1000).toFixed(1)} GB, or about ${Math.floor(hrs)}h ${Math.round((hrs % 1) * 60)}m in ${esc(node().country)}</small>
-      <div class="row gap8"><span class="tchip mono">${tk.count().toLocaleString()} tokens</span><span class="tchip green mono">${ic('shield', 12, 2.2)}unlinkable</span></div>
+      <div class="row gap8"><span class="tchip mono">${tk.count().toLocaleString()} blind tokens available</span><span class="tchip green mono">${ic('shield', 12, 2.2)}unlinkable</span></div>
     </section>
     <div class="col gap8">
       <b class="label">Top up</b>
@@ -205,7 +216,7 @@ function wallet() {
       .slice(0, 3)
       .map(a => `<div class="row gap10 act"><span class="circ grey">${ic(a.usd > 0 ? 'plus' : 'globe', 14)}</span>
         <div class="col grow"><b>${esc(a.title)}</b><span class="mono muted">${esc(a.detail)}</span></div>
-        <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}</span></div>`)
+        <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd === 0 ? '—' : `${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}`}</span></div>`)
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
     ${inTauri ? '<button class="link small" data-act="copyMerchantAuthKey">Copy issuer public-key entry</button>' : ''}
@@ -284,8 +295,53 @@ async function connect(id: string) {
   s.trust[id] = att.ok ? 'ok' : 'bad';
   if (!att.ok) { s.conn = { kind: 'refused', reason: att.reason }; return render(); }
   if (realVpn) {
-    // One click: pay the relay with blind tokens and bring WireGuard up (macOS asks for the admin password).
-    try { await api.connect(id); } catch (e) { s.conn = { kind: 'off' }; return toast(String(e).slice(0, 90)); }
+    let token: string | undefined;
+    try { token = tk.reserveWireGuardToken(); } catch (e) {
+      s.conn = { kind: 'off' };
+      render();
+      return toast((e as Error).message.slice(0, 90));
+    }
+    render();
+    let result: VpnConnectResult | void;
+    try { result = await api.connect(id, token); } catch {
+      s.conn = { kind: 'off' };
+      render();
+      return toast('Connect outcome is uncertain; the token is reserved. Retry Connect to resolve it.');
+    }
+    if (!result) {
+      s.conn = { kind: 'off' };
+      render();
+      return toast('The WireGuard helper returned no result; retry Connect to resolve the reserved token.');
+    }
+    if (result.inputTokenDisposition === 'refund') {
+      try { tk.resolveWireGuardToken('refund'); } catch (e) {
+        s.conn = { kind: 'off' };
+        render();
+        return toast((e as Error).message.slice(0, 90));
+      }
+    }
+    if (result.status === 'no-token') {
+      s.conn = { kind: 'off' };
+      s.screen = 'wallet';
+      render();
+      return toast('Top up with at least one blind token to connect');
+    }
+    if (result.status !== 'connected') {
+      s.conn = { kind: 'off' };
+      render();
+      return toast((result.error ?? 'WireGuard connect is pending; retry Connect to resolve it').slice(0, 110));
+    }
+    if (result.inputTokenDisposition === 'spent') {
+      try {
+        tk.resolveWireGuardToken('spent');
+      } catch (e) {
+        await api.disconnect().catch(() => {});
+        s.conn = { kind: 'off' };
+        render();
+        return toast(`Token is reserved while the local wallet update is retried: ${(e as Error).message}`.slice(0, 110));
+      }
+    }
+    try { await api.finalizeConnect?.(); } catch { /* a later connect clears a completed stale keychain receipt */ }
   } else {
     // Pay for the first chunk up front with one real token.
     try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
@@ -301,7 +357,10 @@ async function disconnect(reason?: string) {
   s.conn = { kind: 'off' };
   await api.disconnect();
   const mins = Math.max(1, Math.round((Date.now() - c.since) / 60000));
-  tk.record({ title: `Session · ${node().country}`, detail: `${c.meter.mb.toFixed(0)} MB · ${mins} min · ${c.spent} token${c.spent === 1 ? '' : 's'}`, usd: -c.spent * USD_PER_TOKEN, at: Date.now() });
+  const detail = realVpn
+    ? `${c.spent} quota token${c.spent === 1 ? '' : 's'} · ${wireGuardQuotaMB(c.spent)} MB prepaid · usage unavailable`
+    : `${c.meter.mb.toFixed(0)} MB simulated · ${mins} min · ${c.spent} token${c.spent === 1 ? '' : 's'}`;
+  tk.record({ title: `Session · ${node().country}`, detail, usd: -c.spent * USD_PER_TOKEN, at: Date.now() });
   reason ? toast(reason) : render();
 }
 
@@ -376,16 +435,18 @@ root.addEventListener('click', e => {
 setInterval(async () => {
   const c = s.conn;
   if (c.kind !== 'connected') return;
-  // Prepaid (spent tokens not yet used up) plus what's left in the wallet.
-  const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
-  c.meter = r.meter;
-  if (!realVpn && c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
-    c.spending = true;
-    tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
+  if (!realVpn) {
+    // The browser preview has synthetic traffic; it does not report relay WireGuard usage.
+    const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
+    c.meter = r.meter;
+    if (c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
+      c.spending = true;
+      tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
+    }
+    c.up = 28 + Math.round(Math.random() * 6);
+    c.down = 36 + Math.round(Math.random() * 8);
+    if (r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   }
-  c.up = 28 + Math.round(Math.random() * 6);
-  c.down = 36 + Math.round(Math.random() * 8);
-  if (!realVpn && r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   if (Date.now() - c.att.checkedAt > 60_000 && !s.rechecking) {
     s.rechecking = true;
     const att = await api.attest(s.nodeId);

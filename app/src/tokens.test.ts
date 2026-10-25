@@ -10,7 +10,7 @@ class MemoryStorage {
 
 test('APP-SEC-01 stores a quote ID before settling, signs both routes, and reuses it after an unknown outcome', async () => {
   const storage = new MemoryStorage();
-  storage.setItem('wraps.tokens.v1', JSON.stringify({ tokens: ['blind-token-1'], history: [] }));
+  storage.setItem('wraps.tokens.v2', JSON.stringify({ tokens: ['blind-token-1', 'wg-token-1', 'wg-token-2'], history: [] }));
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
   Object.defineProperty(globalThis, 'crypto', { configurable: true, value: webcrypto });
   Object.defineProperty(globalThis, 'isTauri', { configurable: true, value: true });
@@ -57,15 +57,15 @@ test('APP-SEC-01 stores a quote ID before settling, signs both routes, and reuse
   try {
     const tokens = await import('./tokens.ts');
     await assert.rejects(tokens.spend(1, 'usc1'), /outcome is unknown/);
-    const afterUnknown = JSON.parse(storage.getItem('wraps.tokens.v1')!);
-    assert.equal(afterUnknown.tokens.length, 0);
+    const afterUnknown = JSON.parse(storage.getItem('wraps.tokens.v2')!);
+    assert.equal(afterUnknown.tokens.length, 2);
     assert.match(afterUnknown.pendingSettle.quoteId, /^[a-f0-9]{32}$/);
     assert.deepEqual(afterUnknown.pendingSettle.tokens, ['blind-token-1']);
 
     await tokens.spend(1, 'usc1');
-    const afterSuccess = JSON.parse(storage.getItem('wraps.tokens.v1')!);
+    const afterSuccess = JSON.parse(storage.getItem('wraps.tokens.v2')!);
     assert.equal(afterSuccess.pendingSettle, undefined);
-    assert.equal(afterSuccess.tokens.length, 0);
+    assert.equal(afterSuccess.tokens.length, 2);
 
     const settleRequests = requests.filter(request => request.path === '/settle');
     assert.equal(settleRequests.length, 2);
@@ -78,6 +78,18 @@ test('APP-SEC-01 stores a quote ID before settling, signs both routes, and reuse
       && call.args?.path === request.path
       && call.args?.body === JSON.stringify(request.body))));
     assert.equal(await tokens.merchantAuthPublicKey(), 'public-spki-key');
+
+    assert.equal(tokens.count(), 2);
+    assert.equal(tokens.reserveWireGuardToken(), 'wg-token-1');
+    assert.equal(tokens.count(), 1);
+    assert.equal(tokens.reserveWireGuardToken(), 'wg-token-1', 'retries reuse the same reserved token');
+    tokens.resolveWireGuardToken('reserved');
+    assert.equal(tokens.count(), 1, 'an ambiguous outcome must keep the token unavailable');
+    tokens.resolveWireGuardToken('refund');
+    assert.equal(tokens.count(), 2, 'a definite rejection returns the token');
+    assert.equal(tokens.reserveWireGuardToken(), 'wg-token-1');
+    tokens.resolveWireGuardToken('spent');
+    assert.equal(tokens.count(), 1, 'a successful registration consumes the token');
   } finally {
     globalThis.fetch = originalFetch;
     delete (globalThis as { window?: unknown }).window;

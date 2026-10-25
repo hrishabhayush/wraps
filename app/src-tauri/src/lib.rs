@@ -30,6 +30,7 @@ pub fn run() {
             merchant_auth::merchant_auth_public_key,
             vpn::vpn_attest,
             vpn::vpn_connect,
+            vpn::vpn_finalize_connect,
             vpn::vpn_disconnect
         ])
         .manage(LastHide(Mutex::new(Instant::now() - Duration::from_secs(1))))

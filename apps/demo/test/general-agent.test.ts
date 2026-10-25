@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseAgentRequest, runGeneralAgent, type ModelCall, type ResearchTools } from '../src/general-agent';
+import { AP4M_TASK_RESOURCES } from '../src/ap4m-task';
 import { browserEnvironment, checkBrowserUrl, publicAddress } from '../src/browser-safety';
 
 const observation = { url: 'https://example.com/', title: 'Example', text: 'Public research', links: [] };
@@ -13,7 +14,7 @@ function setup(outputs: { output: ReturnType<typeof call>[] | typeof answer[] }[
   };
   const model: ModelCall = vi.fn(async () => outputs.shift()!);
   const publish = vi.fn();
-  return { tools, model, publish, options: { task: 'Research the network', budget: '0.05', model: 'test-model', call: model, tools, publish, checkNetwork: async () => {}, signal: new AbortController().signal, reportDescription: 'Network report' } };
+  return { tools, model, publish, options: { task: 'Research the network', budget: '0.05', model: 'test-model', call: model, tools, publish, checkNetwork: async () => {}, signal: new AbortController().signal, resources: AP4M_TASK_RESOURCES } };
 }
 describe('task-driven agent', () => {
   it('uses browser observations to answer the requested task', async () => {
@@ -24,10 +25,10 @@ describe('task-driven agent', () => {
     expect(s.tools.buy).not.toHaveBeenCalled();
   });
   it('passes the remaining budget to payment code and reuses a paid report', async () => {
-    const s = setup([{ output: [call('buy_report')] }, { output: [call('buy_report')] }, { output: [answer] }]);
+    const s = setup([{ output: [call('buy_report', { resourceId: 'xrp-research-1' })] }, { output: [call('buy_report', { resourceId: 'xrp-research-1' })] }, { output: [answer] }]);
     await runGeneralAgent(s.options);
     expect(s.tools.buy).toHaveBeenCalledTimes(1);
-    expect(s.tools.buy).toHaveBeenCalledWith('0.05');
+    expect(s.tools.buy).toHaveBeenCalledWith('xrp-research-1', '0.05');
     expect(s.publish).toHaveBeenCalledWith('budget', 'Task spending: 0.05 / 0.05 RLUSD.');
   });
   it('refuses model attempts to choose a new payee or raise the budget', async () => {
@@ -35,8 +36,25 @@ describe('task-driven agent', () => {
     await expect(runGeneralAgent(s.options)).rejects.toThrow('no model-controlled');
     expect(s.tools.buy).not.toHaveBeenCalled();
   });
+  it('buys three configured services against one shared budget', async () => {
+    const s = setup([
+      ...AP4M_TASK_RESOURCES.map(resource => ({ output: [call('buy_report', { resourceId: resource.id })] })),
+      { output: [call('buy_report', { resourceId: 'gas-report-1' })] }, { output: [answer] },
+    ]);
+    await runGeneralAgent({ ...s.options, budget: '0.15' });
+    expect(s.tools.buy).toHaveBeenCalledTimes(3);
+    expect(s.tools.buy).toHaveBeenNthCalledWith(1, 'xrp-research-1', '0.15');
+    expect(s.tools.buy).toHaveBeenNthCalledWith(2, 'gas-report-1', '0.1');
+    expect(s.tools.buy).toHaveBeenNthCalledWith(3, 'fee-estimate-1', '0.05');
+    expect(s.publish).toHaveBeenCalledWith('budget', 'Task spending: 0.15 / 0.15 RLUSD.');
+  });
+  it('refuses a resource outside the server catalog', async () => {
+    const s = setup([{ output: [call('buy_report', { resourceId: 'https://attacker.example/resource' })] }]);
+    await expect(runGeneralAgent(s.options)).rejects.toThrow('configured resourceId');
+    expect(s.tools.buy).not.toHaveBeenCalled();
+  });
   it('stops after an uncertain payment instead of issuing another purchase', async () => {
-    const s = setup([{ output: [call('buy_report')] }, { output: [call('buy_report')] }]);
+    const s = setup([{ output: [call('buy_report', { resourceId: 'xrp-research-1' })] }, { output: [call('buy_report', { resourceId: 'xrp-research-1' })] }]);
     s.tools.buy = vi.fn(async () => { throw new Error('uncertain payment'); });
     await expect(runGeneralAgent(s.options)).rejects.toThrow('uncertain');
     expect(s.model).toHaveBeenCalledTimes(1);
@@ -52,7 +70,7 @@ describe('task-driven agent', () => {
     expect(parseAgentRequest({ task: 'Research something', budget: '0', mode: 'agent' }, '0.05').budget).toBe('0');
   });
   it('does not pay if stopped while waiting for the network check', async () => {
-    const s = setup([{ output: [call('buy_report')] }]);
+    const s = setup([{ output: [call('buy_report', { resourceId: 'xrp-research-1' })] }]);
     const control = new AbortController();
     let checks = 0;
     await expect(runGeneralAgent({ ...s.options, signal: control.signal, checkNetwork: async () => {

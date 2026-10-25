@@ -13,6 +13,7 @@
     "ap4m:check": "tsx scripts/ap4m-check.ts",
     "ap4m:channel": "tsx scripts/ap4m-channel.ts",
     "ap4m:demo": "tsx scripts/ap4m-demo.ts",
+    "ap4m:task": "tsx scripts/ap4m-demo.ts --task",
     "ap4m:share": "tsx scripts/ap4m-share.ts",
     "demo:browser": "tsx apps/demo/src/browser-server.ts",
     "demo": "tsx apps/demo/src/server.ts",

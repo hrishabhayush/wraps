@@ -38,7 +38,7 @@ try {
   gateway = createSponsoredGateway({ origin, backend, quota: new SponsoredQuota(join(homedir(), '.local/state/wraps/public-demo/runs')) });
   await new Promise<void>((resolve, reject) => { gateway!.server.once('error', reject); gateway!.server.listen(4179, '127.0.0.1', resolve); });
   console.log(`Temporary public demo: ${origin}`);
-  console.log('10 sponsored attempts total; one visitor run at a time. Previously purchased reports are reused.');
+  console.log('10 sponsored attempts total; one visitor run at a time. Each new run can pay again for the same report.');
   console.log('Keep this terminal, the AP4M demo and Wraps VPN running. Ctrl+C closes public access.');
   console.log('This share link expires automatically after two hours.');
   const expiry = setTimeout(() => void close(), 2 * 60 * 60 * 1000);

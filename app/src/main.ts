@@ -19,7 +19,7 @@ type Conn =
   | { kind: 'refused'; reason: string };
 
 const s = {
-  screen: (localStorage.getItem('wraps.onboarded') ? 'home' : 'onboarding') as Screen,
+  screen: (sessionStorage.getItem('wraps.onboarded') ? 'home' : 'onboarding') as Screen,
   conn: { kind: 'off' } as Conn,
   nodes: [] as VpnNode[],
   nodeId: localStorage.getItem('wraps.node') ?? 'zrh',
@@ -247,7 +247,7 @@ async function disconnect(reason?: string) {
 }
 
 const actions: Record<string, (arg: string) => unknown> = {
-  start: () => { localStorage.setItem('wraps.onboarded', '1'); s.screen = 'home'; render(); },
+  start: () => { sessionStorage.setItem('wraps.onboarded', '1'); s.screen = 'home'; render(); },
   go: arg => { s.screen = arg as Screen; s.pick = ''; render(); },
   power: () => (s.conn.kind === 'connected' ? disconnect() : connect(s.nodeId)),
   pick: arg => { s.pick = arg; render(); },

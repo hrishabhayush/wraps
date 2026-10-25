@@ -236,6 +236,120 @@ describe('SR4 / denial of settlement [USENIX\'26, FreeRide]', () => {
   });
 });
 
+describe('SR4 / ambiguous settlement: a quote reopens only when settle is known to have failed', () => {
+  /** A merchant whose /settle calls go through `settle`. Other issuer calls pass through. */
+  async function withMerchant(settle: Transport, fn: (base: string, m: Merchant, clock: { t: number }) => Promise<void>) {
+    const clock = { t: Date.now() };
+    const transport: Transport = (u, init) => (u.endsWith('/settle') ? settle(u, init) : fetch(u, init));
+    const m = new Merchant({ merchantId: `m-amb-${Math.random().toString(16).slice(2)}`, issuerUrl: issuer.url, verifier: verifier(), log: quiet, transport, now: () => clock.t });
+    const base = await m.start();
+    try {
+      await fn(base, m, clock);
+    } finally {
+      await m.close();
+    }
+  }
+
+  it('SR4 ambiguous settle: the answer is lost after the issuer settled; /verify confirms it and the merchant serves once', async () => {
+    const lost: Transport = async (u, init) => {
+      await fetch(u, init); // the issuer settles
+      throw new Error('socket hang up'); // but the merchant never sees the answer
+    };
+    await withMerchant(lost, async (base, m) => {
+      const q = await quote('/analytics', base);
+      const tokens = await mint(2);
+      const r1 = await pay('/analytics', tokens, q.quoteId, base);
+      expect(r1.status).toBe(200);
+      expect((await r1.json()).data).toBeDefined();
+      expect(m.claims).toHaveLength(0); // no signed claim arrived, but the tokens are spent
+      expect(await issuerValid(tokens)).toBe(false);
+      const again = await pay('/analytics', tokens, q.quoteId, base);
+      expect(again.status).toBe(402); // served once, never twice
+    });
+  });
+
+  it('SR4 ambiguous settle: issuer unreachable; the quote stays held, even past expiry, until the same tokens settle it', async () => {
+    let down = true;
+    const unreachable: Transport = async (u, init) => {
+      if (down) throw new Error('connect ETIMEDOUT');
+      return fetch(u, init);
+    };
+    await withMerchant(unreachable, async (base, m, clock) => {
+      const q = await quote('/analytics', base);
+      const tokens = await mint(2);
+      const r1 = await pay('/analytics', tokens, q.quoteId, base);
+      expect(r1.status).toBe(503);
+      expect(r1.headers.get('retry-after')).toBe('1');
+      expect(await r1.json()).toMatchObject({ pending: true, quoteId: q.quoteId });
+      expect(await issuerValid(tokens)).toBe(true);
+
+      // Not reopened: another payment cannot take the held quote.
+      const other = await mint(2);
+      const steal = await pay('/analytics', other, q.quoteId, base);
+      expect(steal.status).toBe(402);
+      expect((await steal.json()).error).toMatch(/settlement pending for other tokens/);
+      expect(await issuerValid(other)).toBe(true);
+
+      // The paid request is not lost: the same tokens settle it, even after the quote's expiry.
+      down = false;
+      clock.t += 60_001;
+      const r2 = await pay('/analytics', tokens, q.quoteId, base);
+      expect(r2.status).toBe(200);
+      expect(m.claims).toHaveLength(1);
+      expect((await pay('/analytics', tokens, q.quoteId, base)).status).toBe(402);
+    });
+  });
+
+  it('SR4 ambiguous settle race: a delayed settle lands after the merchant answered pending; the retry serves once and the tab counts it once', async () => {
+    let release!: () => void;
+    let landed!: Promise<Response>;
+    let first = true;
+    const delayed: Transport = async (u, init) => {
+      if (!first) return fetch(u, init);
+      first = false;
+      landed = new Promise<void>((r) => (release = r)).then(() => fetch(u, init));
+      throw new Error('request timed out'); // the merchant gives up; the request is still on its way
+    };
+    await withMerchant(delayed, async (base, m) => {
+      const q = await quote('/analytics', base);
+      const tokens = await mint(2);
+      expect((await pay('/analytics', tokens, q.quoteId, base)).status).toBe(503);
+
+      release();
+      expect((await landed).status).toBe(200); // the late settle lands at the issuer
+
+      const r2 = await pay('/analytics', tokens, q.quoteId, base);
+      expect(r2.status).toBe(200); // retry: settle says "already spent", /verify confirms, serve
+      expect((await pay('/analytics', tokens, q.quoteId, base)).status).toBe(402);
+
+      // The next paid request's claim covers the late settle plus this one: 2 + 2 tokens.
+      const q2 = await quote('/analytics', base);
+      expect((await pay('/analytics', await mint(2), q2.quoteId, base)).status).toBe(200);
+      expect(m.latestClaim?.claim.totalTokens).toBe(4);
+    });
+  });
+
+  it('SR4 ambiguous settle race: after a gateway 504, concurrent retries with the same tokens are served exactly once', async () => {
+    let first = true;
+    const gateway: Transport = async (u, init) => {
+      if (first) {
+        first = false;
+        return new Response(JSON.stringify({ error: 'gateway timeout' }), { status: 504 });
+      }
+      return fetch(u, init);
+    };
+    await withMerchant(gateway, async (base, m) => {
+      const q = await quote('/analytics', base);
+      const tokens = await mint(2);
+      expect((await pay('/analytics', tokens, q.quoteId, base)).status).toBe(503);
+      const statuses = (await Promise.all(Array.from({ length: 5 }, () => pay('/analytics', tokens, q.quoteId, base)))).map((r) => r.status);
+      expect(statuses.filter((s) => s === 200)).toHaveLength(1);
+      expect(m.claims).toHaveLength(1);
+      expect(m.latestClaim?.claim.totalTokens).toBe(2);
+    });
+  });
+});
+
 describe('SR5: freshness and meaningless proofs [USENIX\'26] + M1 [Five]', () => {
   it('SR5: a payment against a stale quote is refused', async () => {
     const q = await quote('/analytics');

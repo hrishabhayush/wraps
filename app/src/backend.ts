@@ -26,7 +26,8 @@ export interface Backend {
   connect(nodeId: string): Promise<void>;
   disconnect(): Promise<void>;
   wallet(): Promise<Wallet>;
-  topUp(usd: number): Promise<Wallet>;
+  // Mint tokens for a confirmed on-chain payment. Real impl: issuer POST /issue (packages/issuer TopUpRail).
+  topUp(usd: number, paid: { asset: string; tx: string }): Promise<Wallet>;
   charge(usd: number): Wallet; // sync: called every second by the meter
   record(a: Activity): Promise<Wallet>;
 }
@@ -63,10 +64,10 @@ export class MockBackend implements Backend {
   async connect(_nodeId: string) { await sleep(500); }
   async disconnect() {}
   async wallet() { return this.w; }
-  async topUp(usd: number) {
-    await sleep(900);
+  async topUp(usd: number, paid: { asset: string; tx: string }) {
+    await sleep(600);
     this.w.usd += usd;
-    this.w.history.unshift({ title: 'Top up · RLUSD', detail: `${Math.round(usd * 100).toLocaleString()} tokens minted`, usd, at: Date.now() });
+    this.w.history.unshift({ title: `Top up · ${paid.asset}`, detail: `${Math.round(usd * 100).toLocaleString()} tokens · ${paid.tx.slice(0, 8)}…`, usd, at: Date.now() });
     return this.save();
   }
   charge(usd: number) { this.w.usd = Math.max(0, this.w.usd - usd); return this.save(); }

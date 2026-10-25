@@ -6,6 +6,9 @@ import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
 import { MockBackend, type Attestation, type Flag, type VpnNode, type Wallet } from './backend.ts';
 import { tick, tokensFor, clock, type Meter } from './meter.ts';
+import * as wc from './wallet.ts';
+import { short } from './chain.ts';
+import QRCode from 'qrcode';
 
 const api = new MockBackend();
 const inTauri = '__TAURI_INTERNALS__' in window;
@@ -29,6 +32,11 @@ const s = {
   wallet: { usd: 0, history: [] } as Wallet,
   amount: 10,
   busy: false,
+  acct: undefined as string | undefined, // connected wallet address
+  bal: undefined as number | undefined, // its balance in the pay asset
+  qr: '', // pairing QR (svg) while connecting
+  uri: '',
+  stage: '' as '' | wc.PayStage | 'minting',
   rechecking: false,
   trust: {} as Record<string, 'ok' | 'bad'>, // attestation results this session
   toast: '',
@@ -188,8 +196,8 @@ function wallet() {
       <div class="row gap6">${[5, 10, 25, 50]
         .map(a => `<button class="amt mono ${a === s.amount ? 'on' : ''}" data-act="amount" data-arg="${a}">$${a}</button>`)
         .join('')}</div>
-      <div class="rlusd row gap10"><span class="coin"></span><div class="col"><b>RLUSD</b><small>Ripple USD · XRP Ledger</small></div></div>
-      <button class="cta" data-act="topup" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Minting tokens…' : `Top up $${s.amount} RLUSD → mint ${tokensFor(s.amount).toLocaleString()} tokens`}</button>
+      ${payFrom()}
+      ${topupCta()}
     </div>
     <section class="activity">${w.history
       .slice(0, 3)
@@ -199,6 +207,45 @@ function wallet() {
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
   </div>`;
+}
+
+
+// The user's wallet: connect via WalletConnect QR, then pay the issuer on XRPL EVM testnet.
+function payFrom() {
+  if (s.qr) return `<div class="wcard col qrbox">
+      <div class="qr">${s.qr}</div>
+      <small>Scan with MetaMask, Rabby or any WalletConnect wallet</small>
+      <div class="row gap6"><button class="ghost2" data-act="copyUri">Copy link</button><button class="ghost2" data-act="cancelWc">Cancel</button></div>
+    </div>`;
+  if (!s.acct) return `<button class="wcard row gap10" data-act="connectWallet" ${wc.cfg.projectId ? '' : 'disabled'}>
+      <span class="wcicon">${ic('wallet', 16)}</span>
+      <div class="col grow"><b>Connect a wallet</b><small>${wc.cfg.projectId ? 'WalletConnect · XRPL EVM testnet' : 'Set VITE_REOWN_PROJECT_ID in app/.env'}</small></div>
+      ${ic('down', 14)}
+    </button>`;
+  return `<div class="wcard row gap10 on">
+      <span class="coin ${wc.asset === 'XRP' ? 'xrp' : 'rl'}"></span>
+      <div class="col grow"><b class="mono acct">${short(s.acct)}</b><small>XRPL EVM testnet · ${s.bal === undefined ? '…' : `${s.bal.toFixed(2)} ${wc.asset}`}</small></div>
+      <button class="link small" data-act="disconnectWallet">Disconnect</button>
+    </div>`;
+}
+
+function topupCta() {
+  const cost = wc.priceIn(s.amount);
+  const label =
+    s.stage === 'approve' ? 'Approve in your wallet…'
+    : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
+    : s.stage === 'minting' ? 'Minting tokens…'
+    : !s.acct ? 'Connect a wallet to top up'
+    : !wc.cfg.payout ? 'Set VITE_ISSUER_PAYOUT in app/.env'
+    : `Pay ${wc.asset === 'XRP' ? `${cost.toFixed(2)} XRP` : `$${s.amount} RLUSD`} → mint ${tokensFor(s.amount).toLocaleString()} tokens`;
+  const off = !!s.stage || !s.acct || !wc.cfg.payout;
+  return `<button class="cta" data-act="topup" ${off ? 'disabled' : ''}>${label}</button>`;
+}
+
+async function refreshBalance() {
+  s.acct = wc.account();
+  s.bal = s.acct ? await wc.balance(s.acct).catch(() => undefined) : undefined;
+  render();
 }
 
 // ---------- render ----------
@@ -261,11 +308,30 @@ const actions: Record<string, (arg: string) => unknown> = {
   },
   amount: arg => { s.amount = Number(arg); render(); },
   topup: async () => {
-    s.busy = true; render();
-    s.wallet = { ...(await api.topUp(s.amount)) };
-    s.busy = false;
-    toast(`Minted ${tokensFor(s.amount).toLocaleString()} tokens`);
+    try {
+      const tx = await wc.pay(s.amount, st => { s.stage = st; render(); });
+      s.stage = 'minting'; render();
+      s.wallet = { ...(await api.topUp(s.amount, { asset: wc.asset, tx })) };
+      toast(`Minted ${tokensFor(s.amount).toLocaleString()} tokens`);
+    } catch (e) {
+      toast((e as Error).message.slice(0, 60));
+    } finally {
+      s.stage = '';
+      refreshBalance();
+    }
   },
+  connectWallet: async () => {
+    try {
+      await wc.connect(async uri => { s.uri = uri; s.qr = await QRCode.toString(uri, { type: 'svg', margin: 0, color: { dark: '#0a0a0a', light: '#ffffff' } }); render(); });
+    } catch (e) {
+      if (s.qr) toast((e as Error).message.slice(0, 60));
+    }
+    s.qr = s.uri = '';
+    refreshBalance();
+  },
+  copyUri: async () => { await navigator.clipboard.writeText(s.uri); toast('Link copied'); },
+  cancelWc: () => { s.qr = s.uri = ''; render(); },
+  disconnectWallet: async () => { await wc.disconnect(); refreshBalance(); },
   quit: async () => {
     await disconnect();
     if (inTauri) (await import('@tauri-apps/api/core')).invoke('quit');
@@ -307,11 +373,16 @@ setInterval(async () => {
   const p = import.meta.env.DEV ? new URLSearchParams(location.search).get('state') : null;
   if (p) {
     s.screen = p === 'onboarding' || p === 'nodes' || p === 'wallet' ? p : 'home';
+    if (p.startsWith('wallet')) s.screen = 'wallet';
+    if (p === 'wallet-qr') s.qr = await QRCode.toString('wc:preview@2?relay-protocol=irn&symKey=00', { type: 'svg', margin: 0 });
+    if (p === 'wallet-connected' || p === 'wallet-paying') { s.acct = '0x1234567890abcdef1234567890abcdef12345678'; s.bal = 41.2; }
+    if (p === 'wallet-paying') s.stage = 'confirming';
     if (p === 'verifying') s.conn = { kind: 'verifying' };
     if (p === 'refused') { s.nodeId = 'tyo'; s.trust.tyo = 'bad'; s.conn = { kind: 'refused', reason: 'Enclave build doesn’t match the audited code' }; }
     if (p === 'connected') s.trust.zrh = 'ok';
     if (p === 'connected')
       s.conn = { kind: 'connected', since: Date.now() - 2511e3, meter: { mb: 214, cost: 0.43 }, att: { ok: true, tee: 'tdx', build: 'a41f…9c', checkedAt: Date.now() - 2000 }, up: 30, down: 40 };
   }
+  if (!p) wc.init(refreshBalance).then(refreshBalance).catch(e => console.error('wallet init', e));
   render();
 })();

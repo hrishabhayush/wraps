@@ -63,9 +63,11 @@ pub fn start(app: AppHandle) {
 #[tauri::command]
 pub fn browser_wallet(app: AppHandle, request: serde_json::Value) -> Result<(), String> {
     *app.state::<Pending>().0.lock().unwrap() = Some(request);
-    std::process::Command::new("open")
-        .arg(format!("http://127.0.0.1:{PORT}/"))
-        .spawn()
-        .map_err(|e| format!("couldn't open the browser: {e}"))?;
+    // Chrome is where the wallet extension lives; fall back to the default browser if it's missing.
+    let url = format!("http://127.0.0.1:{PORT}/");
+    let chrome = std::process::Command::new("open").args(["-a", "Google Chrome", &url]).status();
+    if !matches!(chrome, Ok(s) if s.success()) {
+        std::process::Command::new("open").arg(&url).spawn().map_err(|e| format!("couldn't open the browser: {e}"))?;
+    }
     Ok(())
 }

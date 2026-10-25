@@ -45,22 +45,24 @@ p{font-size:13px;line-height:1.6;color:var(--muted);margin:0 0 10px}.note{font-s
 </dl>
 <div class="actions"><button class="primary" id="refresh">Refresh IP</button><button id="save" disabled>Use as baseline</button></div>
 <p id="error" role="alert" hidden></p>
-<p>Save your baseline. Connect Wraps. Refresh to compare.</p>
+<p>Save your baseline, then connect Wraps. This page checks automatically every 15 seconds while visible.</p>
 <p class="note">An IP change alone doesn’t verify VPN routing or DNS and IPv6 leak protection. Location is approximate.</p>
 <footer><a href="https://ipinfo.io" target="_blank" rel="noopener noreferrer">Data by IPinfo ↗</a><a href="https://ipinfo.io/dashboard/lite" target="_blank" rel="noopener noreferrer">Open dashboard ↗</a></footer>
 </main>
 <script>
 const el=id=>document.getElementById(id);
-let baseline='',current=null;
+let baseline='',current=null,busy=false,nextCheck=0;
 try{baseline=localStorage.getItem('wraps-ip-baseline')||''}catch{}
 function comparison(ip,base){return !base?'Save this IP before connecting':ip===base?'Same as baseline':'IP changed — verify it matches your VPN exit';}
 function renderStatus(){el('baseline').textContent=baseline||'Not saved yet';el('status').textContent=comparison(current.ip,baseline);}
 async function refresh(){
+ if(busy)return;busy=true;
  el('refresh').disabled=true;el('save').disabled=true;el('refresh').textContent='Checking…';el('error').hidden=true;
  const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);
  try{
   const response=await fetch('https://ipinfo.io/json',{cache:'no-store',signal:controller.signal});
-  if(!response.ok)throw new Error(response.status===429?'IPinfo rate limit reached. Wait a moment and refresh.':'IPinfo returned HTTP '+response.status+'.');
+  if(response.status===429)nextCheck=Date.now()+60000;
+  if(!response.ok)throw new Error(response.status===429?'IPinfo rate limit reached. Automatic checks pause for one minute.':'IPinfo returned HTTP '+response.status+'.');
   const data=await response.json();
   if(typeof data.ip!=='string'||!data.ip.trim())throw new Error('IPinfo did not return an IP address.');
   current=data;el('ip').textContent=data.ip;
@@ -70,11 +72,13 @@ async function refresh(){
  }catch(error){
   el('error').textContent=error.name==='AbortError'?'The check timed out. Check your connection and refresh.':error.message||'Could not reach IPinfo. Check your connection and refresh.';
   el('error').hidden=false;el('status').textContent=current?'Check failed — showing last successful result':'Check failed';if(!current)el('ip').textContent='Unavailable';
- }finally{clearTimeout(timer);el('refresh').disabled=false;el('refresh').textContent='Refresh IP';}
+ }finally{busy=false;clearTimeout(timer);el('refresh').disabled=false;el('refresh').textContent='Refresh IP';}
 }
 el('refresh').addEventListener('click',refresh);
 el('save').addEventListener('click',()=>{if(!current)return;baseline=current.ip;try{localStorage.setItem('wraps-ip-baseline',baseline)}catch{}renderStatus();});
 refresh();
+setInterval(()=>{if(!document.hidden&&Date.now()>=nextCheck)refresh();},15000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()>=nextCheck)refresh();});
 </script>
 </body>
 </html>

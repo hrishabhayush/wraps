@@ -58,7 +58,7 @@ export async function init(onChange: () => void) {
     optionalChains: [NET.id],
     rpcMap: { [NET.id]: NET.rpc },
     showQrModal: false,
-    metadata: { name: 'Wraps', description: 'Pay-as-you-go VPN with verifiable no-log nodes', url: 'https://wraps.xyz', icons: ['https://wraps.xyz/icon.png'] },
+    metadata: { name: 'Wraps', description: 'Pay-as-you-go VPN with verifiable no-log nodes', url: location.origin, icons: [] },
   });
   p.on('accountsChanged', onChange);
   p.on('chainChanged', onChange);

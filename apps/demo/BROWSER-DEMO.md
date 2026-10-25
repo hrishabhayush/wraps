@@ -21,15 +21,26 @@ The model defaults to `gpt-4.1-mini`; `OPENAI_MODEL` can override it. It can sea
 
 Task and page text are sent to OpenAI with `store: false`; model usage is billed separately from RLUSD. This is not a no-logging guarantee from the model provider. Credentials stay on the server and are excluded from Chromium's environment. Browser actions are read-only requests; private IP destinations and non-HTTPS navigation are blocked by DNS preflight. That preflight is not connection-level isolation against DNS rebinding. Use a network-enforcing proxy before production use on hostile sites. Searches may encounter bot checks; provide source URLs if needed.
 
-The right-hand IP panel refreshes automatically every 15 seconds, browser images every second, and live actions stream immediately. Agent egress is checked before model/tool actions when payments are configured. These checks are not a kill switch: a VPN disconnect between checks can leak traffic. Paid access currently supports the configured AP4M report only, not arbitrary x402 merchants or general online checkout.
+The right-hand IP panel refreshes automatically every 15 seconds, browser images every second, and live actions refresh every second. Agent egress is checked before model/tool actions when payments are configured. These checks are not a kill switch: a VPN disconnect between checks can leak traffic. Paid access currently supports the configured AP4M report only, not arbitrary x402 merchants or general online checkout.
 
 ## Real AP4M purchase
 
-### Sponsored allowance preparation
+### Temporary sponsored public link
 
-`WRAPS_SPONSORED=1 npm run ap4m:demo` enables a persistent allowance of ten run attempts and requires a server payment ceiling no higher than 0.05 RLUSD. Each accepted attempt consumes one slot before model work starts, including attempts that later fail. Restarting does not reset the allowance. OpenAI usage is separately billed and bounded by the ten runs and twelve model turns per run; this is not an API-dollar budget. The same report and payment operation are retained, so subsequent retrievals do not buy it again.
+1. Keep Wraps connected and run `npm run ap4m:demo` in the terminal holding both keys.
+2. Install the tunnel client once with `brew install cloudflared`.
+3. In another terminal, run `npm run ap4m:share`. That process does not need either key. Share the printed HTTPS `trycloudflare.com` URL.
+4. Keep both terminals and this Mac awake. If you restart the private AP4M server, restart sharing too to obtain a new link; the gateway refuses new work after losing its original server connection. Ctrl-C in the share terminal ends public access; it also expires automatically after two hours.
 
-This switch does **not** publish the dashboard or make it safe for multiple visitors: it still binds to loopback and shares its local activity feed. Public access requires isolated visitor sessions and a separate gateway. Do not expose this local server through a tunnel as-is.
+The gateway has **ten run attempts total**, persisted under `~/.local/state/wraps/public-demo/runs`. Restarting does not reset the allowance. A failed accepted attempt still consumes a slot. There is one active run at a time, one run per visitor cookie, a three-minute stop request, and the existing twelve-model-turn bound. A cookie is not a verified human identity; the global allowance is the hard usage boundary. OpenAI billing is separate from AP4M; the run allowance is not a dollar-denominated API budget.
+
+Each visitor gets their own activity and browser images. The gateway does not expose the private dashboard, event stream, payment configuration, or keys. Run IDs prevent screenshots and events from another run being returned. Do not start private dashboard tasks while people use the shared demo. The gateway retains at most ten visitor results in memory until sharing stops. Cookie expiry is one hour. Tasks and page text go to OpenAI; Cloudflare proxies the public page and requests. Neither provider is covered by a no-logging claim.
+
+Shared runs use fresh browser contexts with page JavaScript disabled, only public HTTPS document/style/image/font requests, and DNS-validated socket addresses. This prevents a second DNS lookup or redirect from reaching the host's private network. JavaScript-only sites and some search pages may not work; provide direct public documentation URLs instead. Browser loads are capped at sixty requests and twenty MB per run. The three-minute limit requests a stop; an already submitted model request or payment can still finish.
+
+The purchase ceiling remains 0.05 RLUSD. The configured report uses the retained `xrp-research-1` operation: **retrieving it again is free, not a new charge**. This AP4M path is separate from the desktop blind-token balance. The right panel shows the visitor's IP; the agent label shows the host VPN exit. The host must retain the expected exit to start runs and pass payment preflight. These checks are not an operating-system VPN kill switch.
+
+The local-only `WRAPS_SPONSORED=1 npm run ap4m:demo` switch also supports a separate ten-attempt allowance under the AP4M state directory. It is unnecessary when using the public gateway. Never tunnel port 4177 directly: `ap4m:share` tunnels only the visitor gateway on port 4179.
 
 For the bundled local merchant, run `npm run ap4m:demo` in the terminal holding the exported agent key. It discovers your single open channel, reads its merchant and payout from the chain, and starts `http://127.0.0.1:4180/resource` plus the live dashboard at `http://127.0.0.1:4177`. Startup makes no purchase. The endpoint quotes **0.05 testnet RLUSD** for a saved XRPL EVM block snapshot; the agent may buy the report when useful to your task and within the task budget. The local demo uses the agent wallet to submit the merchant's redemption transaction too (maximum estimated gas fee 0.1 testnet XRP). The payout still goes to the channel's registered merchant. Keep this terminal open. Stop it with Ctrl-C.
 

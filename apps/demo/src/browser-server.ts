@@ -9,6 +9,7 @@ import { paymentConfig, purchase } from './browser-payment';
 import { parseAgentRequest, runGeneralAgent, openaiModel, type AgentRequest, type ResearchTools } from './general-agent';
 import { browserEnvironment, checkBrowserUrl } from './browser-safety';
 import { SponsoredQuota } from './sponsored-quota';
+import { publicBrowserFetch } from './public-browser-fetch';
 
 const port = Number(process.env.BROWSER_DEMO_PORT ?? 4176);
 const base = `http://127.0.0.1:${port}`;
@@ -22,7 +23,8 @@ const quota = sponsored ? new SponsoredQuota(join(process.env.AP4M_STATE_DIR!, '
 const policy = controlPolicy('127.0.0.1');
 const website = fileURLToPath(new URL('../../../website/', import.meta.url));
 const clients = new Set<ServerResponse>();
-const history: { type: string; message: string; at: string }[] = [];
+const history: { id: number; runId: number; type: string; message: string; at: string }[] = [];
+let eventId = 0, runId = 0, pageRunId = 0, frameRunId = 0;
 let browser: Browser | undefined, page: Page | undefined, frame: Buffer | undefined;
 let running = false, capturing = false;
 let activeRun: AbortController | undefined;
@@ -31,7 +33,7 @@ let network: { ip?: string; checkedAt?: string; error?: string } = {};
 let checking: Promise<typeof network> | undefined;
 
 function publish(type: string, message: string) {
-  const event = { type, message, at: new Date().toISOString() };
+  const event = { id: ++eventId, runId, type, message, at: new Date().toISOString() };
   history.push(event);
   if (history.length > 100) history.shift();
   for (const client of clients) client.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -53,7 +55,11 @@ function checkNetwork() {
 async function capture() {
   if (!page || page.isClosed() || capturing) return;
   capturing = true;
-  try { frame = await page.screenshot({ type: 'jpeg', quality: 70, timeout: 2500 }); } catch { /* Window may be navigating or closing. */ }
+  const capturedPage = page, capturedRun = pageRunId;
+  try {
+    const next = await capturedPage.screenshot({ type: 'jpeg', quality: 70, timeout: 2500 });
+    if (page === capturedPage && runId === capturedRun) { frame = next; frameRunId = capturedRun; }
+  } catch { /* Window may be navigating or closing. */ }
   finally { capturing = false; }
 }
 async function runDemo(request: AgentRequest, signal: AbortSignal) {
@@ -62,6 +68,7 @@ async function runDemo(request: AgentRequest, signal: AbortSignal) {
     await browser?.close();
     browser = await chromium.launch({ headless: process.env.BROWSER_DEMO_HEADLESS === '1', slowMo: 250, env: browserEnvironment(process.env) });
     page = await browser.newPage({ viewport: { width: 1100, height: 740 }, serviceWorkers: 'block' });
+    pageRunId = runId;
     await page.goto(`${base}/research`);
     await page.getByLabel('Research topic').fill('XRP transaction fees');
     await page.getByRole('button', { name: 'Find sources' }).click();
@@ -102,20 +109,28 @@ async function requireExit() {
   if (net.ip !== expectedIp) throw new Error(`Connect Wraps first: agent IP ${net.ip ?? 'unavailable'} does not match ${expectedIp}.`);
 }
 
-async function runAgent(request: AgentRequest, signal: AbortSignal) {
+async function runAgent(request: AgentRequest, signal: AbortSignal, shared = false) {
   if (!process.env.OPENAI_API_KEY) throw new Error('Set OPENAI_API_KEY in the terminal and restart this demo.');
   await requireExit();
   await browser?.close();
-  browser = await chromium.launch({ headless: process.env.BROWSER_DEMO_HEADLESS === '1', slowMo: 200, env: browserEnvironment(process.env) });
-  const context = await browser.newContext({ viewport: { width: 1100, height: 740 }, serviceWorkers: 'block', acceptDownloads: false });
+  browser = await chromium.launch({ headless: shared || process.env.BROWSER_DEMO_HEADLESS === '1', slowMo: 200, env: browserEnvironment(process.env) });
+  const context = await browser.newContext({ viewport: { width: 1100, height: 740 }, serviceWorkers: 'block', acceptDownloads: false, javaScriptEnabled: !shared });
+  let sharedRequests = 0, sharedBytes = 0;
   await context.route('**/*', async route => {
     try {
       if (!['GET', 'HEAD'].includes(route.request().method())) return await route.abort();
       await checkBrowserUrl(route.request().url());
-      await route.continue();
+      if (shared) {
+        if (!['document', 'stylesheet', 'image', 'font'].includes(route.request().resourceType())) return await route.abort();
+        if (++sharedRequests > 60) return await route.abort();
+        const response = await publicBrowserFetch(route.request().url());
+        sharedBytes += response.body.length;
+        if (sharedBytes > 20 * 1024 * 1024) return await route.abort();
+        await route.fulfill(response);
+      } else await route.continue();
     } catch { await route.abort().catch(() => {}); }
   });
-  page = await context.newPage();
+  page = await context.newPage(); pageRunId = runId;
   context.on('page', extra => { if (extra !== page) void extra.close(); });
   page.setDefaultTimeout(12000);
   await page.setContent('<!doctype html><html><body style="background:#0a0a0a;color:white;font:24px system-ui;padding:60px"><h1>wraps / Agent browser</h1><p>Preparing your research task…</p></body></html>');
@@ -158,18 +173,21 @@ async function runAgent(request: AgentRequest, signal: AbortSignal) {
   });
 }
 
-async function run(request: AgentRequest) {
+async function run(request: AgentRequest, shared = false) {
   const control = new AbortController(); activeRun = control;
   publish('task', request.task);
   publish('mode', request.mode === 'agent' ? `Model agent · ${model} · task budget ${request.budget} RLUSD` : 'Scripted demonstration');
   try {
-    if (request.mode === 'agent') await runAgent(request, control.signal);
+    if (request.mode === 'agent') await runAgent(request, control.signal, shared);
     else { await requireExit(); control.signal.throwIfAborted(); await runDemo(request, control.signal); }
   } catch (error) {
     let message = error instanceof Error ? error.message : String(error);
     for (const secret of [process.env.AGENT_PRIVATE_KEY, process.env.OPENAI_API_KEY]) if (secret) message = message.split(secret).join('[redacted]');
     publish('error', control.signal.aborted ? 'Run stopped. Any already submitted payment may still complete; retry using the same retained state.' : message.replace(/0x[0-9a-fA-F]{64,}/g, '[redacted]').slice(0, 300));
-  } finally { running = false; activeRun = undefined; publish('status', 'Run finished. The browser stays open for inspection.'); }
+  } finally {
+    if (shared) { await capture(); await browser?.close().catch(() => {}); }
+    running = false; activeRun = undefined; publish('status', shared ? 'Run finished. The final browser image is available below.' : 'Run finished. The browser stays open for inspection.');
+  }
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -184,7 +202,10 @@ const server = createServer(async (req, res) => {
     try {
       let body = '';
       for await (const chunk of req) { body += chunk.toString(); if (Buffer.byteLength(body) > 8192) return json(res, 413, { error: 'Task request too large' }); }
-      const request = parseAgentRequest(JSON.parse(body), config.maximum);
+      const parsed = JSON.parse(body);
+      const request = parseAgentRequest(parsed, config.maximum);
+      const shared = parsed.shared === true;
+      if (shared && request.mode !== 'agent') return json(res, 400, { error: 'Shared sessions require agent mode.' });
       if (sponsored && request.mode !== 'agent') return json(res, 400, { error: 'Sponsored mode supports general research tasks only.' });
       if (request.mode === 'agent' && !process.env.OPENAI_API_KEY) return json(res, 409, { error: 'Set OPENAI_API_KEY in the terminal and restart the demo.' });
       // Re-check after reading the body so concurrent requests cannot start two agents.
@@ -194,14 +215,16 @@ const server = createServer(async (req, res) => {
         try { await quota.reserve(); }
         catch { running = false; return json(res, 429, { error: 'Sponsored allowance unavailable or exhausted. No run was started.' }); }
       }
-      void run(request); return json(res, 202, { running });
+      runId++; frame = undefined;
+      void run(request, shared); return json(res, 202, { running, runId });
     } catch { return json(res, 400, { error: `Enter a task, mode, and budget between 0 and ${config.maximum} RLUSD.` }); }
   }
   if (req.method === 'POST' && url.pathname === '/api/stop') { activeRun?.abort(); publish('status', 'Stop requested. Already submitted payments cannot be cancelled.'); return json(res, 202, { stopping: running }); }
   if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
-  if (url.pathname === '/api/status') return json(res, 200, { running, payments: config.ready, missing: config.missing, maximum: config.maximum, modelReady: Boolean(process.env.OPENAI_API_KEY), model, network, expectedIp });
+  if (url.pathname === '/api/status') return json(res, 200, { shareProtocol: 1, runId, running, payments: config.ready, missing: config.missing, maximum: config.maximum, modelReady: Boolean(process.env.OPENAI_API_KEY), model, network, expectedIp });
+  if (url.pathname === '/api/activity') return json(res, 200, { running, runId, events: history.filter(e => e.id > Number(url.searchParams.get('after') ?? 0)) });
   if (url.pathname === '/frame.jpg') {
-    if (!frame) { res.writeHead(204); return res.end(); }
+    if (!frame || (url.searchParams.has('runId') && Number(url.searchParams.get('runId')) !== frameRunId)) { res.writeHead(204); return res.end(); }
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }); return res.end(frame);
   }
   if (url.pathname === '/events') {

@@ -150,6 +150,7 @@ describe('HTTPS CONNECT relay', () => {
   it('rejects IPv6 documentation and transition ranges', async () => {
     await startDefaultRelay();
     expect(await connectStatus(port, '[2001:db8::1]:443')).toBe(403);
+    expect(await connectStatus(port, '[2001::1]:443')).toBe(403);
     expect(await connectStatus(port, '[3fff::1]:443')).toBe(403);
     expect(await connectStatus(port, '[2002::1]:443')).toBe(403);
   });

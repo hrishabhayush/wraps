@@ -279,7 +279,7 @@ function isPublicAddress(address: string, family: number): boolean {
   const inPrefix = (prefix: bigint, bits: bigint) => value >> (128n - bits) === prefix;
   return (value >> 125n) === 1n && !(
     inPrefix(0x20010db8n, 32n) || inPrefix(0x3fff0n, 20n) ||
-    inPrefix(0x2002n, 16n) || inPrefix(0x400200n, 23n)
+    inPrefix(0x2002n, 16n) || inPrefix(0x100080n, 23n)
   );
 }
 

@@ -50,8 +50,11 @@ Buyer:
 ```sh
 XRPL_BUYER_SEED=sTestnetSeed \
 T54_TESTNET_RESOURCE_URL=http://127.0.0.1:8787/hello \
+T54_MAX_AMOUNT=1000 \
 python3 src/testnet-agent.py
 ```
+
+`T54_MAX_AMOUNT` caps what a 402 may request, in the asset's base units (drops for XRP). The default is 1000. The buyer refuses to pay if the merchant asks for more.
 
 The watcher recognizes the current t54 v2 payment form only when both the default t54 `SourceTag` (`804681468`) and an XRPL `InvoiceID` are present. Older x402 transactions with a facilitator memo continue to use the mainnet parser. The payment tag alone is not treated as proof of x402.
 

@@ -24,6 +24,8 @@ export interface RelayAttestationOptions {
     egressInterface: string;
     peers: Array<{ publicKey: string; allowedAddress: string }>;
     clientAllowedIPs: '0.0.0.0/0';
+    bytesPerToken: number;
+    metering: 'bidirectional-inner-ipv4';
   };
 }
 
@@ -42,6 +44,8 @@ export interface WireGuardAttestationResponse {
     peers: Array<{ publicKey: string; allowedAddress: string }>;
     clientAllowedIPs: '0.0.0.0/0';
     ipv6Forwarding: false;
+    bytesPerToken: number;
+    metering: 'bidirectional-inner-ipv4';
   };
   attestation: string;
 }
@@ -133,6 +137,8 @@ export async function createWireGuardAttestationResponse(
       peers: [...options.wireGuard.peers].sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
       clientAllowedIPs: options.wireGuard.clientAllowedIPs,
       ipv6Forwarding: false,
+      bytesPerToken: options.wireGuard.bytesPerToken,
+      metering: options.wireGuard.metering,
     },
     attestation,
   };

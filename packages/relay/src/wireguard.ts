@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, statfs, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, join } from 'node:path';
-import { createWireGuardQuotaController, type WireGuardQuotaController } from './wireguard-quota.js';
+import { createWireGuardQuotaController, WIREGUARD_BYTES_PER_TOKEN, type WireGuardQuotaController } from './wireguard-quota.js';
 
 const TMPFS_MAGIC = 0x01021994;
 const DEFAULT_RUNTIME_DIRECTORY = '/dev/shm';
@@ -25,6 +25,8 @@ export interface WireGuardGatewayOptions {
   egressInterface: string;
   /** Pre-authorized peer public keys and tunnel addresses. Must be non-empty. */
   peers: WireGuardPeer[];
+  bytesPerToken: number;
+  metering: 'bidirectional-inner-ipv4';
   /** Defaults to /dev/shm, which must be tmpfs. A private subdirectory is created there. */
   runtimeDirectory?: string;
   /** Test seam. Production uses the system `wg` and `wg-quick` commands. */
@@ -42,6 +44,8 @@ export interface WireGuardGatewayIdentity {
   interfaceAddress: string;
   egressInterface: string;
   peers: WireGuardPeer[];
+  bytesPerToken: number;
+  metering: 'bidirectional-inner-ipv4';
   /** Allowed IPs advertised to the client for a full IPv4 tunnel. */
   clientAllowedIPs: '0.0.0.0/0';
 }
@@ -83,6 +87,8 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     peers: [...options.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
     ipv6Forwarding: false,
+    bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
+    metering: 'bidirectional-inner-ipv4',
   })).digest('hex');
 
   const policy = buildFirewallPolicy(interfaceName, options.egressInterface, interfaceAddress.network);
@@ -131,6 +137,8 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     egressInterface: options.egressInterface,
     peers: options.peers.map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
+    bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
+    metering: 'bidirectional-inner-ipv4',
   };
 
   return {

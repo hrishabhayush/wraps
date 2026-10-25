@@ -36,7 +36,7 @@ const s = {
   bal: undefined as number | undefined, // its balance in the pay asset
   qr: '', // pairing QR (svg) while connecting
   uri: '',
-  stage: '' as '' | wc.PayStage | 'minting',
+  stage: '' as '' | wc.PayStage | 'minting' | 'linking',
   rechecking: false,
   trust: {} as Record<string, 'ok' | 'bad'>, // attestation results this session
   toast: '',
@@ -217,14 +217,15 @@ function payFrom() {
       <small>Scan with MetaMask, Rabby or any WalletConnect wallet</small>
       <div class="row gap6"><button class="ghost2" data-act="copyUri">Copy link</button><button class="ghost2" data-act="cancelWc">Cancel</button></div>
     </div>`;
-  if (!s.acct) return `<button class="wcard row gap10" data-act="connectWallet" ${wc.cfg.projectId ? '' : 'disabled'}>
+  if (!s.acct) return `<button class="wcard row gap10" data-act="connectBrowser" ${s.stage ? 'disabled' : ''}>
       <span class="wcicon">${ic('wallet', 16)}</span>
-      <div class="col grow"><b>Connect a wallet</b><small>${wc.cfg.projectId ? 'WalletConnect · XRPL EVM testnet' : 'Set VITE_REOWN_PROJECT_ID in app/.env'}</small></div>
+      <div class="col grow"><b>${s.stage === 'linking' ? 'Waiting for your browser…' : 'Use my browser wallet'}</b><small>MetaMask, Rabby or Brave · on this laptop</small></div>
       ${ic('down', 14)}
-    </button>`;
+    </button>
+    <button class="link small qrlink" data-act="connectWallet" ${wc.cfg.projectId ? '' : 'disabled'}>or scan a QR with a phone wallet</button>`;
   return `<div class="wcard row gap10 on">
       <span class="coin ${wc.asset === 'XRP' ? 'xrp' : 'rl'}"></span>
-      <div class="col grow"><b class="mono acct">${short(s.acct)}</b><small>XRPL EVM testnet · ${s.bal === undefined ? '…' : `${s.bal.toFixed(2)} ${wc.asset}`}</small></div>
+      <div class="col grow"><b class="mono acct">${short(s.acct)}</b><small>${wc.via() === 'browser' ? 'Browser wallet' : 'WalletConnect'} · XRPL EVM testnet · ${s.bal === undefined ? '…' : `${s.bal.toFixed(2)} ${wc.asset}`}</small></div>
       <button class="link small" data-act="disconnectWallet">Disconnect</button>
     </div>`;
 }
@@ -232,7 +233,8 @@ function payFrom() {
 function topupCta() {
   const cost = wc.priceIn(s.amount);
   const label =
-    s.stage === 'approve' ? 'Approve in your wallet…'
+    s.stage === 'approve' ? (wc.via() === 'browser' ? 'Approve in your browser…' : 'Approve in your wallet…')
+    : s.stage === 'linking' ? 'Connecting…'
     : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
     : s.stage === 'minting' ? 'Minting tokens…'
     : !s.acct ? 'Connect a wallet to top up'
@@ -327,6 +329,12 @@ const actions: Record<string, (arg: string) => unknown> = {
       if (s.qr) toast((e as Error).message.slice(0, 60));
     }
     s.qr = s.uri = '';
+    refreshBalance();
+  },
+  connectBrowser: async () => {
+    s.stage = 'linking'; render();
+    try { await wc.connectBrowser(); } catch (e) { toast((e as Error).message.slice(0, 60)); }
+    s.stage = '';
     refreshBalance();
   },
   copyUri: async () => { await navigator.clipboard.writeText(s.uri); toast('Link copied'); },

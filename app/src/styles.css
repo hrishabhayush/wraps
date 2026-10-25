@@ -147,3 +147,4 @@ footer button.ghost:hover, .ncard:hover { background: #fff; }
 .chev { flex: none; }
 
 .toast { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); background: #1e1e24; color: #fff; font-size: 12px; padding: 8px 14px; border-radius: 999px; white-space: nowrap; }
+.qrlink { align-self: center; margin-top: -2px; }

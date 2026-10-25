@@ -1,4 +1,6 @@
-// User's own wallet via WalletConnect, paying the issuer on XRPL EVM testnet.
+// User's own wallet, paying the issuer on XRPL EVM testnet. Two ways in:
+//  - browser: the wallet extension in their normal browser, via the local bridge (src-tauri/src/bridge.rs)
+//  - WalletConnect: QR / link for phone or desktop wallets
 // Pays native XRP unless VITE_RLUSD_ADDRESS is set, then RLUSD (ERC-20).
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
 import { XRPL_EVM_TESTNET as NET, erc20Transfer, erc20BalanceOf, ERC20_DECIMALS, toUnits, fromUnits } from './chain.ts';
@@ -15,6 +17,26 @@ export const asset = cfg.token ? 'RLUSD' : 'XRP';
 type Provider = Awaited<ReturnType<typeof EthereumProvider.init>>;
 let p: Provider | null = null;
 let decimals: number | null = cfg.token ? null : NET.native.decimals;
+let browserAcct = localStorage.getItem('wraps.browserAcct') ?? undefined;
+
+type BridgeResult = { id: string; ok: boolean; error?: string; account?: string; hash?: string };
+
+// One request to the browser wallet: the app opens a local page, the extension answers it.
+async function bridge(req: Record<string, unknown>): Promise<BridgeResult> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  const { listen } = await import('@tauri-apps/api/event');
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    let un = () => {};
+    const timer = setTimeout(() => { un(); reject(new Error('Browser wallet timed out')); }, 180_000);
+    listen<BridgeResult>('wallet-result', e => {
+      if (e.payload.id !== id) return;
+      clearTimeout(timer); un();
+      e.payload.ok ? resolve(e.payload) : reject(new Error(e.payload.error ?? 'Wallet request failed'));
+    }).then(f => { un = f; return invoke('browser_wallet', { request: { ...req, id } }); })
+      .catch(err => { clearTimeout(timer); un(); reject(new Error(String(err))); });
+  });
+}
 
 async function rpc<T = string>(method: string, params: unknown[]): Promise<T> {
   const r = await fetch(NET.rpc, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
@@ -43,7 +65,15 @@ export async function init(onChange: () => void) {
   p.on('disconnect', onChange);
 }
 
-export const account = () => (p?.session ? p.accounts[0] : undefined);
+export const account = () => (p?.session ? p.accounts[0] : browserAcct);
+export const via = () => (p?.session ? 'walletconnect' : browserAcct ? 'browser' : undefined);
+
+export async function connectBrowser() {
+  const r = await bridge({ kind: 'connect' });
+  browserAcct = r.account;
+  localStorage.setItem('wraps.browserAcct', browserAcct!);
+  return browserAcct;
+}
 
 // Shows the pairing URI through onUri (render it as a QR), resolves once the wallet approves.
 export async function connect(onUri: (uri: string) => void) {
@@ -53,7 +83,11 @@ export async function connect(onUri: (uri: string) => void) {
   return account();
 }
 
-export async function disconnect() { await p?.disconnect(); }
+export async function disconnect() {
+  browserAcct = undefined;
+  localStorage.removeItem('wraps.browserAcct');
+  if (p?.session) await p.disconnect();
+}
 
 export async function balance(addr: string) {
   if (!cfg.token) return fromUnits(BigInt(await rpc('eth_getBalance', [addr, 'latest'])), NET.native.decimals);
@@ -80,15 +114,21 @@ export type PayStage = 'approve' | 'confirming';
 // Sends the top-up and waits for it to land. Returns the tx hash; throws if it reverts.
 export async function pay(usd: number, onStage: (s: PayStage) => void) {
   const from = account();
-  if (!p || !from) throw new Error('Connect a wallet first');
+  if (!from) throw new Error('Connect a wallet first');
   if (!cfg.payout) throw new Error('Set VITE_ISSUER_PAYOUT in app/.env');
-  await ensureChain();
   const amount = toUnits(priceIn(usd).toFixed(6), cfg.token ? await tokenDecimals() : NET.native.decimals);
   const tx = cfg.token
     ? { from, to: cfg.token, data: erc20Transfer(cfg.payout, amount) }
     : { from, to: cfg.payout, value: '0x' + amount.toString(16) };
   onStage('approve');
-  const hash = (await p.request({ method: 'eth_sendTransaction', params: [tx] })) as string;
+  let hash: string;
+  if (p?.session) {
+    await ensureChain();
+    hash = (await p.request({ method: 'eth_sendTransaction', params: [tx] })) as string;
+  } else {
+    const label = cfg.token ? `Send $${usd} RLUSD to the Wraps issuer` : `Send ${priceIn(usd).toFixed(2)} XRP to the Wraps issuer`;
+    hash = (await bridge({ kind: 'send', tx, net: NET, label })).hash!;
+  }
   onStage('confirming');
   for (let i = 0; i < 80; i++) {
     const r = await rpc<{ status: string } | null>('eth_getTransactionReceipt', [hash]);

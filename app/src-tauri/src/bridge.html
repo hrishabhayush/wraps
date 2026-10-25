@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wraps · Wallet</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #cdcfde; font: 600 15px/1.4 -apple-system, system-ui, sans-serif; color: #0a0a0a; }
+  .card { width: 340px; background: #f4f4f6; border-radius: 22px; padding: 24px; text-align: center; }
+  svg { width: 44px; height: 44px; }
+  h1 { font-size: 20px; margin: 12px 0 6px; }
+  p { color: #6b6b76; margin: 0; font-size: 13px; }
+  .ok { color: #2e9b6a; } .bad { color: #e5484d; }
+  button { margin-top: 16px; width: 100%; border: 0; border-radius: 999px; padding: 12px; background: #0a0a0a; color: #fff; font: inherit; cursor: pointer; }
+  button[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <svg viewBox="0 0 120 120" fill="#0a0a0a"><path d="M99.98 58.67C99.99 59.11 100 59.55 100 60C100 82.09 82.09 100 60 100C48.42 100 38 95.08 30.69 87.22L99.98 58.67Z"/><path d="M112.97 46.82L13.12 87.97L7.03 73.18L106.88 32.03L112.97 46.82Z"/><path d="M60 20C71.58 20 82 24.92 89.31 32.78L20.02 61.33C20.01 60.89 20 60.45 20 60C20 37.91 37.91 20 60 20Z"/></svg>
+  <h1 id="title">Wraps</h1>
+  <p id="msg">Loading…</p>
+  <button id="go" hidden>Continue in wallet</button>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const say = (title, msg, cls = '') => { $('title').textContent = title; $('msg').textContent = msg; $('msg').className = cls; };
+const post = r => fetch('/result', { method: 'POST', body: JSON.stringify(r) });
+
+async function ensureChain(eth, net) {
+  try {
+    await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: net.hex }] });
+  } catch (e) {
+    if (e.code !== 4902 && !/unrecognized|not added|unknown chain/i.test(e.message || '')) throw e;
+    await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: net.hex, chainName: net.name, nativeCurrency: net.native, rpcUrls: [net.rpc], blockExplorerUrls: [net.explorer] }] });
+  }
+}
+
+async function run(req) {
+  const eth = window.ethereum;
+  if (!eth) throw new Error('No browser wallet found. Open this page in a browser with MetaMask, Rabby or Brave Wallet.');
+  const [account] = await eth.request({ method: 'eth_requestAccounts' });
+  if (req.kind === 'connect') return { account };
+  if (account.toLowerCase() !== req.tx.from.toLowerCase()) throw new Error(`Switch your wallet to ${req.tx.from} and try again`);
+  await ensureChain(eth, req.net);
+  say('Confirm in your wallet', 'Approve the top-up in the wallet pop-up.');
+  return { hash: await eth.request({ method: 'eth_sendTransaction', params: [req.tx] }) };
+}
+
+(async () => {
+  const req = await (await fetch('/request')).json();
+  if (!req) return say('Nothing to do', 'Start a connect or top-up from the Wraps menu bar app.');
+  say(req.kind === 'connect' ? 'Connect your wallet' : 'Top up Wraps', req.kind === 'connect' ? 'Pick the account Wraps should top up from.' : req.label);
+  // Wallets block pop-ups that aren't from a click, so start on a click.
+  $('go').hidden = false;
+  $('go').onclick = async () => {
+    $('go').hidden = true;
+    try {
+      const r = await run(req);
+      await post({ id: req.id, ok: true, ...r });
+      say('Done', 'You can close this tab and go back to Wraps.', 'ok');
+      setTimeout(() => window.close(), 1200);
+    } catch (e) {
+      await post({ id: req.id, ok: false, error: e.message || String(e) });
+      say('Didn’t go through', e.message || String(e), 'bad');
+    }
+  };
+})();
+</script>
+</body>
+</html>

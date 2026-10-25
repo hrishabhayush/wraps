@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wraps: privacy you can verify</title>
+<meta name="description" content="A pay-as-you-go VPN where the servers prove they don't log and payments can't be linked to you. For people and for AI agents.">
+<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo" viewBox="0 0 120 120"><path d="M99.9752 58.666C99.9897 59.1089 100.001 59.5536 100.001 60C100.001 82.0912 82.0917 99.9997 60.0006 100C48.4244 100 37.998 95.0808 30.6939 87.2207L99.9752 58.666Z"/><path d="M112.974 46.8184L13.1226 87.9746L7.02596 73.1816L106.877 32.0254L112.974 46.8184Z"/><path d="M60.0006 20C71.576 20.0002 82.0013 24.919 89.3053 32.7783L20.024 61.333C20.0095 60.8904 20.0006 60.4461 20.0006 60C20.0006 37.9086 37.9092 20 60.0006 20Z"/></symbol>
+</svg>
+
+<header class="nav">
+  <a class="brand" href="#top" aria-label="Wraps home"><svg class="mark" fill="currentColor"><use href="#logo"/></svg><span>wraps</span></a>
+  <nav class="links">
+    <a href="#how">How it works</a>
+    <a href="#agents">For agents</a>
+    <a href="#privacy">Privacy</a>
+    <a href="https://github.com/hrishabhayush/wraps">GitHub</a>
+  </nav>
+  <a class="pill pill-light" href="#how">Get Wraps</a>
+</header>
+
+<main id="top">
+  <section class="hero dark">
+    <div class="wrap hero-inner">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="dot"></span>Attested no-log VPN</p>
+        <h1>Privacy you can verify.</h1>
+        <p class="lede">A pay-as-you-go VPN whose servers prove they don't log, paid with tokens that can't be linked to you. It works the same for you and for your AI agents.</p>
+        <div class="ctas">
+          <a class="pill pill-light" href="#how">How it works</a>
+          <a class="pill pill-ghost" href="#agents">For agents</a>
+        </div>
+      </div>
+      <img class="globe" src="assets/globe.svg" alt="A dark globe covered in a network of attested nodes, each marked with a glowing shield">
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <h2>VPNs ask you to trust them.</h2>
+      <p class="sub">Every VPN says it keeps no logs. None of them let you check, and the payment gives you away anyway.</p>
+      <div class="grid3">
+        <div class="card"><span class="num mono">01</span><h3>"No logs" is a promise</h3><p>You can't see what code a VPN server actually runs.</p></div>
+        <div class="card"><span class="num mono">02</span><h3>Paying ties it to you</h3><p>Your card or wallet links every session back to your name.</p></div>
+        <div class="card"><span class="num mono">03</span><h3>A month for 20 minutes</h3><p>Subscriptions charge you for a month when you needed one café session.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section surface" id="how">
+    <div class="wrap">
+      <h2>How Wraps works.</h2>
+      <p class="sub">Three parts, each checkable. No party sees both who you are and what you do.</p>
+      <div class="pillars">
+        <div class="card pillar">
+          <span class="tag tag-green">Verified</span>
+          <h3>Proven no-log servers</h3>
+          <p>Nodes and the token issuer run open code in confidential VMs, hardware-attested by AMD SEV, verified by Google. Before you connect or pay, the app checks the attestation names the exact code. A modified or debug build is refused.</p>
+          <p class="refused mono">IMAGE_MISMATCH → refused</p>
+        </div>
+        <div class="card pillar">
+          <span class="tag">Private</span>
+          <h3>Payments that can't be linked</h3>
+          <p>Top up once with RLUSD from your own wallet on the XRPL EVM sidechain. The issuer signs blind tokens (Privacy Pass, RFC 9578): it can tell a token is valid and unspent, but not which payment it came from.</p>
+        </div>
+        <div class="card pillar">
+          <span class="tag">Metered</span>
+          <h3>Pay only while connected</h3>
+          <p>Tokens are spent per chunk of traffic while you're connected. No subscription.</p>
+          <p class="meter mono">214 MB × $0.002 = $0.43</p>
+        </div>
+      </div>
+      <div class="panels">
+        <figure><div class="crop crop-a"><img src="assets/panel-connected.png" width="360" alt="Wraps menu-bar app, connected, showing upload and download speed and the metered cost of this session"></div><figcaption>Metered by the session</figcaption></figure>
+        <figure><div class="crop crop-b"><img src="assets/panel-wallet-connected.png" width="360" alt="Wraps menu-bar wallet: top up 5 dollars of RLUSD from a connected wallet for 50 blind tokens"></div><figcaption>Top up once, get blind tokens</figcaption></figure>
+      </div>
+      <p class="note">Screenshots from the macOS menu-bar app. Coming soon: full-device WireGuard tunnel.</p>
+    </div>
+  </section>
+
+  <section class="section dark" id="agents">
+    <div class="wrap">
+      <h2>Incognito mode for your agents.</h2>
+      <p class="sub">Your agent's tool calls, browsing and payments go through the same attested no-log VPN, paid per use with blind tokens. Sites, merchants and the public chain can't build a record of it.</p>
+      <div class="agents">
+        <div class="code">
+          <div class="code-bar"><span>agent.ts</span><span class="tag tag-dark">Illustrative</span></div>
+<pre class="mono"><code><span class="c">// Check the attestation, then pay per call with blind tokens.</span>
+<span class="k">const</span> wraps = <span class="k">new</span> PrivatePayClient({
+  issuerUrl: <span class="s">'https://issuer.example'</span>,
+  verifier,                <span class="c">// refuses debug or modified builds</span>
+  wallet,                  <span class="c">// your RLUSD top-up wallet</span>
+  caps: { perCallTokens: <span class="n">5</span>, dailyTokens: <span class="n">24</span>, maxTopUpTokens: <span class="n">20</span> },
+});
+
+<span class="k">await</span> wraps.connect();   <span class="c">// attestation checked before any payment</span>
+<span class="k">const</span> res = <span class="k">await</span> wraps.fetch(<span class="s">'https://api.example.com/prices'</span>);
+<span class="c">// 402 → pays in tokens, under the caps. Above the cap: refused.</span></code></pre>
+        </div>
+        <div class="agent-points">
+          <div class="point"><h3>Attested before paying</h3><p>The agent checks the issuer's hardware attestation first. A changed image never gets a cent.</p></div>
+          <div class="point"><h3>Blind-token payments</h3><p>Pay per call with tokens the issuer can't link to the top-up.</p></div>
+          <div class="point"><h3>Caps in code, not in the prompt</h3><p>"Buy 500 more" from a prompt injection hits a hard limit the model can't talk past.</p></div>
+        </div>
+      </div>
+
+      <div class="contrast">
+        <div class="card-dark">
+          <span class="tag tag-red">Plain x402</span>
+          <h3>A public spending record</h3>
+          <p>Every x402 payment on XRPL mainnet publishes payer, merchant, amount and time. Forever.</p>
+          <div class="facts">
+            <div><span class="big mono">50</span><span>payments to one merchant, from 50 wallets</span></div>
+            <div><span class="big mono">44</span><span>funded straight from exchange hot wallets, so the exchange knows who</span></div>
+          </div>
+        </div>
+        <div class="card-dark">
+          <span class="tag tag-green">With Wraps</span>
+          <h3>Nothing to piece together</h3>
+          <p>The merchant sees a valid token from the node's IP. The chain sees one top-up to the issuer and batched payouts to merchants.</p>
+          <div class="facts">
+            <div><span class="big mono">RFC 9578</span><span>Privacy Pass blind tokens</span></div>
+            <div><span class="big mono">AMD SEV</span><span>attested, verified by Google</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section canvas">
+    <div class="wrap">
+      <h2>Designed to disappear.</h2>
+      <p class="sub">One button to connect, a clear meter, and a green check when the server is proven.</p>
+    </div>
+    <div class="phones">
+      <img src="assets/phone-onboarding.png" width="260" alt="Onboarding screen">
+      <img src="assets/phone-connect.png" width="260" alt="Connected screen: session timer, attested badge and metered cost">
+      <img src="assets/phone-nodes.png" width="260" alt="Node list with attested locations">
+      <img src="assets/phone-wallet.png" width="260" alt="Wallet screen with token balance and top-up">
+    </div>
+    <div class="wrap">
+      <img class="desktop" src="assets/desktop-connected.png" alt="Wraps macOS menu-bar dropdown, connected, over a desktop">
+    </div>
+  </section>
+
+  <section class="section" id="privacy">
+    <div class="wrap">
+      <h2>Who sees what.</h2>
+      <p class="sub">No single party sees both who you are and what you do.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>Your IP</th><th>Who paid</th><th>Which site</th><th>What you asked</th></tr></thead>
+          <tbody>
+            <tr><th>You</th><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+            <tr><th>Node (relay)</th><td class="y">Yes</td><td class="n">No</td><td class="y">Host name</td><td class="n">No, HTTPS</td></tr>
+            <tr><th>Token issuer</th><td class="n">No, via the node</td><td class="y">Your top-up wallet</td><td class="y">Yes, at redemption</td><td class="n">No</td></tr>
+            <tr><th>Merchant or site</th><td class="n">No, sees the node</td><td class="n">No, a blind token</td><td class="y">It's the site</td><td class="y">Yes, it must</td></tr>
+            <tr><th>Public chain</th><td class="n">No</td><td class="y">A top-up wallet</td><td class="n">Only batched payouts</td><td class="n">No</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">The issuer can't link a top-up to the tokens you later spend. The node and issuer run on separate machines so neither can match traffic to payments.</p>
+    </div>
+  </section>
+
+  <section class="section surface">
+    <div class="wrap">
+      <h2>Privacy improves with every user.</h2>
+      <p class="sub">How often a spy correctly links a top-up to its spending.</p>
+      <div class="table-wrap">
+        <table class="sim">
+          <thead><tr><th>Users</th><th>Plain x402</th><th>Wraps tokens</th><th>Random guess</th></tr></thead>
+          <tbody class="mono">
+            <tr><td>1</td><td>100%</td><td>100%</td><td>100%</td></tr>
+            <tr><td>5</td><td>100%</td><td class="g">52%</td><td>20%</td></tr>
+            <tr><td>20</td><td>100%</td><td class="g">15%</td><td>5%</td></tr>
+            <tr><td>100</td><td>100%</td><td class="g">1.6%</td><td>1%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Timing-only simulation with hourly payouts. Real attackers could also use amounts, IPs and merchant data.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer dark">
+  <div class="wrap foot">
+    <a class="brand" href="#top"><svg class="mark" fill="currentColor"><use href="#logo"/></svg><span>wraps</span></a>
+    <span class="muted">XRPL AI &amp; Fintech Hackathon, NYC 2026</span>
+    <a class="pill pill-ghost" href="https://github.com/hrishabhayush/wraps">GitHub</a>
+  </div>
+</footer>
+</body>
+</html>

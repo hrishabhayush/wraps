@@ -4,7 +4,7 @@ import '@fontsource/geist-mono/500.css';
 import './styles.css';
 import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
-import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
+import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode, type VpnConnectResult } from './backend.ts';
 import * as tk from './tokens.ts';
 import { tick, tokensFor, clock, USD_PER_TOKEN, WIREGUARD_MB_PER_TOKEN, wireGuardQuotaMB, type Meter } from './meter.ts';
 import * as wc from './wallet.ts';
@@ -151,7 +151,7 @@ function home() {
           </div>
           <div class="meter row between">
             <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? 'Quota prepaid at connect' : 'One token prepays 10 MB'}</span>
-              <span class="mono">${on ? `${c.spent} helper token${c.spent === 1 ? '' : 's'} · app wallet is separate · live usage unavailable` : 'Test helper funds quota separately; usage is unavailable'}</span></div>
+              <span class="mono">${on ? `${c.spent} wallet token${c.spent === 1 ? '' : 's'} · live byte usage is not reported` : 'One wallet token prepays 10 MB; usage is not reported'}</span></div>
             <span class="cost mono">${on ? `${c.spent} token${c.spent === 1 ? '' : 's'}` : '—'}</span>
           </div>`
         : `<div class="row gap8">
@@ -295,8 +295,53 @@ async function connect(id: string) {
   s.trust[id] = att.ok ? 'ok' : 'bad';
   if (!att.ok) { s.conn = { kind: 'refused', reason: att.reason }; return render(); }
   if (realVpn) {
-    // One click: pay the relay with blind tokens and bring WireGuard up (macOS asks for the admin password).
-    try { await api.connect(id); } catch (e) { s.conn = { kind: 'off' }; return toast(String(e).slice(0, 90)); }
+    let token: string | undefined;
+    try { token = tk.reserveWireGuardToken(); } catch (e) {
+      s.conn = { kind: 'off' };
+      render();
+      return toast((e as Error).message.slice(0, 90));
+    }
+    render();
+    let result: VpnConnectResult | void;
+    try { result = await api.connect(id, token); } catch {
+      s.conn = { kind: 'off' };
+      render();
+      return toast('Connect outcome is uncertain; the token is reserved. Retry Connect to resolve it.');
+    }
+    if (!result) {
+      s.conn = { kind: 'off' };
+      render();
+      return toast('The WireGuard helper returned no result; retry Connect to resolve the reserved token.');
+    }
+    if (result.inputTokenDisposition === 'refund') {
+      try { tk.resolveWireGuardToken('refund'); } catch (e) {
+        s.conn = { kind: 'off' };
+        render();
+        return toast((e as Error).message.slice(0, 90));
+      }
+    }
+    if (result.status === 'no-token') {
+      s.conn = { kind: 'off' };
+      s.screen = 'wallet';
+      render();
+      return toast('Top up with at least one blind token to connect');
+    }
+    if (result.status !== 'connected') {
+      s.conn = { kind: 'off' };
+      render();
+      return toast((result.error ?? 'WireGuard connect is pending; retry Connect to resolve it').slice(0, 110));
+    }
+    if (result.inputTokenDisposition === 'spent') {
+      try {
+        tk.resolveWireGuardToken('spent');
+      } catch (e) {
+        await api.disconnect().catch(() => {});
+        s.conn = { kind: 'off' };
+        render();
+        return toast(`Token is reserved while the local wallet update is retried: ${(e as Error).message}`.slice(0, 110));
+      }
+    }
+    try { await api.finalizeConnect?.(); } catch { /* a later connect clears a completed stale keychain receipt */ }
   } else {
     // Pay for the first chunk up front with one real token.
     try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
@@ -315,7 +360,7 @@ async function disconnect(reason?: string) {
   const detail = realVpn
     ? `${c.spent} quota token${c.spent === 1 ? '' : 's'} · ${wireGuardQuotaMB(c.spent)} MB prepaid · usage unavailable`
     : `${c.meter.mb.toFixed(0)} MB simulated · ${mins} min · ${c.spent} token${c.spent === 1 ? '' : 's'}`;
-  tk.record({ title: `Session · ${node().country}`, detail, usd: realVpn ? 0 : -c.spent * USD_PER_TOKEN, at: Date.now() });
+  tk.record({ title: `Session · ${node().country}`, detail, usd: -c.spent * USD_PER_TOKEN, at: Date.now() });
   reason ? toast(reason) : render();
 }
 

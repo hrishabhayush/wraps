@@ -3,7 +3,7 @@
 #   binaries/node-<triple>          official Node.js (runs the connect helper)
 #   binaries/wg-<triple>            WireGuard userspace tools
 #   binaries/wireguard-go-<triple>  WireGuard implementation (utun)
-#   resources/wraps-connect.mjs     verify relay + pay tokens + register (scripts/wg-join.ts)
+#   resources/wraps-connect.mjs     verify attestation or register the app's own blind token
 # Requires: Homebrew `wireguard-tools wireguard-go`, and npm install at the repo root.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"; root="$(cd "$here/.." && pwd)"
@@ -21,7 +21,7 @@ install -m 755 "$tmp/node-$node_version-$node_arch/bin/node" "$bin/node-$triple"
 install -m 755 "$(brew --prefix)/bin/wg" "$bin/wg-$triple"
 install -m 755 "$(brew --prefix)/bin/wireguard-go" "$bin/wireguard-go-$triple"
 
-(cd "$root" && npx esbuild scripts/wg-join.ts --bundle --platform=node --format=esm --target=node22 --legal-comments=none \
+(cd "$root" && npx esbuild "$here/scripts/wireguard-register.ts" --bundle --platform=node --format=esm --target=node22 --legal-comments=none \
   "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
   --outfile="$res/wraps-connect.mjs")
 echo "VPN bundle ready for $triple"

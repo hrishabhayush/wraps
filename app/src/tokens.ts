@@ -24,7 +24,7 @@ const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).
 // v2 stores tokens issued by the live attested issuer; v1 held local-issuer tokens.
 const KEY = 'wraps.tokens.v2';
 type PendingSettle = { quoteId: string; merchantId: string; nodeId: string; tokens: string[] };
-type Store = { tokens: string[]; history: Activity[]; pendingSettle?: PendingSettle };
+type Store = { tokens: string[]; history: Activity[]; pendingSettle?: PendingSettle; pendingWireGuardToken?: string };
 const store: Store = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { tokens: [], history: [] };
 const save = () => localStorage.setItem(KEY, JSON.stringify(store));
 let settleQueue: Promise<void> = Promise.resolve();
@@ -32,6 +32,44 @@ let settleQueue: Promise<void> = Promise.resolve();
 export const count = () => store.tokens.length;
 export const usd = () => count() * USD_PER_TOKEN;
 export const history = () => store.history;
+const validSerializedToken = (token: unknown): token is string =>
+  typeof token === 'string' && token.length > 0 && token.length <= 8192 && /^[A-Za-z0-9_-]+$/.test(token);
+/** Reserve one existing wallet token for a WireGuard registration, preserving it for retries. */
+export function reserveWireGuardToken(): string | undefined {
+  if (store.pendingWireGuardToken !== undefined) {
+    if (!validSerializedToken(store.pendingWireGuardToken)) throw new Error('Saved WireGuard token is invalid; it remains reserved');
+    return store.pendingWireGuardToken;
+  }
+  const token = store.tokens.shift();
+  if (!token) return undefined;
+  if (!validSerializedToken(token)) {
+    store.tokens.unshift(token);
+    throw new Error('Wallet contains an invalid blind token; it remains available');
+  }
+  store.pendingWireGuardToken = token;
+  try {
+    save();
+  } catch {
+    delete store.pendingWireGuardToken;
+    store.tokens.unshift(token);
+    throw new Error('Could not save the pending WireGuard token; it remains available');
+  }
+  return token;
+}
+/** Resolve a WireGuard token only after the native helper reports a definite outcome. */
+export function resolveWireGuardToken(disposition: 'spent' | 'refund' | 'reserved') {
+  const token = store.pendingWireGuardToken;
+  if (!token || disposition === 'reserved') return;
+  delete store.pendingWireGuardToken;
+  if (disposition === 'refund') store.tokens.unshift(token);
+  try {
+    save();
+  } catch {
+    if (disposition === 'refund') store.tokens.shift();
+    store.pendingWireGuardToken = token;
+    throw new Error('Could not update the pending WireGuard token; it remains reserved');
+  }
+}
 export function record(a: Activity) {
   store.history.unshift(a);
   store.history.length = Math.min(store.history.length, 20);

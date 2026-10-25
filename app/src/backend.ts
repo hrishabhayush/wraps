@@ -1,7 +1,6 @@
 // Seam between the UI and the VPN network (nodes, attestation, tunnel). TauriBackend is the
 // real one-click VPN (attested relay + WireGuard, see src-tauri/src/vpn.rs); MockBackend is
 // for the browser dev preview. Wallet top-ups live in tokens.ts.
-import { WIREGUARD_TOKENS_PER_CONNECT } from './meter.ts';
 
 export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
 
@@ -21,11 +20,20 @@ export type Attestation =
 
 export type Activity = { title: string; detail: string; usd: number; at: number };
 
+export type VpnConnectResult = {
+  status: 'connected' | 'pending' | 'rejected' | 'no-token';
+  inputTokenDisposition: 'spent' | 'reserved' | 'refund' | 'none';
+  error?: string;
+  tokens?: number;
+  megabytes?: number;
+};
+
 export interface Backend {
   listNodes(): Promise<VpnNode[]>;
   attest(nodeId: string): Promise<Attestation>;
-  connect(nodeId: string): Promise<void>;
+  connect(nodeId: string, token?: string): Promise<VpnConnectResult | void>;
   disconnect(): Promise<void>;
+  finalizeConnect?(): Promise<void>;
 }
 
 const NODES: VpnNode[] = [
@@ -52,6 +60,7 @@ export class MockBackend implements Backend {
   }
   async connect(_nodeId: string) { await sleep(500); }
   async disconnect() {}
+  async finalizeConnect() {}
 }
 
 // The live wraps relay: Google Confidential Space (AMD SEV), reserved IP.
@@ -61,7 +70,7 @@ const LIVE_RELAY: VpnNode = {
   ip: '136.80.57.82', pricePerMB: 0.01, latencyMs: 30, // 1 token = 10 MB = $0.10
 };
 
-/** Real backend: verify the attested relay, pay it, bring WireGuard up. No other app needed. */
+/** Real backend: verify the relay, pay with a reserved app token, and bring WireGuard up. */
 export class TauriBackend implements Backend {
   private async call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -76,7 +85,10 @@ export class TauriBackend implements Backend {
       return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
     }
   }
-  /** Pays one 10 MB quota token, registers a fresh key, and turns the tunnel on. */
-  async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: WIREGUARD_TOKENS_PER_CONNECT }); }
+  /** Pays one existing 10 MB quota token, registers its peer, and turns the tunnel on. */
+  async connect(_nodeId: string, token?: string) {
+    return this.call<VpnConnectResult>('vpn_connect', { token: token ?? null });
+  }
+  async finalizeConnect() { await this.call('vpn_finalize_connect'); }
   async disconnect() { await this.call('vpn_disconnect'); }
 }

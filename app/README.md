@@ -15,3 +15,13 @@ An ambiguous app settlement remains in the local token store as one pending oper
 the token batch and its quote ID. Retrying the same node and amount checks `/settle/status` first,
 then reuses that quote ID for `/settle`. Do not manually edit or clear a pending spend record;
 the app keeps those tokens unavailable until the issuer confirms the outcome.
+
+## WireGuard quota payments
+
+Each desktop connect reserves exactly one blind token from the app wallet and registers it with
+the attested relay for a 10 MB quota. The token and generated WireGuard key are sent to the bundled
+registration helper over stdin; the helper does not create a separate mock-funded token. A definite
+registration rejection returns the token to the wallet. An ambiguous result keeps it reserved with
+the same peer key so retrying cannot double-spend it. The OS keychain holds that pending registration
+until the app confirms the wallet update. The app does not receive live WireGuard byte counters, so
+it shows the prepaid 10 MB quota without presenting estimated traffic as actual usage.

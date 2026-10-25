@@ -13,6 +13,16 @@ export interface OpenWireGuardRegistration {
 }
 
 const WIREGUARD_KEY = /^[A-Za-z0-9+/]{43}=$/;
+const STAGE_LABELS = new Set(['peer-add-failed', 'settle-failed', 'quota-failed']);
+
+/** Run one registration step; on failure rethrow only a fixed label. */
+async function stage<T>(label: string, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch {
+    throw new Error(label);
+  }
+}
 
 interface MeteredPeer {
   /** Every registered block has been settled before it becomes available. */
@@ -62,15 +72,15 @@ export class WireGuardTokenMeter {
         const allowedAddress = nextFreePeerAddress(this.open!.interfaceAddress, [...this.peers.values()].map((p) => p.allowedAddress));
         if (!allowedAddress) throw new Error('relay is full');
         peer = { publicKey, allowedAddress };
-        await this.open!.addPeer(peer);
+        await stage('peer-add-failed', () => this.open!.addPeer(peer!));
         this.peers.set(publicKey, peer);
       }
       address = peer.allowedAddress;
       const existing = this.sessions.get(publicKey);
       if (!existing) {
         // Settle the first prepaid block before adding any forwarding allowance.
-        await this.issuer.settle(this.merchantId, tokens[0]);
-        await this.quotas.enable(publicKey, peer.allowedAddress.split('/')[0]);
+        await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0]));
+        await stage('quota-failed', () => this.quotas.enable(publicKey, peer!.allowedAddress.split('/')[0]));
         this.sessions.set(publicKey, { paidBlocks: 1, usedBlocks: 0, quotaExhausted: false });
         return;
       }
@@ -121,7 +131,9 @@ export class WireGuardTokenMeter {
           : message === 'peer quota limit reached' || message === 'relay is full' ? 409
             : message === 'request body too large' ? 413
               : error instanceof SyntaxError ? 400 : 503;
-      return this.respond(res, status, status === 503 ? 'peer registration failed' : message);
+      // 503s carry only a fixed stage label, never raw error text.
+      const label = STAGE_LABELS.has(message) ? message : 'peer registration failed';
+      return this.respond(res, status, status === 503 ? label : message);
     }
   }
 

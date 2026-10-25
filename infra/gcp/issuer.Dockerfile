@@ -38,7 +38,7 @@ ENV NODE_ENV=production \
     RLUSD_ADDRESS=0x27b57a9D0b8d24EB97259c4E2279e45255e016f3 \
     XRPL_EVM_RPC=https://rpc.testnet.xrplevm.org/ \
     PAYOUT_RAIL=xrpl-evm \
-    MERCHANT_PAYOUT_ADDRESSES=relay=0x7AAcF9A05880866ebEb3c7EF7E55C36e53D535df,merchant-research-data=0x7AAcF9A05880866ebEb3c7EF7E55C36e53D535df \
+    MERCHANT_PAYOUT_ADDRESSES=relay=0x34A7142038CDd6946ecc8a231e49c45E62A7F562,merchant-research-data=0x34A7142038CDd6946ecc8a231e49c45E62A7F562 \
     PAYOUT_INTERVAL_MS=120000
 
 # Confidential Space blocks inbound ports unless the image exposes them.

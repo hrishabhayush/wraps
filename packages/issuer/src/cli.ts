@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { payoutConfigFromEnv } from './payout-config';
 import { XrplEvmTransferRail } from './rail-xrpl-evm';
 import { MockTopUpRail } from './rail';
@@ -18,12 +19,17 @@ const host = process.env.ISSUER_HOST ?? '0.0.0.0';
 // ISSUER_WALLET=enclave: the issuer makes its own XRPL EVM wallet here, in memory. Nobody sees the key.
 // Its address joins the attestation; users pay it, and it pays merchants (PAYOUT_RAIL=xrpl-evm).
 // The key dies with the process, so POST /sweep empties the wallet to ISSUER_SWEEP_TO before a restart.
+// ISSUER_WALLET_KEY_FILE: use this fixed key instead, so the wallet (and its AP4M registration)
+// survives restarts. Whoever can read the image can read the key: a deliberate demo trade-off.
 const enclaveWallet = process.env.ISSUER_WALLET === 'enclave';
 if (enclaveWallet) {
-  const key = generatePrivateKey();
+  const keyFile = process.env.ISSUER_WALLET_KEY_FILE;
+  const fixed = keyFile ? readFileSync(keyFile, 'utf8').trim() : undefined;
+  if (fixed !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(fixed)) throw new Error('ISSUER_WALLET_KEY_FILE must hold 0x + 64 hex characters');
+  const key = (fixed as `0x${string}` | undefined) ?? generatePrivateKey();
   process.env.ISSUER_PAYOUT_PRIVATE_KEY = key;
   process.env.ISSUER_PAYOUT = privateKeyToAccount(key).address;
-  console.log(`[issuer] own wallet made in memory: ${process.env.ISSUER_PAYOUT}`);
+  console.log(`[issuer] own wallet ${fixed ? 'from the fixed key file' : 'made in memory'}: ${process.env.ISSUER_PAYOUT}`);
 }
 const walletAddress = enclaveWallet ? process.env.ISSUER_PAYOUT : undefined;
 const sweepTo = process.env.ISSUER_SWEEP_TO || undefined;
@@ -72,5 +78,5 @@ const port = addr && typeof addr === 'object' ? addr.port : '?';
 console.log(
   `[issuer] listening on ${tls ? 'https' : 'http'}://${process.env.ISSUER_HOST ?? '0.0.0.0'}:${port} ` +
     `(attestation: ${attestation}${attestation === 'mock' ? ', MOCK' : ''}; top-ups: ${railNames.map((r) => (r === 'xrpl-evm' ? 'XRPL EVM RLUSD' : 'MOCK AP4M')).join(' + ')}; ` +
-    `${payout.name === 'xrpl-evm' ? `RLUSD payouts on XRPL EVM from ${payout.address} to ${payout.registry.size} merchants` : 'MOCK payouts'})`,
+    `${payout.name === 'xrpl-evm' ? `RLUSD payouts on XRPL EVM from ${payout.address} to ${payout.registry.size} merchants` : payout.name === 'ap4m' ? `payouts through Mastercard AP4M from ${payout.address}` : 'MOCK payouts'})`,
 );

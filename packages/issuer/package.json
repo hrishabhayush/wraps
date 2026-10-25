@@ -5,9 +5,11 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
+    "@ap4m/sdk": "https://hackathon.ap4m.build/sdk/ap4m-sdk.tgz",
     "@peculiar/x509": "^1.12.0",
     "@wraps/attestation": "*",
     "@wraps/tokens": "*",
+    "ethers": "^6.17.0",
     "viem": "^2.21.55"
   }
 }

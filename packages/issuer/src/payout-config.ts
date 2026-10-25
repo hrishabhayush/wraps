@@ -1,9 +1,10 @@
-// Payout rail from environment variables. PAYOUT_RAIL=mock (default) or xrpl-evm.
+// Payout rail from environment variables. PAYOUT_RAIL=mock (default), xrpl-evm or ap4m.
 // Uses the same names as the XRPL EVM top-up rail: RLUSD_ADDRESS, XRPL_EVM_RPC, ISSUER_PAYOUT.
 import { MerchantRegistry } from './merchant-registry';
+import { Ap4mPayoutRail } from './payout-ap4m';
 import { MockPayoutRail, PayoutCaps, PayoutRail, XRPL_EVM_TESTNET_CHAIN_ID, XrplEvmPayoutRail } from './payout';
 
-export type PayoutRailName = 'mock' | 'xrpl-evm';
+export type PayoutRailName = 'mock' | 'xrpl-evm' | 'ap4m';
 
 export interface PayoutConfig {
   name: PayoutRailName;
@@ -29,7 +30,7 @@ export function payoutConfigFromEnv(
   opts: { requireKey?: boolean; log?: (msg: string) => void } = {},
 ): PayoutConfig {
   const name = (env.PAYOUT_RAIL || 'mock') as PayoutRailName;
-  if (name !== 'mock' && name !== 'xrpl-evm') throw new Error(`PAYOUT_RAIL must be mock or xrpl-evm, got ${name}`);
+  if (name !== 'mock' && name !== 'xrpl-evm' && name !== 'ap4m') throw new Error(`PAYOUT_RAIL must be mock, xrpl-evm or ap4m, got ${name}`);
   const registry = MerchantRegistry.parse(env.MERCHANT_PAYOUT_ADDRESSES);
   const caps: PayoutCaps = {
     maxLines: num(env.PAYOUT_MAX_LINES),
@@ -39,6 +40,17 @@ export function payoutConfigFromEnv(
   for (const k of Object.keys(caps) as (keyof PayoutCaps)[]) if (caps[k] === undefined) delete caps[k];
   const log = opts.log ?? ((m: string) => console.log(`[issuer] ${m}`));
   if (name === 'mock') return { name, rail: new MockPayoutRail(log), caps, registry };
+
+  // ap4m: merchants are paid through the issuer's own Mastercard AP4M Channel. AP4M fixes the
+  // merchant and its payout per Channel, so MERCHANT_PAYOUT_ADDRESSES is not used.
+  if (name === 'ap4m') {
+    const key = env.ISSUER_PAYOUT_PRIVATE_KEY || undefined;
+    if (!key) throw new Error('PAYOUT_RAIL=ap4m needs ISSUER_PAYOUT_PRIVATE_KEY (ISSUER_WALLET=enclave sets it)');
+    const teamName = env.AP4M_TEAM_NAME ?? '';
+    if (!teamName) throw new Error('PAYOUT_RAIL=ap4m needs AP4M_TEAM_NAME (the team registered with AP4M)');
+    const rail = new Ap4mPayoutRail({ privateKey: key, teamName, apiUrl: env.AP4M_API_URL || undefined, rpc: env.XRPL_EVM_RPC || undefined, token: env.RLUSD_ADDRESS || undefined, log });
+    return { name, rail, caps, registry, address: rail.address };
+  }
 
   const token = env.RLUSD_ADDRESS ?? '';
   if (!token) throw new Error('PAYOUT_RAIL=xrpl-evm needs RLUSD_ADDRESS (the RLUSD ERC-20 on XRPL EVM)');

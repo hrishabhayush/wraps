@@ -6,16 +6,16 @@
   "requiredSupportAttribute": "STABLE",
   "roles": {
     "issuer": {
-      "imageDigest": "sha256:b02a233a401ab19b31cbb9bcfa71f1d080e67ce2d6e19c0745a2413616aa0a54",
-      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:b02a233a401ab19b31cbb9bcfa71f1d080e67ce2d6e19c0745a2413616aa0a54",
-      "tag": "5d5c77b",
-      "builtAt": "2026-10-25T09:35:30.313Z"
+      "imageDigest": "sha256:3cac7244c53c4732cb7d0706a84a1925f7594563ef15b44c4c10e73118c2d7cd",
+      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:3cac7244c53c4732cb7d0706a84a1925f7594563ef15b44c4c10e73118c2d7cd",
+      "tag": "e93769b",
+      "builtAt": "2026-10-25T15:32:42.034Z"
     },
     "relay": {
-      "imageDigest": "sha256:f6831b65a31668b167d5ab07e3a71b2d98f3d9fb02e20553e986218737433ef8",
-      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/relay@sha256:f6831b65a31668b167d5ab07e3a71b2d98f3d9fb02e20553e986218737433ef8",
-      "tag": "57d0e10",
-      "builtAt": "2026-10-25T09:36:10.459Z"
+      "imageDigest": "sha256:c2410189dbce395bf372012edc23aafb22e6e57a25fca0ec6442e30015fefed1",
+      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/relay@sha256:c2410189dbce395bf372012edc23aafb22e6e57a25fca0ec6442e30015fefed1",
+      "tag": "fd7b104",
+      "builtAt": "2026-10-25T15:33:40.083Z"
     }
   }
 }

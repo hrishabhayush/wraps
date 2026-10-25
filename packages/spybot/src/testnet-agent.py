@@ -23,6 +23,11 @@ def main() -> int:
     resource_url = required("T54_TESTNET_RESOURCE_URL")
     rpc_url = os.environ.get("XRPL_TESTNET_RPC_URL", "https://s.altnet.rippletest.net:51234/").strip()
     max_fee_drops = int(os.environ.get("T54_MAX_FEE_DROPS", "1000"))
+    # Cap on the amount a 402 may request, in the asset's base units (drops for XRP).
+    # The library drops any payment option above it and refuses to pay if none is left.
+    max_amount = int(os.environ.get("T54_MAX_AMOUNT", "1000"))
+    if max_amount <= 0:
+        raise ValueError("T54_MAX_AMOUNT must be a positive integer")
 
     buyer = Wallet.from_seed(seed)
     session = x402_requests(
@@ -30,6 +35,7 @@ def main() -> int:
         rpc_url=rpc_url,
         network_filter="xrpl:1",
         scheme_filter="exact",
+        max_value=max_amount,
         max_fee_drops=max_fee_drops,
     )
     # Do not print the seed or full signed payment payload. The transaction

@@ -43,7 +43,7 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
 | `setup-issuer-state.sh prepare` | Creates or verifies the project-owned, dedicated regional Standard bucket and symmetric Cloud KMS key for SEC-06, then writes their public resource names under `.state/`. |
 | `setup-merchant-auth-wif.sh` | Creates a digest-scoped WIF provider and Secret Manager access for the issuer and relay image digests. |
-| `deploy.sh <role> [--replace] [--instance-name=NAME] [--canary]` | Creates a production Confidential Space VM; preserves an existing VM unless replacement is explicitly requested. A canary gets a role-specific network tag for source-restricted ingress. |
+| `deploy.sh <role> [--replace] [--instance-name=NAME] [--canary]` | Creates a production or side-by-side Confidential Space VM; preserves an existing VM unless replacement is explicitly requested. A canary gets a role-specific network tag for source-restricted ingress. |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
 | `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
@@ -101,7 +101,7 @@ prefix before granting the issuer digest access.
 Canary VMs keep the normal `wraps` tag and add `issuer-canary` or `relay-canary`. Before creating
 one, add source-restricted allow and higher-priority deny rules for that role-specific tag. For an
 issuer canary, include the operator CIDR and the relay-canary IP in `ISSUER_SOURCE_RANGES`; for a
-relay canary, allow only the operator CIDR. Example for an issuer:
+relay canary, set `RELAY_CANARY_SOURCE_RANGES` to the operator CIDR. Example rules:
 
 ```sh
 gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-allow \
@@ -111,11 +111,35 @@ gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-al
 gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-deny \
   --network=default --direction=INGRESS --priority=500 --deny=all \
   --source-ranges=0.0.0.0/0,::/0 --target-tags=issuer-canary
+
+gcloud --project=wraps-hack compute firewall-rules create wraps-relay-canary-allow \
+  --network=default --direction=INGRESS --priority=400 \
+  --allow=tcp:443,tcp:8080 --source-ranges="${RELAY_CANARY_SOURCE_RANGES}" \
+  --target-tags=relay-canary
+gcloud --project=wraps-hack compute firewall-rules create wraps-relay-canary-deny \
+  --network=default --direction=INGRESS --priority=500 --deny=all \
+  --source-ranges=0.0.0.0/0,::/0 --target-tags=relay-canary
 ```
 
-Create matching rules for `relay-canary` before deploying the relay. The lower-priority-number
-allow rule admits only the chosen source ranges; the deny rule blocks all other ingress, including
-the general `wraps` allow rule. Delete these temporary rules after removing the canary VMs.
+When deploying a WireGuard relay canary, also set `WG_CANARY_SOURCE_RANGES` to explicit client
+CIDRs; `/0` ranges are rejected. `deploy.sh relay --canary` creates or verifies
+`wraps-allow-wireguard-canary` (UDP 51820, priority 300, target tag `relay-canary`) and the
+relay-canary deny rule before creating the VM. It never creates or updates the production
+`wraps-allow-wireguard` rule. The canary UDP allow admits only the configured client ranges; the
+priority-500 deny blocks other ingress, including the general `wraps` allow rule. Delete the
+temporary canary rules after removing the canary VM.
+
+```sh
+WG_ENABLED=true \
+WG_CANARY_SOURCE_RANGES="${WG_CLIENT_CIDR}" \
+ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
+ISSUER_URL='https://<issuer-ip>' \
+RELAY_HOSTNAME='<canary-relay-hostname>' \
+infra/gcp/deploy.sh relay --canary --dry-run
+
+# Local fixture: dry-run and fake-gcloud checks; makes no GCP calls.
+node infra/gcp/test-deploy-canary-firewall.mjs
+```
 
 ```sh
 # 1. Create or verify the project-owned canonical state bucket and KMS key.
@@ -153,9 +177,10 @@ for these secure images. Use `npm run demo:core` or the local mock fallback for 
 not need a live confidential VM.
 
 `deploy.sh` refuses to replace an existing VM unless `--replace` is supplied. For a new relay,
-launch a candidate with `--instance-name=wraps-relay-canary` and omit `RELAY_ADDRESS` to get a
-temporary IP. Test it before scheduling a production cutover; the current WireGuard endpoint stays
-up while the candidate is validated.
+use `--canary` (or pass it with `--instance-name=wraps-relay-canary`) and omit `RELAY_ADDRESS` to
+get a temporary IP. Custom WireGuard relay instance names require `--canary`. Test the candidate
+before scheduling a production cutover; the current WireGuard endpoint stays up while it is
+validated.
 
 To deploy the relay after building it, use the issuer's current IP and the reserved relay IP:
 

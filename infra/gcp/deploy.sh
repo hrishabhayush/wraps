@@ -8,7 +8,7 @@
 # Existing VMs are preserved unless --replace is explicitly supplied.
 source "$(dirname "$0")/lib.sh"
 ROLE="${1:-}"; check_role "${ROLE}"
-MODE=prod; DRY_RUN=0; REPLACE=0; CANARY=0; INSTANCE_NAME=''
+MODE=prod; DRY_RUN=0; REPLACE=0; CANARY=0; CANARY_WG=0; INSTANCE_NAME=''
 for option in "${@:2}"; do
   case "${option}" in
     --debug) die "the digest-scoped production WIF provider rejects debug workloads; use the local mock rehearsal instead" ;;
@@ -36,6 +36,9 @@ if [ -n "${INSTANCE_NAME}" ]; then
   NAME="${INSTANCE_NAME}"
 elif [ "${CANARY}" = 1 ]; then
   NAME="${NAME}-canary"
+fi
+if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ] && [ -n "${INSTANCE_NAME}" ] && [ "${CANARY}" = 0 ]; then
+  die "custom WireGuard relay instance names require --canary so the global WireGuard rule is not changed"
 fi
 REF="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].imageReference")" \
   || die "no image for ${ROLE} in expected.json. Run infra/gcp/build.sh ${ROLE} first."
@@ -90,6 +93,30 @@ if [ "${ROLE}" = relay ]; then
       *:*|*/*|*' '* ) die "WG_ENDPOINT must be a bare hostname or IPv4 address; the UDP port is configured separately" ;;
     esac
     WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-eth0}"
+    if [ "${CANARY}" = 1 ]; then
+      [ -n "${WG_CANARY_SOURCE_RANGES:-}" ] \
+        || die "WG_CANARY_SOURCE_RANGES is required for a WireGuard relay canary"
+      WG_CANARY_SOURCE_RANGES="$(WG_CANARY_SOURCE_RANGES="${WG_CANARY_SOURCE_RANGES}" node <<'NODE'
+const { isIP } = require('node:net');
+const raw = process.env.WG_CANARY_SOURCE_RANGES;
+const ranges = raw.split(',').map((value) => value.trim());
+if (ranges.some((range) => !range)) throw new Error('empty source CIDR');
+for (const range of ranges) {
+  const slash = range.lastIndexOf('/');
+  const address = range.slice(0, slash);
+  const prefixText = range.slice(slash + 1);
+  const version = isIP(address);
+  const prefix = Number(prefixText);
+  if (slash < 1 || !version || !/^[0-9]+$/.test(prefixText) ||
+      prefix < 1 || prefix > (version === 4 ? 32 : 128)) {
+    throw new Error('each WG_CANARY_SOURCE_RANGES entry must be a non-default IPv4 or IPv6 CIDR');
+  }
+}
+process.stdout.write([...new Set(ranges)].sort().join(','));
+NODE
+      )" || die "WG_CANARY_SOURCE_RANGES must contain valid non-default CIDRs"
+      CANARY_WG=1
+    fi
     for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
       [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "WireGuard metadata values cannot contain newlines"
     done
@@ -170,16 +197,68 @@ if [ "${DRY_RUN}" = 1 ]; then
   printf ' %q' gcloud --project="${GCP_PROJECT}" "${CREATE_ARGS[@]}"
   printf '\n'
   if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
-    printf 'DRY RUN (if firewall rule exists):'
-    printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules update wraps-allow-wireguard \
-      --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
-    printf '\nDRY RUN (otherwise):'
-    printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
-      --direction=INGRESS --priority=1000 --network=default --allow=udp:51820 \
-      --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
-    printf '\n'
+    if [ "${CANARY_WG}" = 1 ]; then
+      printf 'DRY RUN (canary WireGuard allow):'
+      printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard-canary \
+        --direction=INGRESS --priority=300 --network=default --allow=udp:51820 \
+        "--source-ranges=${WG_CANARY_SOURCE_RANGES}" --target-tags=relay-canary
+      printf '\nDRY RUN (canary ingress deny):'
+      printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-relay-canary-deny \
+        --direction=INGRESS --priority=500 --network=default --action=DENY --rules=all \
+        --source-ranges=0.0.0.0/0,::/0 --target-tags=relay-canary
+      printf '\n'
+    else
+      printf 'DRY RUN (if firewall rule exists):'
+      printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules update wraps-allow-wireguard \
+        --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+      printf '\nDRY RUN (otherwise):'
+      printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
+        --direction=INGRESS --priority=1000 --network=default --allow=udp:51820 \
+        --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+      printf '\n'
+    fi
   fi
   exit 0
+fi
+
+if [ "${CANARY_WG}" = 1 ]; then
+  WG_CANARY_ALLOW_RULE=wraps-allow-wireguard-canary
+  WG_CANARY_DENY_RULE=wraps-relay-canary-deny
+  if ! gc compute firewall-rules describe "${WG_CANARY_ALLOW_RULE}" >/dev/null 2>&1; then
+    gc compute firewall-rules create "${WG_CANARY_ALLOW_RULE}" --direction=INGRESS --priority=300 \
+      --network=default --allow=udp:51820 --source-ranges="${WG_CANARY_SOURCE_RANGES}" --target-tags=relay-canary
+  fi
+  WG_CANARY_ALLOW_JSON="$(gc compute firewall-rules describe "${WG_CANARY_ALLOW_RULE}" --format=json)"
+  WG_CANARY_SOURCE_RANGES="${WG_CANARY_SOURCE_RANGES}" node - "${WG_CANARY_ALLOW_JSON}" <<'NODE' \
+    || die "${WG_CANARY_ALLOW_RULE} must allow only UDP 51820 from WG_CANARY_SOURCE_RANGES to relay-canary at priority 300"
+const rule = JSON.parse(process.argv[2]);
+const expectedRanges = process.env.WG_CANARY_SOURCE_RANGES.split(',').sort();
+const allowed = rule.allowed ?? [];
+const actualRanges = [...(rule.sourceRanges ?? [])].sort();
+const network = String(rule.network ?? '');
+if (rule.direction !== 'INGRESS' || rule.disabled || rule.priority !== 300 ||
+    JSON.stringify(actualRanges) !== JSON.stringify(expectedRanges) ||
+    JSON.stringify([...(rule.targetTags ?? [])].sort()) !== JSON.stringify(['relay-canary']) ||
+    !(network === 'default' || network.endsWith('/networks/default')) ||
+    allowed.length !== 1 || allowed[0].IPProtocol !== 'udp' ||
+    JSON.stringify(allowed[0].ports ?? []) !== JSON.stringify(['51820']) || (rule.denied ?? []).length) process.exit(1);
+NODE
+  if ! gc compute firewall-rules describe "${WG_CANARY_DENY_RULE}" >/dev/null 2>&1; then
+    gc compute firewall-rules create "${WG_CANARY_DENY_RULE}" --direction=INGRESS --priority=500 \
+      --network=default --action=DENY --rules=all --source-ranges=0.0.0.0/0,::/0 --target-tags=relay-canary
+  fi
+  WG_CANARY_DENY_JSON="$(gc compute firewall-rules describe "${WG_CANARY_DENY_RULE}" --format=json)"
+  node - "${WG_CANARY_DENY_JSON}" <<'NODE' \
+    || die "${WG_CANARY_DENY_RULE} must deny all IPv4 and IPv6 ingress to relay-canary at priority 500"
+const rule = JSON.parse(process.argv[2]);
+const denied = rule.denied ?? [];
+const network = String(rule.network ?? '');
+if (rule.direction !== 'INGRESS' || rule.disabled || rule.priority !== 500 ||
+    JSON.stringify([...(rule.sourceRanges ?? [])].sort()) !== JSON.stringify(['0.0.0.0/0', '::/0']) ||
+    JSON.stringify([...(rule.targetTags ?? [])].sort()) !== JSON.stringify(['relay-canary']) ||
+    !(network === 'default' || network.endsWith('/networks/default')) ||
+    denied.length !== 1 || denied[0].IPProtocol !== 'all' || (rule.allowed ?? []).length) process.exit(1);
+NODE
 fi
 
 if [ "${EXISTING}" = 1 ]; then
@@ -194,7 +273,7 @@ gc "${CREATE_ARGS[@]}" \
 || gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null \
 || die "could not create ${NAME}"
 
-if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ] && [ "${CANARY_WG}" = 0 ]; then
   RULE=wraps-allow-wireguard
   if gc compute firewall-rules describe "${RULE}" >/dev/null 2>&1; then
     gc compute firewall-rules update "${RULE}" --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay

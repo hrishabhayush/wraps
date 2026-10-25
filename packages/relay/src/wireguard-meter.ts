@@ -7,9 +7,9 @@ import { WIREGUARD_BYTES_PER_TOKEN, type WireGuardQuotaController } from './wire
 import type { WireGuardPeer } from './wireguard.js';
 
 interface MeteredPeer {
-  address: string;
-  tokens: string[];
-  settled: number;
+  /** Every registered block has been settled before it becomes available. */
+  paidBlocks: number;
+  usedBlocks: number;
 }
 
 /** Blind-token admission and exact shared nftables byte quotas for configured peers. */
@@ -40,19 +40,25 @@ export class WireGuardTokenMeter {
     if (tokens.length < 1 || tokens.length > MAX_TOKENS_PER_TUNNEL) throw new Error('invalid token batch');
     this.registering.add(publicKey);
     try {
+      if (new Set(tokens).size !== tokens.length) throw new Error('duplicate or excessive token batch');
       if (!(await this.issuer.verify(tokens))) throw new Error('invalid tokens');
       const existing = this.sessions.get(publicKey);
-      const allTokens = existing?.tokens ?? [];
-      if (allTokens.length + tokens.length > 1000 || new Set(tokens).size !== tokens.length || tokens.some((token) => allTokens.includes(token))) {
+      const paidBlocks = existing?.paidBlocks ?? 0;
+      if (paidBlocks + tokens.length > 1000) {
         throw new Error('duplicate or excessive token batch');
       }
-      if (existing) {
-        existing.tokens.push(...tokens);
-      } else {
-        // Pay for the first block before adding any forwarding allowance.
+      if (!existing) {
+        // Settle the first prepaid block before adding any forwarding allowance.
         await this.issuer.settle(this.merchantId, tokens[0]);
         await this.quotas.enable(publicKey, peer.allowedAddress.split('/')[0]);
-        this.sessions.set(publicKey, { address: peer.allowedAddress, tokens: [...tokens], settled: 1 });
+        this.sessions.set(publicKey, { paidBlocks: 1, usedBlocks: 0 });
+      }
+      const session = this.sessions.get(publicKey)!;
+      // Remaining requested quota blocks are prepaid now, so a still-unspent
+      // blind token can never be replayed elsewhere while held by the relay.
+      for (const token of tokens.slice(existing ? 0 : 1)) {
+        await this.issuer.settle(this.merchantId, token);
+        session.paidBlocks++;
       }
     } finally {
       this.registering.delete(publicKey);
@@ -107,13 +113,11 @@ export class WireGuardTokenMeter {
       const usage = await this.quotas.usedBytes();
       await Promise.all([...this.sessions].map(([publicKey]) => this.serialize(publicKey, async () => {
         const session = this.sessions.get(publicKey);
-        if (!session || (usage.get(publicKey) ?? 0) < WIREGUARD_BYTES_PER_TOKEN) return;
-        const next = session.tokens[session.settled];
-        if (!next) return; // nftables has exhausted the quota, so traffic remains blocked.
-        // Settlement precedes reset, keeping forwarding fail-closed if the issuer is unavailable.
-        await this.issuer.settle(this.merchantId, next);
-        session.settled++;
-        await this.quotas.reset(publicKey);
+        if (!session || (usage.get(publicKey) ?? 0) < WIREGUARD_BYTES_PER_TOKEN || session.usedBlocks >= session.paidBlocks) return;
+        // Every block was settled at registration. Reset only when an already
+        // paid next block exists; otherwise the exhausted quota stays closed.
+        if (session.usedBlocks + 1 < session.paidBlocks) await this.quotas.reset(publicKey);
+        session.usedBlocks++;
       })));
     } catch {
       // Quota exhaustion is enforced in nftables. A control-plane error must not reopen it.

@@ -10,6 +10,12 @@
       "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea",
       "tag": "1df3bee",
       "builtAt": "2026-10-25T01:33:08.569Z"
+    },
+    "relay": {
+      "imageDigest": "sha256:016cbdb68f3faa8e6653988cf7e3bd72057ff689e58348c6cb4484f8ff3fa303",
+      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/relay@sha256:016cbdb68f3faa8e6653988cf7e3bd72057ff689e58348c6cb4484f8ff3fa303",
+      "tag": "b10d0e0",
+      "builtAt": "2026-10-25T03:25:17.675Z"
     }
   }
 }

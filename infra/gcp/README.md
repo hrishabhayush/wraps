@@ -1,4 +1,4 @@
-# infra/gcp: the issuer in Google Cloud Confidential Space
+# infra/gcp: the issuer and relay in Google Cloud Confidential Space
 
 The issuer runs as a container on a Confidential VM (AMD SEV, `n2d-standard-2`) with Google's
 Confidential Space image. The hardware encrypts the VM's memory. The Confidential Space image
@@ -36,6 +36,8 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | File | What it does |
 |---|---|
 | `issuer.Dockerfile` | Builds the issuer. Node 22 pinned by digest, `npm ci`, esbuild bundle, `EXPOSE 443`. |
+| `relay.Dockerfile` | Builds the relay with pinned Node, lockfile installs, and an esbuild bundle. |
+| `relay-entrypoint.ts` | Verifies the issuer's live attestation, pins its TLS SPKI, creates the in-memory relay TLS identity, and starts the proxy and receipt listeners. |
 | `cloudbuild.yaml` | Cloud Build steps. `build.sh` runs it. |
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
 | `deploy.sh <role> [--debug]` | Creates the Confidential Space VM (deletes an existing one with the same name first). |
@@ -44,8 +46,10 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `expected.json` | Image digest per role, plus the policy. The SDK reads it. Commit it after each build. |
 | `.state/` | Last known VM IPs. Not committed. |
 
-There is no relay image yet, because `packages/relay` does not exist. The scripts refuse
-`relay` until `relay.Dockerfile` exists.
+The relay listens for HTTPS CONNECT on port 443 and nonce-bound HTTP attestation on port 8080.
+The SDK uses the attested relay key for TLS, then reaches the issuer through a restricted,
+tokenless CONNECT route. Metered merchant tunnels carry their blind-token batch in the CONNECT
+proxy authorization header.
 
 ## Commands
 
@@ -53,7 +57,7 @@ Prerequisites: `gcloud` is logged in. The project `wraps-hack` already has the A
 `us-central1-docker.pkg.dev/wraps-hack/wraps`, the service account
 `wraps-workload@wraps-hack.iam.gserviceaccount.com` (`confidentialcomputing.workloadUser`,
 `logging.logWriter`, `artifactregistry.reader`) and the firewall rule `wraps-allow-443`
-(tcp:443 to tag `wraps`).
+(tcp:443 and tcp:8080 to tag `wraps`).
 
 ```sh
 # 1. Build and push. Writes the digest to infra/gcp/expected.json.
@@ -80,6 +84,21 @@ ATTESTATION=confidential-space ISSUER_URL=https://<IP> npm run agent
 infra/gcp/stop.sh
 ```
 
+To deploy the relay after building it, use the issuer's current IP and the reserved relay IP:
+
+```sh
+ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
+ISSUER_URL=https://<issuer-ip> \
+RELAY_HOSTNAME=34.68.188.111 \
+RELAY_ADDRESS=34.68.188.111 \
+infra/gcp/deploy.sh relay
+```
+
+The deploy command deletes and recreates an existing relay instance so its in-memory keys are
+discarded. The issuer IP is ephemeral and can change after a stop; the relay IP is reserved.
+The relay binds the public attestation listener on 8080, which is protected by per-IP and
+aggregate rate limits and a bounded number of provider calls.
+
 `ATTESTATION=mock npm run demo:gcp` runs the same flow against a local HTTPS issuer with the
 mock attestation. Use it to rehearse without a VM.
 
@@ -89,7 +108,7 @@ mock attestation. Use it to rehearse without a VM.
 --machine-type=n2d-standard-2 --confidential-compute-type=SEV --maintenance-policy=MIGRATE
 --shielded-secure-boot --image-project=confidential-space-images
 --image-family=confidential-space | confidential-space-debug
---metadata=^~^tee-image-reference=<registry>/issuer@sha256:<digest>[~tee-container-log-redirect=true]
+--metadata=^~^tee-image-reference=<registry>/<role>@sha256:<digest>[~tee-container-log-redirect=true]
 --service-account=wraps-workload@wraps-hack.iam.gserviceaccount.com --scopes=cloud-platform
 --tags=wraps --labels=project=wraps,role=<role>,mode=<prod|debug>
 --max-run-duration=12h --instance-termination-action=STOP
@@ -98,8 +117,9 @@ mock attestation. Use it to rehearse without a VM.
 - The Confidential Space docs list `SEV` and `TDX`. They do not list `SEV_SNP`, so we use `SEV`.
 - `tee-container-log-redirect` is set on the debug image only. The image's launch policy
   (`tee.launch_policy.log_redirect=debugonly`) allows redirect only there.
-- The image fixes its own env (`ATTESTATION`, `ISSUER_TLS`, `ISSUER_PORT`). It has no
-  `allow_env_override` label, so the operator cannot change them.
+- The production image fixes its workload settings. Relay audience, issuer URL, and relay
+  hostname are non-secret public configuration passed as `tee-env-*` metadata; do not put keys,
+  tokens, or credentials in instance metadata.
 - Every VM stops itself after a fixed 12 hours; the machine type and runtime cap cannot be overridden.
 - A stopped and restarted VM gets a new external IP and new keys. Run `status.sh` for the IP.
 
@@ -112,4 +132,4 @@ mock attestation. Use it to rehearse without a VM.
 - Cloud Build gives free build-minutes every day. One issuer build takes about 35 seconds.
 - `deploy.sh` caps every VM at 12 hours, then stops it. The project also has a $20 budget alert.
 
-What we spent on Oct 24, 2026 is in `STATUS.md`.
+The latest live verification and remaining costs are in `STATUS.md`.

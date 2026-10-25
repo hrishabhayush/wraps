@@ -63,13 +63,10 @@ h3 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 
 .refused { background: rgba(229,72,77,.08); color: var(--red) !important; }
 .meter { background: var(--ink); color: #fff !important; }
 
-/* Menu-bar panels: the screenshots are cropped at the top and transparent at the bottom */
+/* Menu-bar panels: real screenshots of the macOS app (2x, transparent corners) */
 .panels { display: flex; justify-content: center; align-items: flex-start; gap: 32px; flex-wrap: wrap; margin-top: 20px; padding: 56px 24px 40px; background: var(--canvas); border-radius: 24px; }
 .panels figure { width: 360px; max-width: 100%; }
-.crop { overflow: hidden; border-radius: 24px 24px 32px 32px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 48px); mask-image: linear-gradient(to bottom, transparent 0, #000 48px); }
-.crop img { width: 100%; }
-.crop-a { aspect-ratio: 360 / 176; }
-.crop-b { aspect-ratio: 360 / 292; }
+.crop img { width: 100%; display: block; }
 .panels figcaption { text-align: center; color: #50505A; font-size: 14px; margin-top: 14px; }
 .panels + .note { text-align: center; }
 

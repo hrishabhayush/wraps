@@ -1,37 +1,61 @@
 #!/usr/bin/env bash
 # Creates a Confidential Space VM that runs the role's image, pinned by digest.
-#   infra/gcp/deploy.sh issuer            production image (confidential-space)
-#   infra/gcp/deploy.sh issuer --debug    debug image (confidential-space-debug): SSH and logs on,
-#                                         and the token says dbgstat=enabled, so the SDK refuses it
+#   infra/gcp/deploy.sh issuer [--replace] production image (confidential-space)
 #   ATTESTATION_AUDIENCE=... ISSUER_URL=... RELAY_HOSTNAME=... infra/gcp/deploy.sh relay
-#   Add --dry-run after the role options to print the create command without changing GCP.
-# An existing VM with the same name is deleted first (its in-memory keys die with it).
+#   Add --instance-name=wraps-relay-canary to launch a side-by-side candidate.
+#   Add --dry-run to print the create command without changing GCP.
+# Existing VMs are preserved unless --replace is explicitly supplied.
 source "$(dirname "$0")/lib.sh"
 ROLE="${1:-}"; check_role "${ROLE}"
-MODE=prod; DRY_RUN=0
+MODE=prod; DRY_RUN=0; REPLACE=0; INSTANCE_NAME=''
 for option in "${@:2}"; do
   case "${option}" in
-    --debug) MODE=debug ;;
+    --debug) die "the digest-scoped production WIF provider rejects debug workloads; use the local mock rehearsal instead" ;;
     --dry-run) DRY_RUN=1 ;;
+    --replace) REPLACE=1 ;;
+    --instance-name=*) INSTANCE_NAME="${option#*=}" ;;
     *) die "unknown option: ${option}" ;;
   esac
 done
-[ "${ROLE}" = relay ] && [ "${MODE}" = debug ] && die "--debug is only supported for issuer"
+
+STATE_ENV="${STATE_DIR}/issuer-state.env"
+MERCHANT_AUTH_ENV="${STATE_DIR}/merchant-auth.env"
+[ -f "${STATE_ENV}" ] || die "issuer state configuration is missing; run infra/gcp/setup-issuer-state.sh prepare"
+# shellcheck source=/dev/null
+source "${STATE_ENV}"
+if [ -f "${MERCHANT_AUTH_ENV}" ]; then
+  # shellcheck source=/dev/null
+  source "${MERCHANT_AUTH_ENV}"
+fi
 
 NAME="$(instance_name "${ROLE}" "${MODE}")"
+if [ -n "${INSTANCE_NAME}" ]; then
+  [[ "${INSTANCE_NAME}" =~ ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]] || die "invalid Compute Engine instance name"
+  NAME="${INSTANCE_NAME}"
+fi
 REF="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].imageReference")" \
   || die "no image for ${ROLE} in expected.json. Run infra/gcp/build.sh ${ROLE} first."
 [[ "${REF}" == *@sha256:* ]] || die "image reference must be pinned by digest: ${REF}"
 
 # SEC-04 production images fetch the relay credential directly through WIF.
-# These references are public configuration; the credential value itself never enters metadata.
+# The provider and issuer-state resources are baked into the digest; only the
+# pinned Secret Manager version reference is deployment metadata.
 AUTH_METADATA=''
-if [ "${MODE}" = prod ]; then
-  [[ "${ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION:-}" =~ ^projects/[A-Za-z0-9][A-Za-z0-9.-]{0,62}/secrets/[A-Za-z0-9_-]{1,255}/versions/[1-9][0-9]*$ ]] \
-    || die "ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION must be a pinned Secret Manager version"
-  [[ "${GCP_WIF_PROVIDER:-}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]{1,32}/providers/[A-Za-z0-9_-]{1,32}$ ]] \
-    || die "GCP_WIF_PROVIDER must be a global workload identity pool provider resource"
-  AUTH_METADATA="tee-env-GCP_WIF_PROVIDER=${GCP_WIF_PROVIDER}~tee-env-ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION=${ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION}"
+[[ "${ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION:-}" =~ ^projects/[A-Za-z0-9][A-Za-z0-9.-]{0,62}/secrets/[A-Za-z0-9_-]{1,255}/versions/[1-9][0-9]*$ ]] \
+  || die "ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION must be a pinned Secret Manager version"
+AUTH_METADATA="tee-env-ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION=${ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION}"
+EXPECTED_PROVIDER="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].config && j.roles['${ROLE}'].config.gcpWifProvider")" \
+  || die "${ROLE} image config is missing its baked WIF provider; rebuild it"
+[ "${EXPECTED_PROVIDER}" = "${GCP_WIF_PROVIDER}" ] || die "issuer-state.env WIF provider does not match the ${ROLE} image digest"
+if [ "${ROLE}" = issuer ]; then
+  EXPECTED_BUCKET="$(expected_get 'j.roles && j.roles.issuer.config && j.roles.issuer.config.issuerStateGcsBucket')" \
+    || die "issuer image config is missing its baked state bucket"
+  EXPECTED_PREFIX="$(expected_get 'j.roles && j.roles.issuer.config && j.roles.issuer.config.issuerStateGcsPrefix')" \
+    || die "issuer image config is missing its baked state prefix"
+  EXPECTED_KEY="$(expected_get 'j.roles && j.roles.issuer.config && j.roles.issuer.config.issuerStateKmsKey')" \
+    || die "issuer image config is missing its baked KMS key"
+  [ "${EXPECTED_BUCKET}" = "${ISSUER_STATE_GCS_BUCKET}" ] && [ "${EXPECTED_PREFIX}" = "${ISSUER_STATE_GCS_PREFIX}" ] && [ "${EXPECTED_KEY}" = "${ISSUER_STATE_KMS_KEY}" ] \
+    || die "issuer-state.env resources do not match the issuer image digest"
 fi
 if [ "${ROLE}" = issuer ]; then
   KEY_FINGERPRINT="$(expected_get "j.roles && j.roles.issuer && j.roles.issuer.merchantAuthKeyFingerprint")" \
@@ -39,17 +63,11 @@ if [ "${ROLE}" = issuer ]; then
   [[ "${KEY_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]] || die "issuer image merchant public-key fingerprint is invalid"
 fi
 
-if [ "${MODE}" = debug ]; then
-  FAMILY=confidential-space-debug
-  # Debug boots always redirect output; the relay image allows sanitized logs.
-  METADATA="^~^tee-image-reference=${REF}~tee-container-log-redirect=true"
-else
-  FAMILY=confidential-space
-  METADATA="^~^tee-image-reference=${REF}"
-  # The relay logs only fixed stages and allowlisted failure codes.
-  if [ "${ROLE}" = relay ]; then
-    METADATA="${METADATA}~tee-container-log-redirect=true"
-  fi
+FAMILY=confidential-space
+METADATA="^~^tee-image-reference=${REF}"
+# The relay logs only fixed stages and allowlisted failure codes.
+if [ "${ROLE}" = relay ]; then
+  METADATA="${METADATA}~tee-container-log-redirect=true"
 fi
 
 if [ "${ROLE}" = relay ]; then
@@ -91,9 +109,7 @@ if [ "${ROLE}" = relay ]; then
   done
   [ -n "${META_SEPARATOR}" ] || die "could not choose a safe metadata separator"
   METADATA="^${META_SEPARATOR}^tee-image-reference=${REF}${META_SEPARATOR}tee-env-ATTESTATION_AUDIENCE=${ATTESTATION_AUDIENCE}${META_SEPARATOR}tee-env-ISSUER_URL=${ISSUER_URL}${META_SEPARATOR}tee-env-RELAY_HOSTNAME=${RELAY_HOSTNAME}"
-  if [ "${MODE}" = prod ]; then
-    METADATA="${METADATA}${META_SEPARATOR}tee-container-log-redirect=true"
-  fi
+  METADATA="${METADATA}${META_SEPARATOR}tee-container-log-redirect=true"
   if [ -n "${WG_METADATA}" ]; then
     WG_METADATA="${WG_METADATA//\~/${META_SEPARATOR}}"
     METADATA="${METADATA}${META_SEPARATOR}${WG_METADATA}"
@@ -102,7 +118,7 @@ if [ "${ROLE}" = relay ]; then
     AUTH_METADATA="${AUTH_METADATA//\~/${META_SEPARATOR}}"
     METADATA="${METADATA}${META_SEPARATOR}${AUTH_METADATA}"
   fi
-elif [ -n "${AUTH_METADATA}" ]; then
+else
   METADATA="${METADATA}~${AUTH_METADATA}"
 fi
 
@@ -151,7 +167,8 @@ if [ "${DRY_RUN}" = 1 ]; then
 fi
 
 if gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null 2>&1; then
-  echo "Deleting existing ${NAME}..."
+  [ "${REPLACE}" = 1 ] || die "${NAME} already exists; preserve it or pass --replace to delete it explicitly"
+  echo "Deleting existing ${NAME} as requested..."
   gc compute instances delete "${NAME}" --zone "${GCP_ZONE}" --quiet
 fi
 
@@ -175,7 +192,9 @@ fi
 IP="$(gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
 mkdir -p "${STATE_DIR}"
 echo "${IP}" > "${STATE_DIR}/${NAME}.ip"
-[ "${MODE}" = prod ] && echo "${IP}" > "${STATE_DIR}/${ROLE}.ip"
+if [ "${NAME}" = "$(instance_name "${ROLE}" "${MODE}")" ]; then
+  echo "${IP}" > "${STATE_DIR}/${ROLE}.ip"
+fi
 
 echo
 echo "VM:   ${NAME}  (${IP})"
@@ -187,5 +206,5 @@ else
   echo "URL:  https://${IP}   (self-signed; the SDK pins the attested key)"
   echo "The image takes about a minute to boot and pull. Then:"
   echo "  curl -sk https://${IP}/health"
-  echo "  infra/gcp/status.sh ${ROLE}$( [ "${MODE}" = debug ] && echo ' --debug --logs')"
+  echo "  infra/gcp/status.sh ${ROLE}"
 fi

@@ -41,8 +41,9 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `relay-entrypoint.ts` | Verifies the issuer's live attestation, pins its TLS SPKI, creates the in-memory relay TLS identity, and starts the proxy and receipt listeners. |
 | `cloudbuild.yaml` | Cloud Build steps. `build.sh` runs it. |
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
+| `setup-issuer-state.sh prepare` | Creates or verifies the dedicated regional Standard bucket and symmetric Cloud KMS key for SEC-06, then writes their public resource names under `.state/`. |
 | `setup-merchant-auth-wif.sh` | Creates a digest-scoped WIF provider and Secret Manager access for the issuer and relay image digests. |
-| `deploy.sh <role> [--debug]` | Creates the Confidential Space VM (deletes an existing one with the same name first). |
+| `deploy.sh <role> [--replace] [--instance-name=NAME]` | Creates a production Confidential Space VM; preserves an existing VM unless replacement is explicitly requested. A named candidate can be tested side by side. |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
 | `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
@@ -73,11 +74,14 @@ Prerequisites: `gcloud` is logged in. The project `wraps-hack` already has the A
 `logging.logWriter`, `artifactregistry.reader`) and the firewall rule `wraps-allow-443`
 (tcp:443 and tcp:8080 to tag `wraps`). The merchant-auth setup enables the IAM, Resource Manager,
 IAM Credentials, Security Token Service, and Secret Manager APIs if they are not already enabled;
-the operator needs `serviceusage.services.enable` for that step.
+the state setup also enables Cloud Storage and Cloud KMS. The operator needs
+`serviceusage.services.enable` for these steps.
 
-For SEC-04, build the issuer with the app's public merchant-key map embedded in the image. The map
-is public, but it is fixed to the issuer digest so TEE metadata cannot replace it. Then build the
-relay and create a WIF provider and relay credential restricted to those exact image digests:
+For SEC-04 and SEC-06, create the encrypted state resources, then build the issuer with the app's
+public merchant-key map embedded in the image. The merchant keys, state bucket, object prefix,
+KMS key, and WIF provider are fixed to the image digest so TEE metadata cannot replace them. The
+issuer digest alone receives read/list and create-only access to the dedicated bucket and
+encrypt/decrypt access to the KMS key. The relay can read only the relay-settlement secret.
 
 The setup script creates `wraps-relay-settle-key` only when it has no versions. It requires exactly
 one enabled version per secret and refuses secrets with prior or multiple versions; rotate by
@@ -90,21 +94,22 @@ expected policy; it never updates an existing provider. The condition pins the C
 VM project number, image digests, production integrity claims, and the exact
 `wraps-workload@${GCP_PROJECT}` service account. The generated secret value is sent directly to
 Secret Manager and is never printed. The local state file contains only provider and secret
-version resource names.
+version resource names. The state setup writes the bucket and KMS resource names in its local state
+file, verifies that the bucket belongs to this project, and refuses objects outside the issuer
+prefix before granting the issuer digest access.
 
 ```sh
-# 1. Build and push the issuer and relay. The issuer command requires the app public-key map.
+# 1. Create or verify the regional bucket and KMS key.
+infra/gcp/setup-issuer-state.sh prepare
+source infra/gcp/.state/issuer-state.env
+
+# 2. Build and push the final issuer and relay images. The issuer command requires the app public-key map.
 ISSUER_MERCHANT_AUTH_KEYS='{"node:usc1":"<base64url-Ed25519-SPKI-public-key>"}' infra/gcp/build.sh issuer
 infra/gcp/build.sh relay
 infra/gcp/setup-merchant-auth-wif.sh
 source infra/gcp/.state/merchant-auth.env
 
-# 2. Try it on the debug image first. Logs go to the serial console and Cloud Logging.
-infra/gcp/deploy.sh issuer --debug
-infra/gcp/status.sh issuer --debug --logs
-npm run verify:gcp -- 'https://<debug-ip>'    # must print REFUSED (DEBUG_MODE)
-
-# 3. Production image. Deploy issuer first, then the relay.
+# 3. Deploy the production image. Deploy issuer first, then the relay.
 infra/gcp/deploy.sh issuer
 infra/gcp/status.sh issuer
 npm run verify:gcp                            # reads infra/gcp/.state/issuer.ip; must print VERIFIED
@@ -124,6 +129,15 @@ ATTESTATION=confidential-space ISSUER_URL='https://<issuer-ip>' npm run agent
 infra/gcp/stop.sh
 ```
 
+The digest-scoped production provider rejects debug workloads, so `--debug` deployment is disabled
+for these secure images. Use `npm run demo:core` or the local mock fallback for rehearsals that do
+not need a live confidential VM.
+
+`deploy.sh` refuses to replace an existing VM unless `--replace` is supplied. For a new relay,
+launch a candidate with `--instance-name=wraps-relay-canary` and omit `RELAY_ADDRESS` to get a
+temporary IP. Test it before scheduling a production cutover; the current WireGuard endpoint stays
+up while the candidate is validated.
+
 To deploy the relay after building it, use the issuer's current IP and the reserved relay IP:
 
 ```sh
@@ -134,8 +148,8 @@ RELAY_ADDRESS=34.68.188.111 \
 infra/gcp/deploy.sh relay
 ```
 
-The deploy command deletes and recreates an existing relay instance so its in-memory keys are
-discarded. The issuer IP is ephemeral and can change after a stop; the relay IP is reserved.
+If replacing the production relay, add `--replace` only after the tested candidate is ready for
+cutover. The issuer IP is ephemeral and can change after a stop; the relay IP is reserved.
 The relay binds the public attestation listener on 8080, which is protected by per-IP and
 aggregate rate limits and a bounded number of provider calls.
 
@@ -147,10 +161,10 @@ mock attestation. Use it to rehearse without a VM.
 ```
 --machine-type=n2d-standard-2 --confidential-compute-type=SEV --maintenance-policy=MIGRATE
 --shielded-secure-boot --image-project=confidential-space-images
---image-family=confidential-space | confidential-space-debug
+--image-family=confidential-space
 --metadata=^~^tee-image-reference=<registry>/<role>@sha256:<digest>[~tee-container-log-redirect=true]
 --service-account=wraps-workload@wraps-hack.iam.gserviceaccount.com --scopes=cloud-platform
---tags=wraps --labels=project=wraps,role=<role>,mode=<prod|debug>
+--tags=wraps --labels=project=wraps,role=<role>,mode=prod
 --max-run-duration=12h --instance-termination-action=STOP
 ```
 

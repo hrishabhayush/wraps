@@ -44,6 +44,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ### RPC
 - [ ] **INF-19** Quicknode endpoints: XRPL mainnet (spy bot), XRPL testnet, XRPL EVM testnet if supported. Put URLs in `.env`. Join the Quicknode track.
 - [~] **INF-30** Wire SEC-04 merchant authentication into the Confidential Space images and WIF/Secret Manager deployment. (Codex)
+- [~] **INF-31** Provision encrypted GCS/KMS state and digest-scoped access for SEC-06. (Codex)
 
 ### Run and demo day
 - [x] **INF-20** Logs: Confidential Space production images send container logs to Cloud Logging only if redirect is on. Never log tokens, keys, IPs or merchant IDs together.

@@ -8,6 +8,14 @@ steps:
       - infra/gcp/${_ROLE}.Dockerfile
       - --build-arg
       - ISSUER_MERCHANT_AUTH_KEYS_B64=${_MERCHANT_AUTH_KEYS_B64}
+      - --build-arg
+      - GCP_WIF_PROVIDER=${_GCP_WIF_PROVIDER}
+      - --build-arg
+      - ISSUER_STATE_GCS_BUCKET=${_ISSUER_STATE_GCS_BUCKET}
+      - --build-arg
+      - ISSUER_STATE_GCS_PREFIX=${_ISSUER_STATE_GCS_PREFIX}
+      - --build-arg
+      - ISSUER_STATE_KMS_KEY=${_ISSUER_STATE_KMS_KEY}
       - -t
       - ${_IMAGE}:${_TAG}
       - .
@@ -18,6 +26,10 @@ substitutions:
   _IMAGE: us-central1-docker.pkg.dev/wraps-hack/wraps/issuer
   _TAG: latest
   _MERCHANT_AUTH_KEYS_B64: ''
+  _GCP_WIF_PROVIDER: projects/0/locations/global/workloadIdentityPools/wraps-attested/providers/wraps-cs
+  _ISSUER_STATE_GCS_BUCKET: wraps-hack-issuer-state
+  _ISSUER_STATE_GCS_PREFIX: issuer-state/v1
+  _ISSUER_STATE_KMS_KEY: projects/wraps-hack/locations/us-central1/keyRings/wraps-issuer-state/cryptoKeys/issuer-state
 options:
   logging: CLOUD_LOGGING_ONLY
 timeout: 900s

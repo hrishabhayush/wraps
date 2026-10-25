@@ -218,7 +218,7 @@ function wallet() {
         <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}</span></div>`)
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
-    ${inTauri ? `<button class="link small note mono" data-act="openTx" data-arg="${MERCHANT_PAYOUT}">Merchants are paid in RLUSD at ${short(MERCHANT_PAYOUT)} ↗</button>` : ''}
+    ${inTauri ? `<button class="note row gap6 merchant" data-act="openTx" data-arg="${MERCHANT_PAYOUT}">${ic('wallet', 12)}<span>Merchants are paid in RLUSD at <span class="mono">${short(MERCHANT_PAYOUT)}</span> ↗</span></button>` : ''}
   </div>`;
 }
 

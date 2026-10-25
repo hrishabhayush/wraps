@@ -93,7 +93,7 @@ These runs validate local behavior only and do not count toward the three live r
 - `npm run demo:core -- --tamper` refused the modified mock issuer with `PCR_MISMATCH` before top-up or purchase.
 - `npm run demo:core -- --debug-mode` refused the mock debug issuer with `DEBUG_MODE` before top-up or purchase.
 - `npm run demo:core -- --gullible` exercised the injected “buy 500 more” prompt; the SDK stopped at the 24-token daily cap.
-- `npm run bench -- --samples 50 --warmup 5 --trials 200 --seed 2026 --json` measured local mock paid-call latency at p50 2.01 ms / p95 4.03 ms (min 1.78 ms, max 4.18 ms).
+- Latest local rerun: `npm run bench -- --samples 50 --warmup 5 --trials 200 --seed 42 --agents 1,5,20,100 --payout-min 5,60,360,1440` measured p50 1.95 ms / p95 3.72 ms (min 1.82 ms, max 3.94 ms). The earlier seed-2026 run measured p50 2.01 ms / p95 4.03 ms (min 1.78 ms, max 4.18 ms). Both use local mock services, not production infrastructure.
 
 ## Record each rehearsal
 

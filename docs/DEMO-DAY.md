@@ -71,7 +71,7 @@ Stop with the **Stop** button or Ctrl-C. That closes the local merchant and the 
 | Why trust your issuer? | Blind signatures stop it linking a token to its buyer even if it logs everything. And it runs in Confidential Space with a Google-signed attestation you just watched us verify. |
 | Is the payment real? | Top-up in the demo uses a mock rail (AP4M is skipped). Real RLUSD payouts on XRPL EVM are built and tested on a local chain; no live testnet send yet. |
 | How private is it really? | Simulation, PR #7: with hourly payouts a watcher still pins 69% of spending at 5 agents and 6% at 100. Privacy needs a crowd and slow payouts. |
-| Is it faster? | The local mock paid-call benchmark measured p50 2.01 ms and p95 4.03 ms. Plain x402 on XRPL waits about 4 s for the ledger. The local measurement is not production latency. |
+| Is it faster? | The latest local mock paid-call benchmark measured p50 1.95 ms and p95 3.72 ms. Plain x402 on XRPL waits about 4 s for the ledger. The local measurement is not production latency. |
 | SEV or SEV-SNP? | AMD SEV, verified by Google. Not SNP. |
 | Is the WireGuard gateway attested? | The relay serves a nonce-bound attestation receipt for its WireGuard settings. A temporary canary peer completed a handshake and HTTPS egress through the relay on 2026-10-25; production packet forwarding was not revalidated. The separate standalone gateway VM is not attested. |
 

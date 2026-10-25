@@ -37,9 +37,11 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 |---|---|
 | `issuer.Dockerfile` | Builds the issuer. Node 22 pinned by digest, `npm ci`, esbuild bundle, `EXPOSE 443`. |
 | `relay.Dockerfile` | Builds the relay with pinned Node, lockfile installs, and an esbuild bundle. |
+| `issuer-start.sh` | Exports the baked public merchant-key map at startup; the map is bound by the image digest. |
 | `relay-entrypoint.ts` | Verifies the issuer's live attestation, pins its TLS SPKI, creates the in-memory relay TLS identity, and starts the proxy and receipt listeners. |
 | `cloudbuild.yaml` | Cloud Build steps. `build.sh` runs it. |
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
+| `setup-merchant-auth-wif.sh` | Creates a digest-scoped WIF provider and Secret Manager access for the issuer and relay image digests. |
 | `deploy.sh <role> [--debug]` | Creates the Confidential Space VM (deletes an existing one with the same name first). |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
@@ -71,19 +73,37 @@ Prerequisites: `gcloud` is logged in. The project `wraps-hack` already has the A
 `logging.logWriter`, `artifactregistry.reader`) and the firewall rule `wraps-allow-443`
 (tcp:443 and tcp:8080 to tag `wraps`).
 
+For SEC-04, build the issuer with the app's public merchant-key map embedded in the image. The map
+is public, but it is fixed to the issuer digest so TEE metadata cannot replace it. Then build the
+relay and create a WIF provider and relay credential restricted to those exact image digests:
+
+The setup script creates `wraps-relay-settle-key` only when it has no enabled version. It creates
+or updates a WIF provider whose condition checks the issuer/relay image digests, production
+Confidential Space claims, and the `wraps-workload` service account. Secret Manager access is
+granted to only the two corresponding digest identities. The generated secret value is sent
+directly to Secret Manager and is never printed. The local state file contains only provider and
+secret version resource names.
+
 ```sh
-# 1. Build and push. Writes the digest to infra/gcp/expected.json.
-infra/gcp/build.sh issuer
+# 1. Build and push the issuer and relay. The issuer command requires the app public-key map.
+ISSUER_MERCHANT_AUTH_KEYS='{"node:usc1":"<base64url-Ed25519-SPKI-public-key>"}' infra/gcp/build.sh issuer
+infra/gcp/build.sh relay
+infra/gcp/setup-merchant-auth-wif.sh
+source infra/gcp/.state/merchant-auth.env
 
 # 2. Try it on the debug image first. Logs go to the serial console and Cloud Logging.
 infra/gcp/deploy.sh issuer --debug
 infra/gcp/status.sh issuer --debug --logs
 npm run verify:gcp -- https://<debug IP>      # must print REFUSED (DEBUG_MODE)
 
-# 3. Production image.
+# 3. Production image. Deploy issuer first, then the relay.
 infra/gcp/deploy.sh issuer
 infra/gcp/status.sh issuer
 npm run verify:gcp                            # reads infra/gcp/.state/issuer.ip; must print VERIFIED
+ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
+ISSUER_URL=https://<issuer-ip> \
+RELAY_HOSTNAME=<relay-hostname> \
+infra/gcp/deploy.sh relay
 
 # 4. Merchant and agent on this laptop, against the live issuer.
 npm run demo:gcp                              # or ISSUER_URL=https://<IP> npm run demo:gcp

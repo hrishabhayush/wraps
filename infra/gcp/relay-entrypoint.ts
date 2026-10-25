@@ -6,12 +6,14 @@ import { createRelayTlsIdentity, startConfidentialRelay, startConfidentialWireGu
 
 type AttestationRuntime = {
   ConfidentialSpaceProvider: new (options: { audience: string }) => AttestationProvider;
+  MockAttestationProvider: new (options: { buildName: string }) => AttestationProvider;
   verifierFromEnv: (role: 'issuer') => AttestationVerifier;
 };
 
 type IssuerRuntime = {
   fetchAttestedIssuer: (issuerUrl: string, verifier: AttestationVerifier) => Promise<unknown>;
   issuerTransport: (attestedIssuer: unknown) => unknown;
+  readConfidentialSecret: (secretVersion: string, workloadIdentityProvider: string) => Promise<string>;
 };
 
 // Keep startup diagnostics useful without exposing URLs, keys, nonces, or tokens.
@@ -76,7 +78,9 @@ async function close(server: HttpServer | HttpsServer): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const audience = required('ATTESTATION_AUDIENCE');
+  const mode = process.env.ATTESTATION ?? 'confidential-space';
+  if (mode !== 'mock' && mode !== 'confidential-space') throw new Error('ATTESTATION must be mock or confidential-space');
+  const audience = mode === 'confidential-space' ? required('ATTESTATION_AUDIENCE') : (process.env.ATTESTATION_AUDIENCE ?? 'wraps.mock.relay');
   const issuerUrl = new URL(required('ISSUER_URL'));
   if (issuerUrl.protocol !== 'https:') throw new Error('ISSUER_URL must use HTTPS');
   const hostname = validateRelayHost(required('RELAY_HOSTNAME'));
@@ -87,6 +91,18 @@ async function main(): Promise<void> {
   startupStep = 'loading-runtime';
   const attestationRuntime = await import('@wraps/attestation') as unknown as AttestationRuntime;
   const issuerRuntime = await import('@wraps/issuer') as unknown as IssuerRuntime;
+  let issuerSettleKey: string | undefined;
+  if (mode === 'confidential-space') {
+    if (process.env.ISSUER_RELAY_SETTLE_KEY !== undefined) {
+      throw new Error('relay settlement credentials must be loaded from Secret Manager');
+    }
+    issuerSettleKey = await issuerRuntime.readConfidentialSecret(
+      required('ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION'),
+      required('GCP_WIF_PROVIDER'),
+    );
+  } else {
+    issuerSettleKey = process.env.ISSUER_RELAY_SETTLE_KEY;
+  }
   const issuerVerifier = attestationRuntime.verifierFromEnv('issuer');
   startupStep = 'issuer-attestation';
   const attestedIssuer = await issuerRuntime.fetchAttestedIssuer(
@@ -99,10 +115,13 @@ async function main(): Promise<void> {
   // process memory. The relay attestation endpoint binds this cert's SPKI.
   startupStep = 'tls-identity';
   const identity = await createRelayTlsIdentity(hostname);
-  const provider = new attestationRuntime.ConfidentialSpaceProvider({ audience });
+  const provider = mode === 'mock'
+    ? new attestationRuntime.MockAttestationProvider({ buildName: process.env.RELAY_BUILD ?? 'relay' })
+    : new attestationRuntime.ConfidentialSpaceProvider({ audience });
   const relayOptions = {
     issuerUrl: issuerUrl.toString(),
     issuerFetch,
+    issuerSettleKey,
     tlsCertificate: identity.certPem,
     tlsPrivateKey: identity.keyPem,
     attestationProvider: provider,

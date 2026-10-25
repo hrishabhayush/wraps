@@ -23,6 +23,22 @@ REF="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].imageRe
   || die "no image for ${ROLE} in expected.json. Run infra/gcp/build.sh ${ROLE} first."
 [[ "${REF}" == *@sha256:* ]] || die "image reference must be pinned by digest: ${REF}"
 
+# SEC-04 production images fetch the relay credential directly through WIF.
+# These references are public configuration; the credential value itself never enters metadata.
+AUTH_METADATA=''
+if [ "${MODE}" = prod ]; then
+  [[ "${ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION:-}" =~ ^projects/[A-Za-z0-9][A-Za-z0-9.-]{0,62}/secrets/[A-Za-z0-9_-]{1,255}/versions/[1-9][0-9]*$ ]] \
+    || die "ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION must be a pinned Secret Manager version"
+  [[ "${GCP_WIF_PROVIDER:-}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[A-Za-z0-9_-]{1,32}/providers/[A-Za-z0-9_-]{1,32}$ ]] \
+    || die "GCP_WIF_PROVIDER must be a global workload identity pool provider resource"
+  AUTH_METADATA="tee-env-GCP_WIF_PROVIDER=${GCP_WIF_PROVIDER}~tee-env-ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION=${ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION}"
+fi
+if [ "${ROLE}" = issuer ]; then
+  KEY_FINGERPRINT="$(expected_get "j.roles && j.roles.issuer && j.roles.issuer.merchantAuthKeyFingerprint")" \
+    || die "issuer image does not record its merchant public-key fingerprint; rebuild with ISSUER_MERCHANT_AUTH_KEYS"
+  [[ "${KEY_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]] || die "issuer image merchant public-key fingerprint is invalid"
+fi
+
 if [ "${MODE}" = debug ]; then
   FAMILY=confidential-space-debug
   # Debug boots always redirect output; the relay image allows sanitized logs.
@@ -68,7 +84,7 @@ if [ "${ROLE}" = relay ]; then
   META_SEPARATOR=''
   for ((i = 0; i < ${#separator}; i++)); do
     candidate="${separator:i:1}"
-    if [[ "${REF}${ATTESTATION_AUDIENCE}${ISSUER_URL}${RELAY_HOSTNAME}${WG_METADATA}" != *"${candidate}"* ]]; then
+    if [[ "${REF}${ATTESTATION_AUDIENCE}${ISSUER_URL}${RELAY_HOSTNAME}${WG_METADATA}${AUTH_METADATA}" != *"${candidate}"* ]]; then
       META_SEPARATOR="${candidate}"
       break
     fi
@@ -82,6 +98,12 @@ if [ "${ROLE}" = relay ]; then
     WG_METADATA="${WG_METADATA//\~/${META_SEPARATOR}}"
     METADATA="${METADATA}${META_SEPARATOR}${WG_METADATA}"
   fi
+  if [ -n "${AUTH_METADATA}" ]; then
+    AUTH_METADATA="${AUTH_METADATA//\~/${META_SEPARATOR}}"
+    METADATA="${METADATA}${META_SEPARATOR}${AUTH_METADATA}"
+  fi
+elif [ -n "${AUTH_METADATA}" ]; then
+  METADATA="${METADATA}~${AUTH_METADATA}"
 fi
 
 VM_TAGS=wraps

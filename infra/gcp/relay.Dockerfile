@@ -45,7 +45,7 @@ ENV NODE_ENV=production \
 EXPOSE 443/tcp 8080/tcp 51820/udp
 # Relay startup logs use fixed labels and allowlisted failure codes only.
 LABEL "tee.launch_policy.log_redirect"="always"
-LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON"
+LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON,ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION,GCP_WIF_PROVIDER"
 LABEL "tee.launch_policy.allow_capabilities"="true"
 
 # The provider reads the Confidential Space launcher socket; TLS key material

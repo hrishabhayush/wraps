@@ -8,9 +8,14 @@ import type { AttestationProvider } from '@wraps/attestation';
 import { parseAuthorization, serializeToken, tokenId } from '@wraps/tokens';
 import { BandwidthMeter, HttpRelayIssuer, MAX_TOKENS_PER_TUNNEL, type RelayIssuer } from './meter.js';
 import { startRelayAttestationServer, type RelayAttestationListenOptions } from './attestation.js';
+import { startWireGuardGateway, type RunningWireGuardGateway, type WireGuardGatewayIdentity, type WireGuardGatewayOptions } from './wireguard.js';
+import { WireGuardTokenMeter } from './wireguard-meter.js';
 export type { RelayIssuer } from './meter.js';
 export * from './attestation.js';
 export * from './tls-identity.js';
+export * from './wireguard.js';
+export * from './wireguard-quota.js';
+export * from './wireguard-meter.js';
 
 const MAX_HEADER_SIZE = 16 * 1024;
 const MAX_CLIENT_HELLO_SIZE = 64 * 1024;
@@ -53,6 +58,8 @@ export interface SecureRelayListenOptions extends RelayServerOptions {
   host?: string;
   /** Defaults to 8443. */
   port?: number;
+  /** Optional HTTPS control route handler. Unhandled requests receive 405. */
+  requestHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> | boolean;
 }
 
 export interface ConfidentialRelayOptions extends RelayServerOptions {
@@ -64,6 +71,10 @@ export interface ConfidentialRelayOptions extends RelayServerOptions {
   attestationHost?: string;
   attestationPort?: number;
   attestationRequestsPerMinute?: number;
+}
+
+export interface ConfidentialWireGuardRelayOptions extends ConfidentialRelayOptions {
+  wireGuardGateway: WireGuardGatewayOptions;
 }
 
 interface Authority {
@@ -119,7 +130,14 @@ export function createSecureRelayServer(
     minVersion: 'TLSv1.2',
     ALPNProtocols: ['http/1.1'],
     maxHeaderSize: MAX_HEADER_SIZE,
-  }, rejectHttpRequest);
+  }, (req, res) => {
+    void Promise.resolve().then(() => options.requestHandler?.(req, res)).then((handled) => {
+      if (!handled && !res.writableEnded) rejectHttpRequest(req, res);
+    }).catch(() => {
+      if (!res.headersSent) res.writeHead(503).end();
+      else res.destroy();
+    });
+  });
   server.headersTimeout = 10_000;
   server.requestTimeout = 10_000;
   const resolve = dependencies.resolve ?? ((host: string) => lookup(host, { all: true, verbatim: true }));
@@ -156,20 +174,86 @@ export function startConfidentialRelay(options: ConfidentialRelayOptions): {
   proxyServer: HttpsServer;
   attestationServer: Server;
 } {
+  return startConfidentialRelayInternal(options);
+}
+
+function startConfidentialRelayInternal(options: ConfidentialRelayOptions, wireGuard?: WireGuardGatewayIdentity, requestHandler?: SecureRelayListenOptions['requestHandler']): {
+  proxyServer: HttpsServer;
+  attestationServer: Server;
+} {
   const proxyServer = createSecureRelayServer({
     ...options,
+    requestHandler,
     host: options.proxyHost ?? '127.0.0.1',
     port: options.proxyPort ?? 8443,
   }, {}, options.issuerUrl);
   proxyServer.listen(options.proxyPort ?? 8443, options.proxyHost ?? '127.0.0.1');
-  const attestationServer = startRelayAttestationServer({
-    tlsCertificate: typeof options.tlsCertificate === 'string' ? options.tlsCertificate : options.tlsCertificate.toString(),
-    provider: options.attestationProvider,
-    host: options.attestationHost ?? '127.0.0.1',
-    port: options.attestationPort ?? 8080,
-    requestsPerMinute: options.attestationRequestsPerMinute,
-  } satisfies RelayAttestationListenOptions);
-  return { proxyServer, attestationServer };
+  try {
+    const attestationServer = startRelayAttestationServer({
+      tlsCertificate: typeof options.tlsCertificate === 'string' ? options.tlsCertificate : options.tlsCertificate.toString(),
+      provider: options.attestationProvider,
+      wireGuard,
+      host: options.attestationHost ?? '127.0.0.1',
+      port: options.attestationPort ?? 8080,
+      requestsPerMinute: options.attestationRequestsPerMinute,
+    } satisfies RelayAttestationListenOptions);
+    return { proxyServer, attestationServer };
+  } catch (error) {
+    proxyServer.closeAllConnections?.();
+    proxyServer.close();
+    throw error;
+  }
+}
+
+/** Start the CONNECT relay and an attested WireGuard gateway in the same workload. */
+export async function startConfidentialWireGuardRelay(options: ConfidentialWireGuardRelayOptions): Promise<{
+  proxyServer: HttpsServer;
+  attestationServer: Server;
+  wireGuard: RunningWireGuardGateway;
+  close(): Promise<void>;
+}> {
+  const wireGuard = await startWireGuardGateway(options.wireGuardGateway);
+  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  if (!issuer) {
+    await wireGuard.stop();
+    throw new Error('WireGuard requires a configured relay issuer for token metering');
+  }
+  const tokenMeter = new WireGuardTokenMeter(
+    options.wireGuardGateway.peers,
+    options.merchantId ?? 'relay',
+    issuer,
+    wireGuard.quotas,
+  );
+  try {
+    const servers = startConfidentialRelayInternal(
+      { ...options, issuer },
+      wireGuard.identity,
+      (req, res) => tokenMeter.handle(req, res),
+    );
+    return {
+      ...servers,
+      wireGuard,
+      async close() {
+        servers.proxyServer.closeAllConnections?.();
+        servers.attestationServer.closeAllConnections?.();
+        tokenMeter.close();
+        await Promise.all([
+          closeServer(servers.proxyServer),
+          closeServer(servers.attestationServer),
+          wireGuard.stop(),
+        ]);
+      },
+    };
+  } catch (error) {
+    tokenMeter.close();
+    await wireGuard.stop();
+    throw error;
+  }
+}
+
+function closeServer(server: Server | HttpsServer): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
 }
 
 function rejectHttpRequest(_req: IncomingMessage, res: ServerResponse): void {

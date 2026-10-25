@@ -75,3 +75,60 @@ const servers = startConfidentialRelay({
 Do not expose the attestation URL as a substitute for the TLS-pinned proxy.
 Its response is accepted only after the SDK verifies the request nonce and key
 hash with the Google-signed workload attestation.
+
+## WireGuard gateway
+
+`startWireGuardGateway()` starts an optional IPv4 full-tunnel gateway for
+pre-authorized peers. It generates the server key at startup, installs only
+validated peer public keys, NATs peer traffic to the configured egress
+interface, and rejects private/reserved IPv4 destinations. IPv6 forwarding is
+blocked; clients must use a kill switch or otherwise prevent direct IPv6
+egress. The separate `/wireguard-attestation?nonce=<64 hex chars>` receipt
+binds the WireGuard public key and a hash of the peer/routing policy together
+with the existing TLS tunnel key.
+
+Example relay setup (the entrypoint must await the async start function):
+
+```ts
+const relay = await startConfidentialWireGuardRelay({
+  tlsCertificate,
+  tlsPrivateKey,
+  attestationProvider,
+  issuerUrl,
+  wireGuardGateway: {
+    endpoint: process.env.RELAY_HOSTNAME!,
+    listenPort: 51820,
+    interfaceAddress: '10.77.0.1/24',
+    egressInterface: 'ens4',
+    peers: [{ publicKey: process.env.AGENT_WIREGUARD_PUBLIC_KEY!, allowedAddress: '10.77.0.2/32' }],
+  },
+});
+```
+
+The server requires kernel WireGuard support, `wg`, `wg-quick`, `ip`, `iptables`,
+`ip6tables`, `nft`, `sysctl`, `CAP_NET_ADMIN`, and IPv4 forwarding already
+enabled by the VM runtime. Private config is held in tmpfs with mode `0600`
+while the interface runs. The nftables forwarding chain blocks every configured
+peer until token registration installs a paid quota.
+
+WireGuard packets do not carry the HTTP CONNECT token header. Instead, a client
+registers its configured public key over the relay's HTTPS
+`POST /wireguard/register` control route with a bounded serialized `PrivateToken`
+token in the JSON `authorization` field. Register one token per request. The
+relay verifies and settles it before granting its prepaid quota, then uses a shared
+nftables quota for each peer's inbound and outbound IPv4 bytes. Each token buys
+one 10,000,000-byte block. The client can send another batch over the same
+HTTPS route to add prepaid quota.
+When the batch is exhausted, nftables keeps dropping that peer's traffic until
+more tokens are registered.
+The meter counts forwarded inner IPv4 packet bytes (including IP headers), so
+its byte unit is L3 bytes rather than HTTPS CONNECT stream payload bytes.
+Registration should happen before the client enables the full-tunnel profile;
+the profile then carries all client traffic through the relay.
+
+The registration transport must use HTTPS with the relay TLS key pinned to the
+fresh, verified WireGuard attestation. Tokens are consumed from the SDK balance
+before network I/O because a timeout can follow successful settlement. A caller
+must fetch and verify `/wireguard-attestation` and pin the relay TLS key before
+registering the peer. Register the peer before bringing up the full-tunnel profile;
+later quota refills can use the same HTTPS endpoint through the active tunnel.

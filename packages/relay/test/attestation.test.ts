@@ -230,7 +230,7 @@ describe('relay attestation', () => {
     try {
       const relayAddress = server.address();
       if (!relayAddress || typeof relayAddress === 'string') throw new Error('relay did not bind a TCP address');
-      const hello = Buffer.from([0x16, 0x03, 0x01, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00]);
+      const hello = validClientHello();
       const echoed = await new Promise<Buffer>((resolve, reject) => {
         const req = httpsRequest({
           host: '127.0.0.1',
@@ -335,6 +335,20 @@ describe('relay attestation', () => {
     }
   });
 });
+
+function validClientHello(): Buffer {
+  const body = Buffer.concat([
+    Buffer.from([0x03, 0x03]), Buffer.alloc(32),
+    Buffer.from([0x00, 0x00, 0x02, 0x13, 0x01, 0x01, 0x00]),
+  ]);
+  const handshake = Buffer.alloc(4);
+  handshake[0] = 0x01;
+  handshake.writeUIntBE(body.length, 1, 3);
+  const record = Buffer.alloc(5);
+  record[0] = 0x16; record[1] = 0x03; record[2] = 0x01;
+  record.writeUInt16BE(handshake.length + body.length, 3);
+  return Buffer.concat([record, handshake, body]);
+}
 
 function secureConnectStatus(proxyPort: number, authority: string, authorization?: string): Promise<number> {
   return new Promise((resolve, reject) => {

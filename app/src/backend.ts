@@ -44,14 +44,22 @@ const NODES: VpnNode[] = [
 // Mock: Tokyo's enclave reports a build that doesn't match the audited one, to show refusal.
 const TAMPERED = new Set(['tyo']);
 
+// Early builds seeded a fake balance and fake top-ups. Keep only on-chain top-ups (they carry a
+// tx hash) and the sessions paid for after the first one, and recompute the balance from them.
+function onlyReal(w: Wallet): Wallet {
+  const real = (a: Activity) => a.usd > 0 && a.detail.includes('· 0x');
+  if (!w.history.some(a => a.usd > 0 && !real(a))) return w; // already clean
+  const first = Math.min(...w.history.filter(real).map(a => a.at));
+  const history = w.history.filter(a => real(a) || (a.usd < 0 && a.at >= first));
+  const usd = Math.max(0, history.reduce((sum, a) => sum + a.usd, 0));
+  return { usd: Math.round(usd * 1e6) / 1e6, history };
+}
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const KEY = 'wraps.wallet';
 
 export class MockBackend implements Backend {
-  private w: Wallet = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? {
-    usd: 12.4,
-    history: [{ title: 'Top up · RLUSD', detail: '500 tokens minted', usd: 5, at: Date.now() - 86400e3 }],
-  };
+  private w: Wallet = onlyReal(JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { usd: 0, history: [] });
   private save() { localStorage.setItem(KEY, JSON.stringify(this.w)); return this.w; }
 
   async listNodes() { return NODES; }

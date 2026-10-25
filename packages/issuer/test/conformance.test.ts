@@ -377,3 +377,115 @@ describe('Flaw classes [FreeRide] at the issuer', () => {
     expect(att.tokenKeyNotAfter).toBe(keys.statement.keys[0].notAfter);
   });
 });
+
+describe('SEC-03: idempotent settle and merchant-scoped status (cross-merchant double-serve)', () => {
+  const Q1 = 'a'.repeat(32);
+  const Q2 = 'b'.repeat(32);
+
+  it('SEC-03: a repeat settle with the same merchant, quote and tokens returns the original claim and counts once', async () => {
+    const core = await makeCore();
+    const tokens = await mint(core, 2);
+    const first = await core.settle('m-a', tokens, Q1);
+    expect(await core.settle('m-a', tokens, Q1)).toEqual(first);
+    expect(await core.settle('m-a', [...tokens].reverse(), Q1)).toEqual(first); // order does not matter
+    expect(core.pendingPayouts()).toEqual([{ merchantId: 'm-a', amountTokens: 2, amountRlusd: '0.20' }]);
+    expect(core.reserves().reserves.unspentIssuedTokens).toBe(0);
+  });
+
+  it('SEC-03: concurrent identical settles for one quote all return the one original claim', async () => {
+    const core = await makeCore();
+    const tokens = await mint(core, 2);
+    const results = await Promise.all(Array.from({ length: 5 }, () => core.settle('m-a', tokens, Q1)));
+    for (const r of results) expect(r).toEqual(results[0]);
+    expect(core.pendingPayouts()[0].amountTokens).toBe(2);
+  });
+
+  it('SEC-03: a repeat settle on the same quote with different tokens is refused, and those tokens stay unspent', async () => {
+    const core = await makeCore();
+    const [a, b] = await mint(core, 2);
+    await core.settle('m-a', [a], Q1);
+    await expect(core.settle('m-a', [b], Q1)).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/already settled with other tokens/) });
+    await expect(core.settle('m-a', [a, b], Q1)).rejects.toMatchObject({ status: 409 });
+    expect(await reasons(core, [b])).toEqual([undefined]);
+    // The same tokens on a new quote are a new payment, so they are refused as spent.
+    await expect(core.settle('m-a', [a], Q2)).rejects.toThrow(/already spent/);
+    expect(core.pendingPayouts()[0].amountTokens).toBe(1);
+  });
+
+  it('SEC-03: /settle/status answers settled-by-you, settled-by-other, unspent and expired', async () => {
+    const c = clock();
+    const core = await makeCore({ now: c.now, tokenKeyLifetimeMs: 10 * DAY });
+    const [mine, theirs, fresh, old] = await mint(core, 4);
+    await core.settle('m-a', [mine], Q1);
+    await core.settle('m-b', [theirs], Q1); // same quote ID string, other merchant
+    expect(await core.settleStatus('m-a', Q1, [mine])).toBe('settled-by-you');
+    expect(await core.settleStatus('m-a', Q1, [theirs])).toBe('settled-by-other');
+    expect(await core.settleStatus('m-a', Q2, [mine])).toBe('settled-by-other'); // ours, but another quote
+    expect(await core.settleStatus('m-b', Q1, [mine])).toBe('settled-by-other');
+    expect(await core.settleStatus('m-a', Q1, [mine, fresh])).toBe('settled-by-other'); // not the settled set
+    expect(await core.settleStatus('m-a', Q2, [fresh])).toBe('unspent');
+    c.advance(10 * DAY + 1);
+    expect(await core.settleStatus('m-a', Q2, [old])).toBe('expired');
+    // Status is read-only: nothing moved.
+    expect(await reasons(core, [fresh])).toEqual(['expired']);
+    expect(core.pendingPayouts().map((l) => l.amountTokens)).toEqual([1, 1]);
+  });
+
+  it('SEC-03: a token settled and then expired still reports settled, and a repeat settle still returns the original claim', async () => {
+    const c = clock();
+    const core = await makeCore({ now: c.now, tokenKeyLifetimeMs: 10 * DAY });
+    const [a, b] = await mint(core, 2);
+    const claim = await core.settle('m-a', [a], Q1);
+    await core.settle('m-b', [b], Q1);
+    c.advance(10 * DAY + 1);
+    expect(await reasons(core, [a])).toEqual(['expired']);
+    expect(await core.settleStatus('m-a', Q1, [a])).toBe('settled-by-you');
+    expect(await core.settleStatus('m-a', Q1, [b])).toBe('settled-by-other'); // spent before expired
+    expect(await core.settle('m-a', [a], Q1)).toEqual(claim);
+    expect(core.pendingPayouts().find((l) => l.merchantId === 'm-a')?.amountTokens).toBe(1);
+  });
+
+  it('SEC-03: /settle/status refuses malformed input and forged tokens instead of guessing', async () => {
+    const core = await makeCore();
+    const [t] = await mint(core, 1);
+    const bytes = fromB64u(t);
+    bytes[bytes.length - 1] ^= 1;
+    await expect(core.settleStatus('m-a', Q1, [b64u(bytes)])).rejects.toMatchObject({ status: 409, message: expect.stringMatching(/bad signature/) });
+    await expect(core.settleStatus('m-a', Q1, ['!!'])).rejects.toMatchObject({ status: 400 });
+    await expect(core.settleStatus('m-a', Q1, [t, t])).rejects.toMatchObject({ status: 400 });
+    await expect(core.settleStatus('m-a', '', [t])).rejects.toMatchObject({ status: 400 });
+    await expect(core.settleStatus('', Q1, [t])).rejects.toMatchObject({ status: 400 });
+    await expect(core.settle('m-a', [t], 'not a quote id!')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('SEC-03: /settle/status over HTTP never reveals the other merchant, its quote or its claim', async () => {
+    const issuer = await startIssuer({ log: () => {}, payoutIntervalMs: 3_600_000 });
+    try {
+      const post = (path: string, body: unknown) =>
+        fetch(`${issuer.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const [t] = await mint(issuer.core, 1);
+      const quoteB = 'c0ffee'.repeat(5) + '00';
+      const settled = await post('/settle', { merchantId: 'merchant-bravo', quoteId: quoteB, tokens: [t] });
+      expect(settled.status).toBe(200);
+      const repeat = await post('/settle', { merchantId: 'merchant-bravo', quoteId: quoteB, tokens: [t] });
+      expect(await repeat.json()).toEqual(await settled.json()); // idempotent over HTTP too
+
+      const asked = await post('/settle/status', { merchantId: 'merchant-alpha', quoteId: Q1, tokens: [t] });
+      expect(asked.status).toBe(200);
+      expect(asked.headers.get('cache-control')).toMatch(/no-store/);
+      const text = await asked.text();
+      expect(JSON.parse(text)).toEqual({ status: 'settled-by-other' });
+      for (const secret of ['merchant-bravo', 'bravo', quoteB, 'claim', 'seq', 'total']) expect(text).not.toContain(secret);
+      // The same answer whether the spender was another merchant or our own other quote.
+      const own = await post('/settle/status', { merchantId: 'merchant-bravo', quoteId: Q1, tokens: [t] });
+      expect(await own.json()).toEqual({ status: 'settled-by-other' });
+      const ok = await post('/settle/status', { merchantId: 'merchant-bravo', quoteId: quoteB, tokens: [t] });
+      expect(await ok.json()).toEqual({ status: 'settled-by-you' });
+      // A different-token repeat on a settled quote is refused over HTTP.
+      const [u] = await mint(issuer.core, 1);
+      expect((await post('/settle', { merchantId: 'merchant-bravo', quoteId: quoteB, tokens: [u] })).status).toBe(409);
+    } finally {
+      await issuer.close();
+    }
+  });
+});

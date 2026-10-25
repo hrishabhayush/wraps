@@ -133,6 +133,14 @@ export interface VerifyResult {
 }
 
 /**
+ * SEC-03: answer of POST /settle/status for one (merchantId, quoteId, tokens).
+ * settled-by-you: this merchant's settle for this quote landed with these tokens.
+ * settled-by-other: the tokens are spent, but not by that settle. Never says by whom.
+ * expired: not spent and too old to settle. unspent: not spent and still valid.
+ */
+export type SettleStatus = 'settled-by-you' | 'settled-by-other' | 'unspent' | 'expired';
+
+/**
  * Header a paying client sends with its tokens: the quoteId from the merchant's 402.
  * It binds the payment to one resource and one price (SR1, M3).
  */

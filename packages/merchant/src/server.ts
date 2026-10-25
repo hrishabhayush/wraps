@@ -2,7 +2,10 @@
 // resource and price. Paid → issuer /verify, claim (quote, tokens) atomically, issuer /settle,
 // check the claim against the attested issuer key, return data with no-store caching.
 // An ambiguous /settle (timeout, network error, gateway 5xx) never reopens the quote blindly:
-// the merchant asks /verify whether the tokens are spent, and keeps the claim until it knows.
+// the merchant asks the issuer's merchant-scoped /settle/status whether its own settle for this
+// quote landed (SEC-03), and keeps the claim until it knows. "Spent by someone else" is never
+// taken as proof of our own settle, so a payer racing the tokens at a second merchant gets
+// served at most once.
 import { randomBytes } from 'node:crypto';
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AttestationVerifier } from '@wraps/attestation';
@@ -10,6 +13,7 @@ import {
   AttestedIssuer,
   BlindTokenRequiredBody,
   QUOTE_HEADER,
+  SettleStatus,
   SignedClaim,
   Transport,
   fetchAttestedIssuer,
@@ -60,8 +64,10 @@ interface MerchantQuote {
 /** What one settle attempt proved. */
 type SettleOutcome =
   | { kind: 'settled'; claim: SignedClaim }
-  /** The issuer says the tokens are spent, but we have no signed claim for them. */
-  | { kind: 'spent' }
+  /** /settle/status says our settle for this quote landed, but we have no signed claim for it. */
+  | { kind: 'settled-by-you' }
+  /** The tokens were spent, but not by our settle for this quote. Never serve. */
+  | { kind: 'settled-by-other' }
   /** Known not settled: the tokens are not spent and no settle can still land. */
   | { kind: 'refused'; reason: string }
   /** Not known. The settle may still land at the issuer. */
@@ -225,7 +231,15 @@ export class Merchant {
     try {
       // SR4: data is released only after the issuer has settled (marked the tokens spent).
       // SR7: the issuer re-verifies inside /settle; the /verify before the claim is not trusted.
-      const outcome = await this.settle(serialized, retry);
+      const outcome = await this.settle(quote.quoteId, serialized, retry);
+      if (outcome.kind === 'settled-by-other') {
+        // SEC-03: the payer spent these tokens elsewhere while our settle was in doubt. Our settle
+        // can no longer land (the issuer refuses spent tokens), so the quote reopens for a fresh
+        // payment, and nothing is served for these tokens.
+        next = 'open';
+        this.log(`${svc.name}: tokens for quote ${quote.quoteId} were settled elsewhere; refusing`);
+        return this.paymentRequired(res, svc, resource, 'settle failed: tokens were spent elsewhere');
+      }
       if (outcome.kind === 'refused') {
         next = 'open';
         return this.paymentRequired(res, svc, resource, `settle failed: ${outcome.reason}`);
@@ -240,20 +254,24 @@ export class Merchant {
         );
       }
       next = 'used';
-      if (outcome.kind === 'spent') {
+      if (outcome.kind === 'settled-by-you') {
         // Our settle landed but its answer was lost. The issuer's tab includes these tokens and
         // the next signed claim will show them. Serve once: the quote is used from here on.
-        this.log(`${svc.name}: paid ${svc.price} tokens (settle confirmed by /verify, claim lost in transit)`);
+        this.log(`${svc.name}: paid ${svc.price} tokens (settle confirmed by /settle/status, claim lost in transit)`);
         return sendJson(res, 200, { service: svc.id, quoteId: quote.quoteId, data: svc.handler(url.searchParams) }, PAID_RESPONSE_HEADERS);
       }
       const claim = outcome.claim;
       const prev = this.latestClaim?.claim.totalTokens ?? 0;
-      if (!verifyClaim(claim, this.issuer!.claimKey) || claim.claim.merchantId !== this.merchantId || claim.claim.totalTokens < prev + svc.price) {
+      const prevSeq = this.latestClaim?.claim.seq ?? 0;
+      // On a retry, idempotent /settle returns the original claim of our earlier settle. Later
+      // claims may have arrived since, so an older claim is accepted there, but not stored.
+      const replayed = retry && claim.claim.seq <= prevSeq;
+      if (!verifyClaim(claim, this.issuer!.claimKey) || claim.claim.merchantId !== this.merchantId || (!replayed && claim.claim.totalTokens < prev + svc.price)) {
         // The tokens are spent, but the issuer's promise is bad. Refuse to serve and shout.
         this.log('ALERT: issuer claim failed verification');
         return sendJson(res, 502, { error: 'issuer claim failed verification' });
       }
-      this.claims.push(claim);
+      if (!replayed) this.claims.push(claim);
       this.log(`${svc.name}: paid ${svc.price} tokens. Issuer owes us ${claim.claim.totalTokens} tokens (${claim.claim.totalRlusd} RLUSD), claim #${claim.claim.seq} verified`);
       return sendJson(res, 200, { service: svc.id, quoteId: quote.quoteId, data: svc.handler(url.searchParams) }, PAID_RESPONSE_HEADERS);
     } finally {
@@ -268,24 +286,25 @@ export class Merchant {
 
   /**
    * One /settle call, classified. 2xx with a claim: settled. 4xx: the issuer refused, and its
-   * settle is atomic, so nothing was marked. Anything else is ambiguous, so ask /verify
-   * (read-only, idempotent) whether the tokens are now spent.
+   * settle is atomic, so nothing was marked. Anything else is ambiguous, so ask /settle/status
+   * (read-only, merchant-scoped) whether our settle for this quote landed. /settle is idempotent
+   * per (merchantId, quoteId, tokens), so a retry with the same tokens returns the original claim.
    */
-  private async settle(serialized: string[], retry: boolean): Promise<SettleOutcome> {
+  private async settle(quoteId: string, serialized: string[], retry: boolean): Promise<SettleOutcome> {
     let status = 0;
     let reason: string;
     try {
       const r = await this.issuerCall!(`${this.opts.issuerUrl}/settle`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ merchantId: this.merchantId, tokens: serialized }),
+        body: JSON.stringify({ merchantId: this.merchantId, quoteId, tokens: serialized }),
       });
       status = r.status;
       const body = await r.json().catch(() => undefined);
       if (r.ok && body?.claim && typeof body.signature === 'string') return { kind: 'settled', claim: body as SignedClaim };
       reason = body?.error ?? `issuer answered ${r.status}`;
-      // A first attempt refused by the issuer is final. On a retry, "already spent" can mean our
-      // own earlier, ambiguous settle landed, so look it up.
+      // A first attempt refused by the issuer is final. On a retry, "already spent" means the
+      // tokens were spent by someone else (our own settle would replay), but look it up to be sure.
       if (status >= 400 && status < 500 && !(retry && /already spent/.test(reason))) return { kind: 'refused', reason };
     } catch (e) {
       reason = `issuer unreachable: ${(e as Error).message}`;
@@ -293,23 +312,33 @@ export class Merchant {
 
     let lookup: { ok: boolean; body: any };
     try {
-      lookup = await this.callIssuer('/verify', { tokens: serialized });
+      lookup = await this.callIssuer('/settle/status', { merchantId: this.merchantId, quoteId, tokens: serialized });
     } catch (e) {
-      return { kind: 'unknown', reason: `${reason}; /verify failed: ${(e as Error).message}` };
+      return { kind: 'unknown', reason: `${reason}; /settle/status failed: ${(e as Error).message}` };
     }
-    const results: { ok: boolean; reason?: string }[] | undefined = lookup.ok ? lookup.body?.results : undefined;
-    if (!Array.isArray(results) || results.length !== serialized.length) return { kind: 'unknown', reason: `${reason}; /verify gave no answer` };
-    // Settle marks all tokens or none. All spent while this merchant holds them: our settle landed.
-    if (results.every((r) => !r.ok && r.reason === 'already spent')) return { kind: 'spent' };
-    if (results.every((r) => r.ok)) {
-      // Not spent. If the issuer itself answered, its settle is over and did not land. After a
-      // network error or a gateway status, the request may still reach the issuer later.
-      const issuerAnswered = status !== 0 && !GATEWAY_STATUSES.has(status);
-      return issuerAnswered ? { kind: 'refused', reason } : { kind: 'unknown', reason };
+    const answer: SettleStatus | undefined = lookup.ok ? lookup.body?.status : undefined;
+    switch (answer) {
+      case 'settled-by-you':
+        return { kind: 'settled-by-you' };
+      case 'settled-by-other':
+        return { kind: 'settled-by-other' };
+      case 'expired':
+        // Not spent and too old: the issuer refuses to settle it, now or later.
+        return { kind: 'refused', reason: `${reason}; tokens expired` };
+      case 'unspent': {
+        // Not spent. If the issuer itself answered, its settle is over and did not land. After a
+        // network error or a gateway status, the request may still reach the issuer later.
+        const issuerAnswered = status !== 0 && !GATEWAY_STATUSES.has(status);
+        return issuerAnswered ? { kind: 'refused', reason } : { kind: 'unknown', reason };
+      }
+      default: {
+        // A 4xx from the lookup means the tokens themselves are bad (malformed, bad signature):
+        // no settle of them can land. Anything else is no answer.
+        const status4xx = !lookup.ok && typeof lookup.body?.error === 'string';
+        if (status4xx && /tokens rejected/.test(lookup.body.error)) return { kind: 'refused', reason: `${reason}; ${lookup.body.error}` };
+        return { kind: 'unknown', reason: `${reason}; /settle/status gave no answer` };
+      }
     }
-    // Some tokens are invalid or spent elsewhere: an all-or-nothing settle by us cannot have landed.
-    const bad = results.find((r) => !r.ok)?.reason ?? 'rejected';
-    return { kind: 'refused', reason: `${reason}; tokens rejected: ${bad}` };
   }
 
   /** Returns why a quote cannot pay for this request, or undefined if it can. */

@@ -4,7 +4,10 @@
 //   POST /issue    {requests, payment?}  blind signatures once paid: payment in the body, or x402
 //                                   (402 quote, then the x-payment header) for agents
 //   POST /verify   {tokens}         read-only: signature valid and not spent
-//   POST /settle   {merchantId, tokens}  mark spent, add to tab, signed running-total claim
+//   POST /settle   {merchantId, quoteId?, tokens}  mark spent, add to tab, signed running-total claim.
+//                                   With a quoteId it is idempotent per (merchantId, quoteId) (SEC-03).
+//   POST /settle/status {merchantId, quoteId, tokens}  read-only: settled-by-you, settled-by-other,
+//                                   unspent or expired. Never names another merchant (SEC-03).
 //   GET  /reserves                  signed "outstanding ≤ funds held"
 //   GET  /keys                      token key epochs with not-after times, signed with the claim key
 //   GET  /payouts?merchantId=<id>   signed payout records (amount, tx hash) for one merchant
@@ -103,7 +106,12 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
 
       if (route === 'POST /settle') {
         const body = await readJson(req);
-        return sendJson(res, 200, await core.settle(body.merchantId, body.tokens));
+        return sendJson(res, 200, await core.settle(body.merchantId, body.tokens, body.quoteId ?? undefined));
+      }
+
+      if (route === 'POST /settle/status') {
+        const body = await readJson(req);
+        return sendJson(res, 200, { status: await core.settleStatus(body.merchantId, body.quoteId, body.tokens) });
       }
 
       if (route === 'GET /reserves') return sendJson(res, 200, core.reserves());

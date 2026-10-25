@@ -5,3 +5,5 @@ export * from "./payments.js";
 export * from "./funders.js";
 export * from "./format.js";
 export * from "./spy.js";
+export * from "./catalog.js";
+export * from "./sim.js";

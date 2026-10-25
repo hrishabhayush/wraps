@@ -79,12 +79,18 @@ For SEC-04, build the issuer with the app's public merchant-key map embedded in 
 is public, but it is fixed to the issuer digest so TEE metadata cannot replace it. Then build the
 relay and create a WIF provider and relay credential restricted to those exact image digests:
 
-The setup script creates `wraps-relay-settle-key` only when it has no enabled version. It creates
-or updates a WIF provider whose condition checks the issuer/relay image digests, production
-Confidential Space claims, and the `wraps-workload` service account. Secret Manager access is
-granted to only the two corresponding digest identities. The generated secret value is sent
-directly to Secret Manager and is never printed. The local state file contains only provider and
-secret version resource names.
+The setup script creates `wraps-relay-settle-key` only when it has no versions. It requires exactly
+one enabled version per secret and refuses secrets with prior or multiple versions; rotate by
+creating a new secret ID. Each digest principal's Secret Accessor binding is conditioned on the
+exact pinned secret-version resource name, so later versions do not inherit access. The script
+refuses to continue if an existing binding for either digest principal is not already scoped to
+that exact version. It creates the WIF provider only when absent. If the provider already exists,
+the script continues only when its issuer, audience, attribute mapping, and condition match the
+expected policy; it never updates an existing provider. The condition pins the Confidential Space
+VM project number, image digests, production integrity claims, and the exact
+`wraps-workload@${GCP_PROJECT}` service account. The generated secret value is sent directly to
+Secret Manager and is never printed. The local state file contains only provider and secret
+version resource names.
 
 ```sh
 # 1. Build and push the issuer and relay. The issuer command requires the app public-key map.

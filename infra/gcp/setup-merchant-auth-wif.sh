@@ -14,6 +14,9 @@ KEY_FINGERPRINT="$(node -e 'const j=require(process.argv[1]); process.stdout.wri
 [[ "${RELAY_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || die "expected.json has no valid relay digest"
 [[ "${KEY_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]] || die "issuer image was not built with a pinned merchant public-key map"
 
+gc services enable iam.googleapis.com resourcemanager.googleapis.com \
+  iamcredentials.googleapis.com sts.googleapis.com secretmanager.googleapis.com --quiet
+
 PROJECT_NUMBER="$(gc projects describe "${GCP_PROJECT}" --format='value(projectNumber)')"
 [[ "${PROJECT_NUMBER}" =~ ^[0-9]+$ ]] || die "could not read the GCP project number"
 

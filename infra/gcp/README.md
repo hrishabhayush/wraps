@@ -71,7 +71,9 @@ Prerequisites: `gcloud` is logged in. The project `wraps-hack` already has the A
 `us-central1-docker.pkg.dev/wraps-hack/wraps`, the service account
 `wraps-workload@wraps-hack.iam.gserviceaccount.com` (`confidentialcomputing.workloadUser`,
 `logging.logWriter`, `artifactregistry.reader`) and the firewall rule `wraps-allow-443`
-(tcp:443 and tcp:8080 to tag `wraps`).
+(tcp:443 and tcp:8080 to tag `wraps`). The merchant-auth setup enables the IAM, Resource Manager,
+IAM Credentials, Security Token Service, and Secret Manager APIs if they are not already enabled;
+the operator needs `serviceusage.services.enable` for that step.
 
 For SEC-04, build the issuer with the app's public merchant-key map embedded in the image. The map
 is public, but it is fixed to the issuer digest so TEE metadata cannot replace it. Then build the
@@ -94,23 +96,23 @@ source infra/gcp/.state/merchant-auth.env
 # 2. Try it on the debug image first. Logs go to the serial console and Cloud Logging.
 infra/gcp/deploy.sh issuer --debug
 infra/gcp/status.sh issuer --debug --logs
-npm run verify:gcp -- https://<debug IP>      # must print REFUSED (DEBUG_MODE)
+npm run verify:gcp -- 'https://<debug-ip>'    # must print REFUSED (DEBUG_MODE)
 
 # 3. Production image. Deploy issuer first, then the relay.
 infra/gcp/deploy.sh issuer
 infra/gcp/status.sh issuer
 npm run verify:gcp                            # reads infra/gcp/.state/issuer.ip; must print VERIFIED
 ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
-ISSUER_URL=https://<issuer-ip> \
-RELAY_HOSTNAME=<relay-hostname> \
+ISSUER_URL='https://<issuer-ip>' \
+RELAY_HOSTNAME='<relay-hostname>' \
 infra/gcp/deploy.sh relay
 
 # 4. Merchant and agent on this laptop, against the live issuer.
-npm run demo:gcp                              # or ISSUER_URL=https://<IP> npm run demo:gcp
+npm run demo:gcp                              # or ISSUER_URL='https://<issuer-ip>' npm run demo:gcp
 
 # Or run them as separate processes:
-ATTESTATION=confidential-space ISSUER_URL=https://<IP> npm run merchant
-ATTESTATION=confidential-space ISSUER_URL=https://<IP> npm run agent
+ATTESTATION=confidential-space ISSUER_URL='https://<issuer-ip>' npm run merchant
+ATTESTATION=confidential-space ISSUER_URL='https://<issuer-ip>' npm run agent
 
 # 5. Stop the VMs when you are done. Stopped VMs keep their disks and cost almost nothing.
 infra/gcp/stop.sh
@@ -120,7 +122,7 @@ To deploy the relay after building it, use the issuer's current IP and the reser
 
 ```sh
 ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
-ISSUER_URL=https://<issuer-ip> \
+ISSUER_URL='https://<issuer-ip>' \
 RELAY_HOSTNAME=34.68.188.111 \
 RELAY_ADDRESS=34.68.188.111 \
 infra/gcp/deploy.sh relay

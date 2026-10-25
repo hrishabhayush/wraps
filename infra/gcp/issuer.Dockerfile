@@ -8,6 +8,7 @@
 # ---- build: install from the lockfile, bundle the issuer into one file ----------
 FROM node:22.11.0-bookworm-slim@sha256:f035ba7ffee18f67200e2eb8018e0f13c954ec16338f264940f701997e3c12da AS build
 WORKDIR /repo
+ARG ISSUER_MERCHANT_AUTH_KEYS_B64=
 COPY package.json package-lock.json tsconfig.json ./
 COPY packages ./packages
 # --ignore-scripts: no install scripts run. None of the issuer's dependencies need one.
@@ -16,12 +17,16 @@ RUN mkdir /out && npx esbuild packages/issuer/src/cli.ts \
       --bundle --platform=node --format=esm --target=node22 --legal-comments=none \
       "--banner:js=import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);" \
       --outfile=/out/issuer.mjs
+RUN printf '%s' "$ISSUER_MERCHANT_AUTH_KEYS_B64" | base64 -d > /out/issuer-merchant-auth.json
 
 # ---- runtime: node and one bundled file ------------------------------------------
 FROM node:22.11.0-bookworm-slim@sha256:f035ba7ffee18f67200e2eb8018e0f13c954ec16338f264940f701997e3c12da
 COPY --from=build /out/issuer.mjs /app/issuer.mjs
+COPY --from=build /out/issuer-merchant-auth.json /app/issuer-merchant-auth.json
+COPY infra/gcp/issuer-start.sh /app/issuer-start.sh
 
-# Fixed in the image, so the operator cannot change them: no allow_env_override label.
+# Allow only Secret Manager references as deployment metadata. Merchant public keys are
+# baked into the image and therefore covered by its attested digest.
 ENV NODE_ENV=production \
     TZ=UTC \
     ATTESTATION=confidential-space \
@@ -34,7 +39,8 @@ EXPOSE 443/tcp
 
 # Launch policy. Logs leave the VM only on the debug image (this is also the default).
 LABEL "tee.launch_policy.log_redirect"="debugonly"
+LABEL "tee.launch_policy.allow_env_override"="ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION,GCP_WIF_PROVIDER"
 
 # Root inside the container: binds 443 and reads the launcher socket
 # (/run/container_launcher/teeserver.sock).
-CMD ["node", "/app/issuer.mjs"]
+CMD ["sh", "/app/issuer-start.sh"]

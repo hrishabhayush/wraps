@@ -37,9 +37,11 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 |---|---|
 | `issuer.Dockerfile` | Builds the issuer. Node 22 pinned by digest, `npm ci`, esbuild bundle, `EXPOSE 443`. |
 | `relay.Dockerfile` | Builds the relay with pinned Node, lockfile installs, and an esbuild bundle. |
+| `issuer-start.sh` | Exports the baked public merchant-key map at startup; the map is bound by the image digest. |
 | `relay-entrypoint.ts` | Verifies the issuer's live attestation, pins its TLS SPKI, creates the in-memory relay TLS identity, and starts the proxy and receipt listeners. |
 | `cloudbuild.yaml` | Cloud Build steps. `build.sh` runs it. |
 | `build.sh <role>` | Builds with Cloud Build, pushes to Artifact Registry, prints the digest, writes it to `expected.json`. |
+| `setup-merchant-auth-wif.sh` | Creates a digest-scoped WIF provider and Secret Manager access for the issuer and relay image digests. |
 | `deploy.sh <role> [--debug]` | Creates the Confidential Space VM (deletes an existing one with the same name first). |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
@@ -69,28 +71,54 @@ Prerequisites: `gcloud` is logged in. The project `wraps-hack` already has the A
 `us-central1-docker.pkg.dev/wraps-hack/wraps`, the service account
 `wraps-workload@wraps-hack.iam.gserviceaccount.com` (`confidentialcomputing.workloadUser`,
 `logging.logWriter`, `artifactregistry.reader`) and the firewall rule `wraps-allow-443`
-(tcp:443 and tcp:8080 to tag `wraps`).
+(tcp:443 and tcp:8080 to tag `wraps`). The merchant-auth setup enables the IAM, Resource Manager,
+IAM Credentials, Security Token Service, and Secret Manager APIs if they are not already enabled;
+the operator needs `serviceusage.services.enable` for that step.
+
+For SEC-04, build the issuer with the app's public merchant-key map embedded in the image. The map
+is public, but it is fixed to the issuer digest so TEE metadata cannot replace it. Then build the
+relay and create a WIF provider and relay credential restricted to those exact image digests:
+
+The setup script creates `wraps-relay-settle-key` only when it has no versions. It requires exactly
+one enabled version per secret and refuses secrets with prior or multiple versions; rotate by
+creating a new secret ID. Each digest principal's Secret Accessor binding is conditioned on the
+exact pinned secret-version resource name, so later versions do not inherit access. The script
+refuses to continue if an existing binding for either digest principal is not already scoped to
+that exact version. It creates the WIF provider only when absent. If the provider already exists,
+the script continues only when its issuer, audience, attribute mapping, and condition match the
+expected policy; it never updates an existing provider. The condition pins the Confidential Space
+VM project number, image digests, production integrity claims, and the exact
+`wraps-workload@${GCP_PROJECT}` service account. The generated secret value is sent directly to
+Secret Manager and is never printed. The local state file contains only provider and secret
+version resource names.
 
 ```sh
-# 1. Build and push. Writes the digest to infra/gcp/expected.json.
-infra/gcp/build.sh issuer
+# 1. Build and push the issuer and relay. The issuer command requires the app public-key map.
+ISSUER_MERCHANT_AUTH_KEYS='{"node:usc1":"<base64url-Ed25519-SPKI-public-key>"}' infra/gcp/build.sh issuer
+infra/gcp/build.sh relay
+infra/gcp/setup-merchant-auth-wif.sh
+source infra/gcp/.state/merchant-auth.env
 
 # 2. Try it on the debug image first. Logs go to the serial console and Cloud Logging.
 infra/gcp/deploy.sh issuer --debug
 infra/gcp/status.sh issuer --debug --logs
-npm run verify:gcp -- https://<debug IP>      # must print REFUSED (DEBUG_MODE)
+npm run verify:gcp -- 'https://<debug-ip>'    # must print REFUSED (DEBUG_MODE)
 
-# 3. Production image.
+# 3. Production image. Deploy issuer first, then the relay.
 infra/gcp/deploy.sh issuer
 infra/gcp/status.sh issuer
 npm run verify:gcp                            # reads infra/gcp/.state/issuer.ip; must print VERIFIED
+ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
+ISSUER_URL='https://<issuer-ip>' \
+RELAY_HOSTNAME='<relay-hostname>' \
+infra/gcp/deploy.sh relay
 
 # 4. Merchant and agent on this laptop, against the live issuer.
-npm run demo:gcp                              # or ISSUER_URL=https://<IP> npm run demo:gcp
+npm run demo:gcp                              # or ISSUER_URL='https://<issuer-ip>' npm run demo:gcp
 
 # Or run them as separate processes:
-ATTESTATION=confidential-space ISSUER_URL=https://<IP> npm run merchant
-ATTESTATION=confidential-space ISSUER_URL=https://<IP> npm run agent
+ATTESTATION=confidential-space ISSUER_URL='https://<issuer-ip>' npm run merchant
+ATTESTATION=confidential-space ISSUER_URL='https://<issuer-ip>' npm run agent
 
 # 5. Stop the VMs when you are done. Stopped VMs keep their disks and cost almost nothing.
 infra/gcp/stop.sh
@@ -100,7 +128,7 @@ To deploy the relay after building it, use the issuer's current IP and the reser
 
 ```sh
 ATTESTATION_AUDIENCE='https://wraps.invalid/issuer' \
-ISSUER_URL=https://<issuer-ip> \
+ISSUER_URL='https://<issuer-ip>' \
 RELAY_HOSTNAME=34.68.188.111 \
 RELAY_ADDRESS=34.68.188.111 \
 infra/gcp/deploy.sh relay

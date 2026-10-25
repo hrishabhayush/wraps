@@ -50,11 +50,16 @@ case " $* " in
     node -e 'console.log(JSON.stringify({direction:"INGRESS",priority:300,network:"https://www.googleapis.com/compute/v1/projects/wraps-hack/global/networks/default",sourceRanges:process.env.WG_CANARY_SOURCE_RANGES.split(","),targetTags:["relay-canary"],allowed:[{IPProtocol:"udp",ports:["51820"]}],denied:[]}))'
     ;;
   *" firewall-rules create wraps-allow-wireguard-canary "*) touch "${'${MOCK_ALLOW_CREATED}'}" ;;
-  *" firewall-rules describe wraps-relay-canary-deny "*)
-    if [ ! -f "${'${MOCK_DENY_CREATED}'}" ]; then exit 1; fi
-    node -e 'console.log(JSON.stringify({direction:"INGRESS",priority:500,network:"https://www.googleapis.com/compute/v1/projects/wraps-hack/global/networks/default",sourceRanges:["0.0.0.0/0","::/0"],targetTags:["relay-canary"],denied:[{IPProtocol:"all"}],allowed:[]}))'
+  *" firewall-rules describe wraps-relay-canary-deny-ipv6 "*)
+    if [ ! -f "${'${MOCK_DENY_IPV6_CREATED}'}" ]; then exit 1; fi
+    node -e 'console.log(JSON.stringify({direction:"INGRESS",priority:500,network:"https://www.googleapis.com/compute/v1/projects/wraps-hack/global/networks/default",sourceRanges:["::/0"],targetTags:["relay-canary"],denied:[{IPProtocol:"all"}],allowed:[]}))'
     ;;
-  *" firewall-rules create wraps-relay-canary-deny "*) touch "${'${MOCK_DENY_CREATED}'}" ;;
+  *" firewall-rules create wraps-relay-canary-deny-ipv6 "*) touch "${'${MOCK_DENY_IPV6_CREATED}'}" ;;
+  *" firewall-rules describe wraps-relay-canary-deny "*)
+    if [ ! -f "${'${MOCK_DENY_IPV4_CREATED}'}" ]; then exit 1; fi
+    node -e 'console.log(JSON.stringify({direction:"INGRESS",priority:500,network:"https://www.googleapis.com/compute/v1/projects/wraps-hack/global/networks/default",sourceRanges:["0.0.0.0/0"],targetTags:["relay-canary"],denied:[{IPProtocol:"all"}],allowed:[]}))'
+    ;;
+  *" firewall-rules create wraps-relay-canary-deny "*) touch "${'${MOCK_DENY_IPV4_CREATED}'}" ;;
   *" compute instances create "*) touch "${'${MOCK_VM_CREATED}'}" ;;
   *" firewall-rules "*) printf 'unexpected firewall access: %s\\n' "$*" >&2; exit 9 ;;
   *) : ;;
@@ -69,7 +74,8 @@ esac
     MOCK_LOG: logPath,
     MOCK_VM_CREATED: path.join(tempRoot, 'vm-created'),
     MOCK_ALLOW_CREATED: path.join(tempRoot, 'allow-created'),
-    MOCK_DENY_CREATED: path.join(tempRoot, 'deny-created'),
+    MOCK_DENY_IPV4_CREATED: path.join(tempRoot, 'deny-ipv4-created'),
+    MOCK_DENY_IPV6_CREATED: path.join(tempRoot, 'deny-ipv6-created'),
     GCP_PROJECT: 'wraps-hack',
     WG_ENABLED: 'true',
     WG_ENDPOINT: '203.0.113.10',
@@ -98,6 +104,13 @@ esac
   assert.notEqual(publicRange.status, 0, 'canary must reject a public /0 range');
   assert.equal(publicRange.log, '', 'invalid CIDRs must fail before any gcloud call');
 
+  const mixedRanges = run(['--canary', '--dry-run'], {
+    WG_CANARY_SOURCE_RANGES: '198.51.100.24/32,2001:db8::24/128',
+  });
+  assert.notEqual(mixedRanges.status, 0, 'canary must reject mixed IP families in one allow rule');
+  assert.match(mixedRanges.stderr, /one IP family/);
+  assert.equal(mixedRanges.log, '', 'mixed families must fail before any gcloud call');
+
   const implicitCanary = run(['--instance-name=wraps-relay-canary']);
   assert.notEqual(implicitCanary.status, 0, 'custom WireGuard relay names must require --canary');
   assert.match(implicitCanary.stderr, /require --canary/);
@@ -106,23 +119,34 @@ esac
   const dryRun = run(['--canary', '--dry-run']);
   assert.equal(dryRun.status, 0, dryRun.stderr);
   assert.match(dryRun.stdout, /wraps-allow-wireguard-canary/);
-  assert.match(dryRun.stdout, /wraps-relay-canary-deny/);
+  assert.match(dryRun.stdout, /wraps-relay-canary-deny[^\n]*--source-ranges=0\.0\.0\.0\/0/);
+  assert.match(dryRun.stdout, /wraps-relay-canary-deny-ipv6[^\n]*--source-ranges=::\/0/);
   assert.match(dryRun.stdout, /--source-ranges=198\.51\.100\.24\/32/);
   assert.match(dryRun.stdout, /--target-tags=relay-canary/);
   assert.doesNotMatch(dryRun.stdout, /wraps-allow-wireguard(?:\s|$)/);
   assert.doesNotMatch(dryRun.log, /firewall-rules|compute instances create/);
 
+  const ipv6DryRun = run(['--canary', '--dry-run'], {
+    WG_CANARY_SOURCE_RANGES: '2001:db8::24/128,2001:db8::25/128',
+  });
+  assert.equal(ipv6DryRun.status, 0, ipv6DryRun.stderr);
+  assert.match(ipv6DryRun.stdout, /--source-ranges=2001:db8::24\/128\\,2001:db8::25\/128/);
+  assert.doesNotMatch(ipv6DryRun.log, /firewall-rules|compute instances create/);
+
   const fakeRun = run(['--canary']);
   assert.equal(fakeRun.status, 0, fakeRun.stderr);
   assert.match(fakeRun.log, /firewall-rules create wraps-allow-wireguard-canary/);
   assert.match(fakeRun.log, /firewall-rules create wraps-relay-canary-deny/);
+  assert.match(fakeRun.log, /firewall-rules create wraps-relay-canary-deny-ipv6/);
+  assert.match(fakeRun.log, /--source-ranges=0\.0\.0\.0\/0/);
+  assert.match(fakeRun.log, /--source-ranges=::\/0/);
   assert.match(fakeRun.log, /--source-ranges=198\.51\.100\.24\/32/);
   assert.match(fakeRun.log, /--target-tags=relay-canary/);
   assert.match(fakeRun.log, /compute instances create wraps-relay-canary/);
   assert.doesNotMatch(fakeRun.log, /wraps-allow-wireguard(?:\s|$)/);
   assert.doesNotMatch(fakeRun.log, /firewall-rules update/);
 
-  process.stdout.write('Canary firewall checks passed: source validation, dry-run isolation, scoped allow/deny, and no production-rule access.\n');
+  process.stdout.write('Canary firewall checks passed: single-family source validation, separate IPv4/IPv6 denies, dry-run isolation, and no production-rule access.\n');
 } finally {
   fs.rmSync(tempRoot, { recursive: true, force: true });
 }

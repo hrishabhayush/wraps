@@ -101,6 +101,7 @@ const { isIP } = require('node:net');
 const raw = process.env.WG_CANARY_SOURCE_RANGES;
 const ranges = raw.split(',').map((value) => value.trim());
 if (ranges.some((range) => !range)) throw new Error('empty source CIDR');
+const families = new Set();
 for (const range of ranges) {
   const slash = range.lastIndexOf('/');
   const address = range.slice(0, slash);
@@ -111,10 +112,12 @@ for (const range of ranges) {
       prefix < 1 || prefix > (version === 4 ? 32 : 128)) {
     throw new Error('each WG_CANARY_SOURCE_RANGES entry must be a non-default IPv4 or IPv6 CIDR');
   }
+  families.add(version);
 }
+if (families.size !== 1) throw new Error('WG_CANARY_SOURCE_RANGES cannot mix IPv4 and IPv6 CIDRs; use one family per canary rule');
 process.stdout.write([...new Set(ranges)].sort().join(','));
 NODE
-      )" || die "WG_CANARY_SOURCE_RANGES must contain valid non-default CIDRs"
+      )" || die "WG_CANARY_SOURCE_RANGES must contain valid non-default CIDRs from one IP family"
       CANARY_WG=1
     fi
     for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
@@ -205,7 +208,11 @@ if [ "${DRY_RUN}" = 1 ]; then
       printf '\nDRY RUN (canary ingress deny):'
       printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-relay-canary-deny \
         --direction=INGRESS --priority=500 --network=default --action=DENY --rules=all \
-        --source-ranges=0.0.0.0/0,::/0 --target-tags=relay-canary
+        --source-ranges=0.0.0.0/0 --target-tags=relay-canary
+      printf '\nDRY RUN (canary IPv6 ingress deny):'
+      printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-relay-canary-deny-ipv6 \
+        --direction=INGRESS --priority=500 --network=default --action=DENY --rules=all \
+        --source-ranges=::/0 --target-tags=relay-canary
       printf '\n'
     else
       printf 'DRY RUN (if firewall rule exists):'
@@ -223,7 +230,6 @@ fi
 
 if [ "${CANARY_WG}" = 1 ]; then
   WG_CANARY_ALLOW_RULE=wraps-allow-wireguard-canary
-  WG_CANARY_DENY_RULE=wraps-relay-canary-deny
   if ! gc compute firewall-rules describe "${WG_CANARY_ALLOW_RULE}" >/dev/null 2>&1; then
     gc compute firewall-rules create "${WG_CANARY_ALLOW_RULE}" --direction=INGRESS --priority=300 \
       --network=default --allow=udp:51820 --source-ranges="${WG_CANARY_SOURCE_RANGES}" --target-tags=relay-canary
@@ -243,22 +249,28 @@ if (rule.direction !== 'INGRESS' || rule.disabled || rule.priority !== 300 ||
     allowed.length !== 1 || allowed[0].IPProtocol !== 'udp' ||
     JSON.stringify(allowed[0].ports ?? []) !== JSON.stringify(['51820']) || (rule.denied ?? []).length) process.exit(1);
 NODE
-  if ! gc compute firewall-rules describe "${WG_CANARY_DENY_RULE}" >/dev/null 2>&1; then
-    gc compute firewall-rules create "${WG_CANARY_DENY_RULE}" --direction=INGRESS --priority=500 \
-      --network=default --action=DENY --rules=all --source-ranges=0.0.0.0/0,::/0 --target-tags=relay-canary
-  fi
-  WG_CANARY_DENY_JSON="$(gc compute firewall-rules describe "${WG_CANARY_DENY_RULE}" --format=json)"
-  node - "${WG_CANARY_DENY_JSON}" <<'NODE' \
-    || die "${WG_CANARY_DENY_RULE} must deny all IPv4 and IPv6 ingress to relay-canary at priority 500"
+  WG_CANARY_DENY_RULES=(wraps-relay-canary-deny wraps-relay-canary-deny-ipv6)
+  WG_CANARY_DENY_CIDRS=(0.0.0.0/0 ::/0)
+  for index in 0 1; do
+    WG_CANARY_DENY_RULE="${WG_CANARY_DENY_RULES[${index}]}"
+    WG_CANARY_DENY_CIDR="${WG_CANARY_DENY_CIDRS[${index}]}"
+    if ! gc compute firewall-rules describe "${WG_CANARY_DENY_RULE}" >/dev/null 2>&1; then
+      gc compute firewall-rules create "${WG_CANARY_DENY_RULE}" --direction=INGRESS --priority=500 \
+        --network=default --action=DENY --rules=all --source-ranges="${WG_CANARY_DENY_CIDR}" --target-tags=relay-canary
+    fi
+    WG_CANARY_DENY_JSON="$(gc compute firewall-rules describe "${WG_CANARY_DENY_RULE}" --format=json)"
+    WG_CANARY_DENY_CIDR="${WG_CANARY_DENY_CIDR}" node - "${WG_CANARY_DENY_JSON}" <<'NODE' \
+      || die "${WG_CANARY_DENY_RULE} must deny all ingress from ${WG_CANARY_DENY_CIDR} to relay-canary at priority 500"
 const rule = JSON.parse(process.argv[2]);
 const denied = rule.denied ?? [];
 const network = String(rule.network ?? '');
 if (rule.direction !== 'INGRESS' || rule.disabled || rule.priority !== 500 ||
-    JSON.stringify([...(rule.sourceRanges ?? [])].sort()) !== JSON.stringify(['0.0.0.0/0', '::/0']) ||
+    JSON.stringify([...(rule.sourceRanges ?? [])].sort()) !== JSON.stringify([process.env.WG_CANARY_DENY_CIDR]) ||
     JSON.stringify([...(rule.targetTags ?? [])].sort()) !== JSON.stringify(['relay-canary']) ||
     !(network === 'default' || network.endsWith('/networks/default')) ||
     denied.length !== 1 || denied[0].IPProtocol !== 'all' || (rule.allowed ?? []).length) process.exit(1);
 NODE
+  done
 fi
 
 if [ "${EXISTING}" = 1 ]; then

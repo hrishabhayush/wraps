@@ -109,25 +109,39 @@ gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-al
   --allow=tcp:443,tcp:8080 --source-ranges="${ISSUER_SOURCE_RANGES}" \
   --target-tags=issuer-canary
 gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-deny \
-  --network=default --direction=INGRESS --priority=500 --deny=all \
-  --source-ranges=0.0.0.0/0,::/0 --target-tags=issuer-canary
+  --network=default --direction=INGRESS --priority=500 --action=DENY --rules=all \
+  --source-ranges=0.0.0.0/0 --target-tags=issuer-canary
+gcloud --project=wraps-hack compute firewall-rules create wraps-issuer-canary-deny-ipv6 \
+  --network=default --direction=INGRESS --priority=500 --action=DENY --rules=all \
+  --source-ranges=::/0 --target-tags=issuer-canary
 
 gcloud --project=wraps-hack compute firewall-rules create wraps-relay-canary-allow \
   --network=default --direction=INGRESS --priority=400 \
   --allow=tcp:443,tcp:8080 --source-ranges="${RELAY_CANARY_SOURCE_RANGES}" \
   --target-tags=relay-canary
 gcloud --project=wraps-hack compute firewall-rules create wraps-relay-canary-deny \
-  --network=default --direction=INGRESS --priority=500 --deny=all \
-  --source-ranges=0.0.0.0/0,::/0 --target-tags=relay-canary
+  --network=default --direction=INGRESS --priority=500 --action=DENY --rules=all \
+  --source-ranges=0.0.0.0/0 --target-tags=relay-canary
+gcloud --project=wraps-hack compute firewall-rules create wraps-relay-canary-deny-ipv6 \
+  --network=default --direction=INGRESS --priority=500 --action=DENY --rules=all \
+  --source-ranges=::/0 --target-tags=relay-canary
 ```
+
+GCP firewall source ranges in one rule must use a single IP family. For dual-stack allowed
+clients, create separate IPv4 and IPv6 allow rules with distinct names and the same target tag;
+keep the IPv4 and IPv6 deny rules separate as shown above.
 
 When deploying a WireGuard relay canary, also set `WG_CANARY_SOURCE_RANGES` to explicit client
 CIDRs; `/0` ranges are rejected. `deploy.sh relay --canary` creates or verifies
 `wraps-allow-wireguard-canary` (UDP 51820, priority 300, target tag `relay-canary`) and the
-relay-canary deny rule before creating the VM. It never creates or updates the production
+IPv4 and IPv6 relay-canary deny rules before creating the VM. `WG_CANARY_SOURCE_RANGES` may
+contain multiple non-default CIDRs from one family; mixed IPv4/IPv6 lists are rejected before
+any GCP call. It never creates or updates the production
 `wraps-allow-wireguard` rule. The canary UDP allow admits only the configured client ranges; the
-priority-500 deny blocks other ingress, including the general `wraps` allow rule. Delete the
-temporary canary rules after removing the canary VM.
+priority-500 IPv4 and IPv6 denies block other ingress, including the general `wraps` allow rule.
+For dual-stack WireGuard clients, add and verify a separate IPv6 UDP allow rule for `relay-canary`;
+the current deploy command intentionally rejects mixed-family source lists. Delete the temporary
+canary rules after removing the canary VM.
 
 ```sh
 WG_ENABLED=true \

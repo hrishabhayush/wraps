@@ -58,16 +58,31 @@ the issuer accepts it only on a loopback, non-Confidential-Space listener.
 
 The relay HTTP client sends `Authorization: Bearer <ISSUER_RELAY_SETTLE_KEY>` and uses the fixed
 `ISSUER_RELAY_MERCHANT_ID` (default `relay`) on settle and settle-status requests when configured.
-The relay image must be rebuilt and redeployed with the matching key before the live issuer turns
-on authentication enforcement. The desktop app still settles as `node:<id>` without a credential;
-register its public key and update its caller before setting either auth environment variable in
-production.
+For Confidential Space, put the credential in Secret Manager and configure only its version name
+and the Workload Identity Pool provider resource on the VM. The issuer reads
+`ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION` through `readConfidentialSecret()` using a Google
+Confidential Space token with the `https://sts.googleapis.com` audience, exchanges it through
+Google STS, and accesses Secret Manager as the federated workload identity. Do not pass the secret
+value in `tee-env-*` metadata. The WIF provider must restrict access to the approved production
+image digests, and `roles/secretmanager.secretAccessor` must be granted on this secret only to the
+corresponding digest principals. Enable the Secret Manager API and provision those IAM bindings
+before deployment. `GCP_WIF_PROVIDER` is the provider resource name, for example
+`projects/123456789012/locations/global/workloadIdentityPools/wraps-prod/providers/confidential-space`.
 
-Enforcement is deliberately opt-in for compatibility. If either `ISSUER_MERCHANT_AUTH_KEYS` or
-`ISSUER_RELAY_SETTLE_KEY` is configured, merchant routes enforce credentials. If neither is set,
-the issuer reports `merchantAuth: "legacy-open"` on `/health` and `/attestation`, logs one loud
-startup warning, and accepts unsigned legacy settles. SDK consumers retain the mode and the live
-preflight displays it. This mode field is runtime-reported and not covered by the key attestation.
+The Confidential Space issuer refuses to start unless at least one merchant credential is
+configured. It also refuses an inline `ISSUER_RELAY_SETTLE_KEY`; use a Secret Manager version
+reference with a numeric version (do not use the mutable `latest` alias). The relay workload must
+read the same version through WIF and pass the value as its `issuerSettleKey` option before
+enabling enforcement. The desktop app still settles as `node:<id>` without a credential; register
+its public key and update its caller before enabling strict authentication for the live app.
+
+For local and mock-attestation runs, enforcement remains opt-in for compatibility. If either
+`ISSUER_MERCHANT_AUTH_KEYS` or `ISSUER_RELAY_SETTLE_KEY` is configured, merchant routes enforce
+credentials. With neither set, the issuer reports `merchantAuth: "legacy-open"` on `/health` and
+`/attestation`, logs one loud startup warning, and accepts unsigned legacy settles. In
+Confidential Space, the issuer fails startup unless at least one valid merchant credential is
+loaded. SDK consumers retain the mode and the live preflight displays it. This mode field is
+runtime-reported and not covered by the key attestation.
 
 Issuer state uses `MemoryIssuerStateStore` unless a store is passed to `startIssuer`. For local or
 non-enclave runs, set `ISSUER_STATE_FILE=./data/issuer-state.jsonl` to use an append-only,
@@ -109,7 +124,9 @@ For a secret-free testnet setup template, start with [`funder.env.example`](./fu
 | `PAYOUT_RECEIPT_TIMEOUT_MS` | `60000` | How long a batch waits for receipts before leaving a tx in flight. |
 | `ISSUER_ADMIN_TOKEN` | none | Bearer token for the payout admin routes. Without it, they answer loopback callers only. |
 | `ISSUER_MERCHANT_AUTH_KEYS` | `{}` | JSON map of merchant ID to base64url Ed25519 SPKI public key. Required for merchant-specific routes in strict mode. |
-| `ISSUER_RELAY_SETTLE_KEY` | none | Temporary bearer credential for the fixed relay merchant ID; the relay must attach it before strict mode works for relay settlements. |
+| `ISSUER_RELAY_SETTLE_KEY` | none | Temporary bearer credential for the fixed relay merchant ID; local and mock runs only. Confidential Space loads it from `ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION`. |
+| `ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION` | none | Secret Manager version resource for Confidential Space deployments; the CLI fetches it with attestation-bound Workload Identity Federation. |
+| `GCP_WIF_PROVIDER` | none | Global Workload Identity Pool provider resource used to exchange the Confidential Space token for direct Secret Manager access. |
 | `ISSUER_RELAY_MERCHANT_ID` | `relay` | Merchant ID allowed to use `ISSUER_RELAY_SETTLE_KEY`. |
 | `ISSUER_DEV_MERCHANT_AUTH` | `0` | Local-only merchant auth bypass. Requires a loopback host and non-Confidential-Space attestation. |
 | `ISSUER_STATE_FILE` | none | Optional append-only file store for local/non-enclave runs. Omitted in the current Confidential Space image; default is memory. |

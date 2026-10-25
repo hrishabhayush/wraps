@@ -27,11 +27,19 @@ prior `/verify` result to spend a token. Issuer errors and ambiguous timeouts
 close the tunnel; settlement is never retried automatically. A valid tunnel is
 refused with 503 until issuer metering is configured.
 
-When the issuer has merchant authentication enabled, configure the relay process with
-`ISSUER_RELAY_SETTLE_KEY` matching the issuer's fixed relay credential. The relay sends it as
-`Authorization: Bearer <key>` on `/settle` and `/settle/status` and uses
-`ISSUER_RELAY_MERCHANT_ID` as its fixed merchant ID (default `relay`). Rebuild and redeploy the
-relay image with these variables before enabling issuer authentication in the live deployment.
+When the issuer has merchant authentication enabled, configure the relay process with the matching
+fixed relay credential. The relay sends it as `Authorization: Bearer <key>` on `/settle` and
+`/settle/status` and uses `ISSUER_RELAY_MERCHANT_ID` as its fixed merchant ID (default `relay`).
+Local and mock-attestation runs can set `ISSUER_RELAY_SETTLE_KEY` directly.
+
+For Confidential Space, the relay entrypoint must obtain the key from Secret Manager using the
+attested WIF helper `readConfidentialSecret(secretVersion, workloadIdentityProvider)`, then pass
+the returned value as `issuerSettleKey` to `startConfidentialRelay()` or
+`startConfidentialWireGuardRelay()`. Pass only the non-secret Secret Manager version resource and
+WIF provider resource through `tee-env-*`; never pass the key itself as metadata. Grant the relay
+image digest access to that single secret version through its WIF principal. The issuer separately
+loads the same secret version so the bearer credential is never embedded in either image or VM
+metadata.
 
 The proxy binds to loopback by default and rejects destinations that resolve to
 private, loopback, link-local, or reserved IP ranges. If it is exposed on a

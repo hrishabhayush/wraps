@@ -27,6 +27,24 @@ export function getMerchantAuthMode(config?: MerchantAuthConfig): MerchantAuthMo
   return config?.relay || Object.keys(config?.publicKeys ?? {}).length > 0 ? 'enforced' : 'legacy-open';
 }
 
+/** Production TEE issuers must start with at least one usable merchant credential. */
+export function assertConfidentialSpaceMerchantAuth(config: MerchantAuthConfig): void {
+  const publicKeys = Object.values(config.publicKeys ?? {});
+  for (const encodedKey of publicKeys) {
+    try {
+      const keyBytes = typeof encodedKey === 'string' ? Buffer.from(encodedKey, 'base64url') : Buffer.from(encodedKey);
+      if (typeof encodedKey === 'string' && keyBytes.toString('base64url') !== encodedKey) throw new Error('non-canonical encoding');
+      if (createPublicKey({ key: keyBytes, format: 'der', type: 'spki' }).asymmetricKeyType !== 'ed25519') throw new Error('wrong key type');
+    } catch {
+      throw new Error('ISSUER_MERCHANT_AUTH_KEYS must contain valid base64url Ed25519 SPKI public keys');
+    }
+  }
+  const hasCredentials = Boolean(config.relay?.key) || publicKeys.length > 0;
+  if (getMerchantAuthMode(config) !== 'enforced' || !hasCredentials) {
+    throw new Error('Confidential Space issuer requires ISSUER_MERCHANT_AUTH_KEYS or a relay credential');
+  }
+}
+
 export interface MerchantAuthHeaders {
   [key: string]: string;
   [MERCHANT_AUTH_HEADERS.signature]: string;

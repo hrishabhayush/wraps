@@ -1,7 +1,8 @@
 import { payoutConfigFromEnv } from './payout-config';
 import { XrplEvmTransferRail } from './rail-xrpl-evm';
 import { FileIssuerStateStore } from './state-store';
-import { merchantAuthConfigFromEnv } from './merchant-auth';
+import { assertConfidentialSpaceMerchantAuth, merchantAuthConfigFromEnv } from './merchant-auth';
+import { readConfidentialSecret } from './confidential-secret';
 import { AttestationMode, startIssuer } from './start';
 
 const attestation = (process.env.ATTESTATION ?? 'mock') as AttestationMode;
@@ -24,6 +25,22 @@ const payout = payoutConfigFromEnv(process.env);
 // The key now lives only inside the rail. Drop it from the environment so nothing else can read it.
 delete process.env.ISSUER_PAYOUT_PRIVATE_KEY;
 
+const merchantAuthEnv = { ...process.env };
+const relaySecretVersion = process.env.ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION;
+if (relaySecretVersion) {
+  if (attestation !== 'confidential-space') {
+    throw new Error('ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION requires ATTESTATION=confidential-space');
+  }
+  if (process.env.ISSUER_RELAY_SETTLE_KEY !== undefined) {
+    throw new Error('Set the relay credential in Secret Manager, not ISSUER_RELAY_SETTLE_KEY');
+  }
+  merchantAuthEnv.ISSUER_RELAY_SETTLE_KEY = await readConfidentialSecret(relaySecretVersion, process.env.GCP_WIF_PROVIDER ?? '');
+} else if (attestation === 'confidential-space' && process.env.ISSUER_RELAY_SETTLE_KEY !== undefined) {
+  throw new Error('Confidential Space must load ISSUER_RELAY_SETTLE_KEY from Secret Manager');
+}
+const merchantAuth = merchantAuthConfigFromEnv(merchantAuthEnv, host, attestation);
+if (attestation === 'confidential-space') assertConfidentialSpaceMerchantAuth(merchantAuth);
+
 const issuer = await startIssuer({
   host,
   port: Number(process.env.ISSUER_PORT ?? 4001),
@@ -37,7 +54,7 @@ const issuer = await startIssuer({
   payoutRail: payout.rail,
   payoutCaps: payout.caps,
   adminToken: process.env.ISSUER_ADMIN_TOKEN || undefined,
-  merchantAuth: merchantAuthConfigFromEnv(process.env, host, attestation),
+  merchantAuth,
   // The current Confidential Space image does not configure this variable and stays in-memory.
   // Set it only for local/non-enclave runs whose filesystem survives process restarts.
   stateStore: process.env.ISSUER_STATE_FILE ? new FileIssuerStateStore(process.env.ISSUER_STATE_FILE) : undefined,

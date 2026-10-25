@@ -33,6 +33,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ### Relay networking
 - [~] **INF-27** Configure WireGuard in the Confidential Space relay runtime (PR #33 merged; depends on RLY-04 in #32 and #38). The new image reaches ready state and `/attestation` returns 200; `/wireguard-attestation` returns 404 (tracked in RLY-05), and authorized-peer traffic is unvalidated.
 - [~] **INF-28** Pin the relay image and deploy WireGuard with corrected Confidential Space metadata (PR #40 merged; depends on merged RLY-04 #38). The image reaches ready state and `/attestation` returns 200; `/wireguard-attestation` returns 404 (tracked in RLY-05), and authorized-peer traffic is unvalidated.
+- [~] **INF-29** Run a separately isolated standard GCE WireGuard/NAT gateway for test traffic while keeping the issuer and HTTPS proxy in Confidential Space; no wallet or issuer secrets on the gateway.
 
 ### Keys and secrets
 - [ ] **INF-15** Wallets (three different ones): agent wallet, funding wallet, issuer payout address. Private keys in a local `.env` that is never committed, or Google Secret Manager.

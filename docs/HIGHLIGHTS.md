@@ -96,7 +96,7 @@ Cited: Dingledine and Mathewson, "Anonymity Loves Company" (2006): anonymity gro
 
 ---
 
-## 7. Faster than plain x402
+## 7. Off-chain merchant settlement
 
 **Claim:** "Merchant payments settle off-chain, so the merchant response does not wait for a ledger. The end-to-end latency comparison is pending the benchmark."
 

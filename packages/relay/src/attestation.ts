@@ -1,6 +1,7 @@
 import { X509Certificate } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { hashPublicKeys, type AttestationProvider } from '@wraps/attestation';
+import { compareWireGuardPublicKeys } from './wireguard.js';
 
 export interface RelayAttestationResponse {
   format: string;
@@ -104,7 +105,7 @@ export async function createWireGuardAttestationResponse(
 ): Promise<WireGuardAttestationResponse> {
   if (!options.wireGuard) throw new TypeError('WireGuard is not configured');
   if (nonce.byteLength !== 32) throw new TypeError('attestation nonce must be 32 bytes');
-  if (!/^[A-Za-z0-9+/]{42}=$/.test(options.wireGuard.publicKey)) throw new TypeError('invalid WireGuard public key');
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(options.wireGuard.publicKey)) throw new TypeError('invalid WireGuard public key');
   if (Buffer.from(options.wireGuard.publicKey, 'base64').byteLength !== 32 || Buffer.from(options.wireGuard.publicKey, 'base64').toString('base64') !== options.wireGuard.publicKey) throw new TypeError('invalid WireGuard public key');
   if (!/^[0-9a-f]{64}$/.test(options.wireGuard.policyHash)) throw new TypeError('invalid WireGuard policy hash');
 
@@ -134,7 +135,7 @@ export async function createWireGuardAttestationResponse(
       listenPort: options.wireGuard.listenPort,
       interfaceAddress: options.wireGuard.interfaceAddress,
       egressInterface: options.wireGuard.egressInterface,
-      peers: [...options.wireGuard.peers].sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
+      peers: [...options.wireGuard.peers].sort((a, b) => compareWireGuardPublicKeys(a.publicKey, b.publicKey)),
       clientAllowedIPs: options.wireGuard.clientAllowedIPs,
       ipv6Forwarding: false,
       bytesPerToken: options.wireGuard.bytesPerToken,

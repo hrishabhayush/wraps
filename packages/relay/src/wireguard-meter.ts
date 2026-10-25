@@ -2,7 +2,6 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TLSSocket } from 'node:tls';
 import { parseAuthorization, serializeToken } from '@wraps/tokens';
 import type { RelayIssuer } from './meter.js';
-import { MAX_TOKENS_PER_TUNNEL } from './meter.js';
 import { WIREGUARD_BYTES_PER_TOKEN, type WireGuardQuotaController } from './wireguard-quota.js';
 import type { WireGuardPeer } from './wireguard.js';
 
@@ -10,16 +9,17 @@ interface MeteredPeer {
   /** Every registered block has been settled before it becomes available. */
   paidBlocks: number;
   usedBlocks: number;
+  quotaExhausted: boolean;
 }
 
 /** Blind-token admission and exact shared nftables byte quotas for configured peers. */
 export class WireGuardTokenMeter {
   private readonly peers = new Map<string, WireGuardPeer>();
   private readonly sessions = new Map<string, MeteredPeer>();
-  private readonly registering = new Set<string>();
+  private readonly registrationLimits = new Map<string, { startedAt: number; count: number }>();
   private polling?: NodeJS.Timeout;
   private pollingNow = false;
-  private readonly serialTasks = new Map<string, Promise<void>>();
+  private operations: Promise<void> = Promise.resolve();
 
   constructor(
     peers: WireGuardPeer[],
@@ -36,33 +36,29 @@ export class WireGuardTokenMeter {
   async register(publicKey: string, tokens: string[]): Promise<void> {
     const peer = this.peers.get(publicKey);
     if (!peer) throw new Error('unknown peer');
-    if (this.registering.has(publicKey)) throw new Error('peer registration already in progress');
-    if (tokens.length < 1 || tokens.length > MAX_TOKENS_PER_TUNNEL) throw new Error('invalid token batch');
-    this.registering.add(publicKey);
-    try {
-      if (new Set(tokens).size !== tokens.length) throw new Error('duplicate or excessive token batch');
+    if (tokens.length !== 1) throw new Error('exactly one token is required per registration');
+    return this.serialize(async () => {
       if (!(await this.issuer.verify(tokens))) throw new Error('invalid tokens');
       const existing = this.sessions.get(publicKey);
-      const paidBlocks = existing?.paidBlocks ?? 0;
-      if (paidBlocks + tokens.length > 1000) {
-        throw new Error('duplicate or excessive token batch');
-      }
       if (!existing) {
         // Settle the first prepaid block before adding any forwarding allowance.
         await this.issuer.settle(this.merchantId, tokens[0]);
         await this.quotas.enable(publicKey, peer.allowedAddress.split('/')[0]);
-        this.sessions.set(publicKey, { paidBlocks: 1, usedBlocks: 0 });
+        this.sessions.set(publicKey, { paidBlocks: 1, usedBlocks: 0, quotaExhausted: false });
+        return;
       }
-      const session = this.sessions.get(publicKey)!;
-      // Remaining requested quota blocks are prepaid now, so a still-unspent
-      // blind token can never be replayed elsewhere while held by the relay.
-      for (const token of tokens.slice(existing ? 0 : 1)) {
-        await this.issuer.settle(this.merchantId, token);
-        session.paidBlocks++;
+      if (existing.paidBlocks >= 1000) throw new Error('peer quota limit reached');
+      // Reconcile before payment in case the packet quota expired before the
+      // asynchronous poller observed it.
+      const usage = await this.quotas.usedBytes();
+      await this.reconcile(publicKey, existing, usage.get(publicKey) ?? 0);
+      await this.issuer.settle(this.merchantId, tokens[0]);
+      existing.paidBlocks++;
+      if (existing.quotaExhausted) {
+        await this.quotas.reset(publicKey);
+        existing.quotaExhausted = false;
       }
-    } finally {
-      this.registering.delete(publicKey);
-    }
+    });
   }
 
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -71,9 +67,10 @@ export class WireGuardTokenMeter {
     if (!(req.socket instanceof TLSSocket) || !req.socket.encrypted) return this.respond(res, 400, 'HTTPS required');
     if (req.method !== 'POST') return this.respond(res, 405, 'POST required');
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] ?? '')) return this.respond(res, 415, 'application/json required');
+    if (!this.allowRegistration(req.socket.remoteAddress ?? 'unknown')) return this.respond(res, 429, 'registration rate limit exceeded');
 
     try {
-      const body = await readJson(req, 96_000) as { publicKey?: unknown; authorization?: unknown };
+      const body = await readJson(req, 8192) as { publicKey?: unknown; authorization?: unknown };
       if (typeof body.publicKey !== 'string' || typeof body.authorization !== 'string') {
         return this.respond(res, 400, 'publicKey and authorization are required');
       }
@@ -83,7 +80,7 @@ export class WireGuardTokenMeter {
       } catch {
         return this.respond(res, 401, 'a valid PrivateToken header is required');
       }
-      if (parsed.length < 1 || parsed.length > MAX_TOKENS_PER_TUNNEL) return this.respond(res, 401, 'a bounded PrivateToken batch is required');
+      if (parsed.length !== 1) return this.respond(res, 401, 'exactly one PrivateToken is required per registration');
       await this.register(body.publicKey, parsed.map(serializeToken));
       res.writeHead(201, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ registered: true, bytesPerToken: WIREGUARD_BYTES_PER_TOKEN }));
@@ -92,7 +89,7 @@ export class WireGuardTokenMeter {
       const message = error instanceof Error ? error.message : '';
       const status = message === 'unknown peer' ? 404
         : message === 'invalid tokens' ? 401
-          : message === 'duplicate or excessive token batch' ? 409
+          : message === 'peer quota limit reached' ? 409
             : message === 'request body too large' ? 413
               : error instanceof SyntaxError ? 400 : 503;
       return this.respond(res, status, status === 503 ? 'peer registration failed' : message);
@@ -103,22 +100,19 @@ export class WireGuardTokenMeter {
     if (this.polling) clearInterval(this.polling);
     this.polling = undefined;
     this.sessions.clear();
-    this.registering.clear();
+    this.registrationLimits.clear();
   }
 
   private async poll(): Promise<void> {
     if (this.pollingNow || this.sessions.size === 0) return;
     this.pollingNow = true;
     try {
-      const usage = await this.quotas.usedBytes();
-      await Promise.all([...this.sessions].map(([publicKey]) => this.serialize(publicKey, async () => {
-        const session = this.sessions.get(publicKey);
-        if (!session || (usage.get(publicKey) ?? 0) < WIREGUARD_BYTES_PER_TOKEN || session.usedBlocks >= session.paidBlocks) return;
-        // Every block was settled at registration. Reset only when an already
-        // paid next block exists; otherwise the exhausted quota stays closed.
-        if (session.usedBlocks + 1 < session.paidBlocks) await this.quotas.reset(publicKey);
-        session.usedBlocks++;
-      })));
+      await this.serialize(async () => {
+        const usage = await this.quotas.usedBytes();
+        for (const [publicKey, session] of this.sessions) {
+          await this.reconcile(publicKey, session, usage.get(publicKey) ?? 0);
+        }
+      });
     } catch {
       // Quota exhaustion is enforced in nftables. A control-plane error must not reopen it.
     } finally {
@@ -126,11 +120,39 @@ export class WireGuardTokenMeter {
     }
   }
 
-  private serialize(key: string, action: () => Promise<void>): Promise<void> {
-    const previous = this.serialTasks.get(key) ?? Promise.resolve();
-    const next = previous.then(action, action);
-    this.serialTasks.set(key, next.then(() => undefined, () => undefined));
+  private serialize(action: () => Promise<void>): Promise<void> {
+    const next = this.operations.then(action, action);
+    this.operations = next.then(() => undefined, () => undefined);
     return next;
+  }
+
+  private async reconcile(publicKey: string, session: MeteredPeer, usedBytes: number): Promise<void> {
+    if (usedBytes < WIREGUARD_BYTES_PER_TOKEN) return;
+    if (!session.quotaExhausted) {
+      session.quotaExhausted = true;
+      session.usedBlocks++;
+    }
+    if (session.quotaExhausted && session.usedBlocks < session.paidBlocks) {
+      await this.quotas.reset(publicKey);
+      session.quotaExhausted = false;
+    }
+  }
+
+  private allowRegistration(source: string): boolean {
+    const now = Date.now();
+    const current = this.registrationLimits.get(source);
+    if (!current || now - current.startedAt >= 60_000) {
+      this.registrationLimits.set(source, { startedAt: now, count: 1 });
+      if (this.registrationLimits.size > 10_000) {
+        for (const [ip, entry] of this.registrationLimits) {
+          if (now - entry.startedAt >= 60_000) this.registrationLimits.delete(ip);
+        }
+      }
+      return true;
+    }
+    if (current.count >= 120) return false;
+    current.count++;
+    return true;
   }
 
   private respond(res: ServerResponse, status: number, message: string): true {

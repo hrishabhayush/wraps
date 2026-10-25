@@ -114,8 +114,8 @@ peer until token registration installs a paid quota.
 WireGuard packets do not carry the HTTP CONNECT token header. Instead, a client
 registers its configured public key over the relay's HTTPS
 `POST /wireguard/register` control route with a bounded serialized `PrivateToken`
-batch in the JSON `authorization` field. The relay verifies and settles the
-requested tokens before granting their prepaid quota, then uses a shared
+token in the JSON `authorization` field. Register one token per request. The
+relay verifies and settles it before granting its prepaid quota, then uses a shared
 nftables quota for each peer's inbound and outbound IPv4 bytes. Each token buys
 one 10,000,000-byte block. The client can send another batch over the same
 HTTPS route to add prepaid quota.

@@ -14,6 +14,11 @@ export interface WireGuardPeer {
   allowedAddress: string;
 }
 
+/** Public keys are ASCII base64; code-unit ordering is locale-independent. */
+export function compareWireGuardPublicKeys(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 export interface WireGuardGatewayOptions {
   /** Public DNS name or IPv4 endpoint that clients use. */
   endpoint: string;
@@ -25,8 +30,6 @@ export interface WireGuardGatewayOptions {
   egressInterface: string;
   /** Pre-authorized peer public keys and tunnel addresses. Must be non-empty. */
   peers: WireGuardPeer[];
-  bytesPerToken: number;
-  metering: 'bidirectional-inner-ipv4';
   /** Defaults to /dev/shm, which must be tmpfs. A private subdirectory is created there. */
   runtimeDirectory?: string;
   /** Test seam. Production uses the system `wg` and `wg-quick` commands. */
@@ -84,7 +87,7 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     listenPort: options.listenPort,
     interfaceAddress: options.interfaceAddress,
     egressInterface: options.egressInterface,
-    peers: [...options.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
+    peers: [...options.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => compareWireGuardPublicKeys(a.publicKey, b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
     ipv6Forwarding: false,
     bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
@@ -135,7 +138,7 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     listenPort: options.listenPort,
     interfaceAddress: options.interfaceAddress,
     egressInterface: options.egressInterface,
-    peers: options.peers.map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
+    peers: options.peers.map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => compareWireGuardPublicKeys(a.publicKey, b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
     bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
     metering: 'bidirectional-inner-ipv4',
@@ -258,7 +261,7 @@ function isEndpoint(value: string): boolean {
 }
 
 function validateWireGuardKey(value: string, description: string): void {
-  if (!/^[A-Za-z0-9+/]{42}=$/.test(value)) throw new TypeError(`${description} must be a 32-byte WireGuard key`);
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(value)) throw new TypeError(`${description} must be a 32-byte WireGuard key`);
   if (Buffer.from(value, 'base64').byteLength !== 32 || Buffer.from(value, 'base64').toString('base64') !== value) {
     throw new TypeError(`${description} must be canonical base64`);
   }

@@ -88,7 +88,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **SDK-06** Verify attested WireGuard settings, register prepaid quota and build the client profile (merged PR #37; depends on #33 and #32). Live relay integration remains tracked in INF-27 and INF-28.
 - [x] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment. (core agent)
 - [x] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning. (core agent)
-- [~] **SDK-07** Bound WireGuard attestation receipt fetching; test nonce/policy verification, registration outcomes, and kill-switch profiles (PR #39).
+- [x] **SDK-07** Bound WireGuard attestation receipt fetching; test nonce/policy verification, registration outcomes, and kill-switch profiles (PR #39).
 
 ## Lane 6: Merchant (folder `packages/merchant`)
 

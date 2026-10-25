@@ -18,6 +18,7 @@ import {
 } from '@wraps/issuer';
 import { Token, TokenVerifier, blindTokens, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
 import type { PinnedRelayTransport } from './relay';
+import { isVerifiedWireGuardReceipt, registerWireGuardPeer as registerPeer, type VerifiedWireGuardReceipt } from './wireguard.js';
 
 export interface Caps {
   /** Most tokens one call may cost. A 402 above this is refused. */
@@ -381,6 +382,27 @@ export class PrivatePayClient {
     if (back.length) this.emit({ type: 'restored', url: r.url, tokens: back.length, balance: this.balance });
     if (gone) this.emit({ type: 'spent-unserved', url: r.url, tokens: gone, status });
     return true;
+  }
+
+  /** Spend blind tokens to activate this configured peer's metered WireGuard quota. */
+  async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, publicKey: string, tokenCount: number, tlsPort = 443): Promise<number> {
+    this.attested();
+    if (!isVerifiedWireGuardReceipt(receipt) || !receipt.peers.some((peer) => peer.publicKey === publicKey)) {
+      throw new TypeError('a verified receipt containing this peer is required');
+    }
+    if (!Number.isSafeInteger(tokenCount) || tokenCount < 1 || tokenCount > 100) {
+      throw new PaymentRefusedError('BAD_QUOTE', 'WireGuard registration requires 1 to 100 whole tokens');
+    }
+    if (this.spentToday + tokenCount > this.opts.caps.dailyTokens) {
+      throw new PaymentRefusedError('DAILY_CAP', 'WireGuard quota reservation would exceed the daily token cap');
+    }
+    if (this.tokens.length < tokenCount) throw new InsufficientTokensError(tokenCount, this.tokens.length);
+    // Consume locally before network I/O: a lost response may follow a successful
+    // relay settlement, so retrying the same tokens would create ambiguity.
+    const batch = this.tokens.splice(0, tokenCount);
+    this.spent.tokens += tokenCount;
+    await registerPeer(receipt, publicKey, batch, tlsPort);
+    return tokenCount;
   }
 
   private checkChallenge(res: Response, body: BlindTokenRequiredBody) {

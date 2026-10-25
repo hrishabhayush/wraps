@@ -1,6 +1,10 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, X509Certificate } from 'node:crypto';
+import { request as httpsRequest } from 'node:https';
 import type { AttestationVerifier } from '@wraps/attestation';
 import { hashPublicKeys } from '@wraps/attestation';
+import { encodeAuthorization, type Token } from '@wraps/tokens';
+
+const verifiedReceiptBrand: unique symbol = Symbol('verified WireGuard receipt');
 
 export interface VerifiedWireGuardReceipt {
   endpoint: string;
@@ -8,6 +12,14 @@ export interface VerifiedWireGuardReceipt {
   interfaceAddress: string;
   clientAllowedIPs: '0.0.0.0/0';
   serverPublicKey: string;
+  /** DER SubjectPublicKeyInfo of the TLS key bound by the verified receipt. */
+  tunnelSpki: string;
+  peers: Array<{ publicKey: string; allowedAddress: string }>;
+  readonly [verifiedReceiptBrand]: true;
+}
+
+export function isVerifiedWireGuardReceipt(value: unknown): value is VerifiedWireGuardReceipt {
+  return typeof value === 'object' && value !== null && (value as VerifiedWireGuardReceipt)[verifiedReceiptBrand] === true;
 }
 
 /** Fetch and verify a fresh WireGuard identity receipt before creating a client profile. */
@@ -32,6 +44,15 @@ export async function fetchVerifiedWireGuardReceipt(
     listenPort?: number;
     interfaceAddress?: string;
     clientAllowedIPs?: string;
+    networkPolicy?: {
+      endpoint?: string;
+      listenPort?: number;
+      interfaceAddress?: string;
+      egressInterface?: string;
+      peers?: Array<{ publicKey?: string; allowedAddress?: string }>;
+      clientAllowedIPs?: string;
+      ipv6Forwarding?: boolean;
+    };
     attestation?: string;
   };
   const { tunnel, wireguard, policy } = receipt.publicKeys ?? {};
@@ -41,6 +62,26 @@ export async function fetchVerifiedWireGuardReceipt(
   if (!/^[A-Za-z0-9_-]{43}$/.test(tunnel) || !/^[A-Za-z0-9+/]{43}=$/.test(wireguard) || !/^[0-9a-f]{64}$/.test(policy)) {
     throw new TypeError('malformed WireGuard attestation keys');
   }
+  const networkPolicy = receipt.networkPolicy;
+  if (!networkPolicy || networkPolicy.endpoint !== receipt.endpoint || networkPolicy.listenPort !== receipt.listenPort ||
+      networkPolicy.interfaceAddress !== receipt.interfaceAddress || networkPolicy.clientAllowedIPs !== '0.0.0.0/0' ||
+      networkPolicy.ipv6Forwarding !== false || !networkPolicy.egressInterface || !Array.isArray(networkPolicy.peers)) {
+    throw new TypeError('malformed WireGuard network policy');
+  }
+  const peers = networkPolicy.peers.map((peer) => {
+    if (typeof peer.publicKey !== 'string' || typeof peer.allowedAddress !== 'string') throw new TypeError('malformed WireGuard peer policy');
+    return { publicKey: peer.publicKey, allowedAddress: peer.allowedAddress };
+  }).sort((a, b) => a.publicKey.localeCompare(b.publicKey));
+  const policyHash = createHash('sha256').update(JSON.stringify({
+    endpoint: networkPolicy.endpoint,
+    listenPort: networkPolicy.listenPort,
+    interfaceAddress: networkPolicy.interfaceAddress,
+    egressInterface: networkPolicy.egressInterface,
+    peers,
+    clientAllowedIPs: '0.0.0.0/0',
+    ipv6Forwarding: false,
+  })).digest('hex');
+  if (policyHash !== policy) throw new Error('WireGuard policy is not bound to the attested policy hash');
   const verified = await verifier.verify(receipt.attestation, {
     nonce,
     publicKeysHash: hashPublicKeys({
@@ -60,6 +101,9 @@ export async function fetchVerifiedWireGuardReceipt(
     interfaceAddress: receipt.interfaceAddress,
     clientAllowedIPs: '0.0.0.0/0',
     serverPublicKey: wireguard,
+    tunnelSpki: tunnel,
+    peers,
+    [verifiedReceiptBrand]: true,
   };
 }
 
@@ -71,11 +115,16 @@ export async function fetchVerifiedWireGuardReceipt(
 export function createWireGuardClientProfile(
   receipt: VerifiedWireGuardReceipt,
   clientPrivateKey: string,
+  clientPublicKey: string,
   clientAddress: string,
   dns = '1.1.1.1',
 ): string {
+  if (!isVerifiedWireGuardReceipt(receipt)) throw new TypeError('a verified WireGuard attestation receipt is required');
   if (!/^[A-Za-z0-9+/]{43}=$/.test(clientPrivateKey) || !/^[A-Za-z0-9+/]{43}=$/.test(receipt.serverPublicKey)) {
     throw new TypeError('WireGuard keys must be standard base64 32-byte keys');
+  }
+  if (!receipt.peers.some((peer) => peer.publicKey === clientPublicKey && peer.allowedAddress === clientAddress)) {
+    throw new TypeError('peer key and address are not in the verified WireGuard policy');
   }
   if (!/^\d{1,3}(?:\.\d{1,3}){3}\/32$/.test(clientAddress) ||
       clientAddress.split('/')[0].split('.').some((part) => Number(part) > 255)) {
@@ -105,4 +154,55 @@ export function createWireGuardClientProfile(
     'PersistentKeepalive = 25',
     '',
   ].join('\n');
+}
+
+/** Register a configured peer over the relay's HTTPS control route using blind tokens. */
+export async function registerWireGuardPeer(
+  receipt: VerifiedWireGuardReceipt,
+  publicKey: string,
+  tokens: Token[],
+  tlsPort = 443,
+): Promise<void> {
+  if (!isVerifiedWireGuardReceipt(receipt)) throw new TypeError('a verified WireGuard attestation receipt is required');
+  if (!Number.isInteger(tlsPort) || tlsPort < 1 || tlsPort > 65535) throw new RangeError('invalid relay TLS port');
+  const url = new URL(`https://${receipt.endpoint}:${tlsPort}/wireguard/register`);
+  if (tokens.length < 1 || tokens.length > 100) throw new RangeError('register between 1 and 100 blind tokens');
+  if (!receipt.peers.some((peer) => peer.publicKey === publicKey)) throw new TypeError('peer key is not in the verified WireGuard policy');
+  const expectedSpki = Buffer.from(receipt.tunnelSpki, 'base64url');
+  if (!expectedSpki.length) throw new TypeError('missing attested relay TLS key');
+  const body = JSON.stringify({ publicKey, authorization: encodeAuthorization(tokens) });
+  await new Promise<void>((resolve, reject) => {
+    const req = httpsRequest(url, {
+      method: 'POST',
+      agent: false,
+      rejectUnauthorized: false,
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+    }, (res) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on('data', (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > 4096) req.destroy(new Error('relay registration response too large'));
+        else chunks.push(chunk);
+      });
+      res.on('end', () => {
+        if (res.statusCode !== 201) reject(new Error(`WireGuard peer registration failed (${res.statusCode ?? 'no status'})`));
+        else resolve();
+      });
+    });
+    req.once('socket', (socket) => {
+      socket.once('secureConnect', () => {
+        try {
+          const cert = socket.getPeerCertificate(true);
+          if (!cert.raw) throw new Error('relay did not present a certificate');
+          const actualSpki = new X509Certificate(cert.raw).publicKey.export({ type: 'spki', format: 'der' });
+          if (!Buffer.from(actualSpki).equals(expectedSpki)) throw new Error('relay TLS key does not match verified attestation');
+          req.end(body);
+        } catch (error) {
+          req.destroy(error as Error);
+        }
+      });
+    });
+    req.once('error', reject);
+  });
 }

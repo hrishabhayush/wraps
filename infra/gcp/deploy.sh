@@ -74,6 +74,10 @@ CREATE_ARGS=(
   "--max-run-duration=${MAX_RUN_DURATION}"
   --instance-termination-action=STOP
 )
+if [ "${ROLE}" = relay ] && [ -n "${RELAY_ADDRESS:-}" ]; then
+  [[ "${RELAY_ADDRESS}" != *$'\n'* && "${RELAY_ADDRESS}" != *$'\r'* ]] || die "RELAY_ADDRESS cannot contain newlines"
+  CREATE_ARGS+=("--address=${RELAY_ADDRESS}")
+fi
 
 if [ "${DRY_RUN}" = 1 ]; then
   printf 'DRY RUN:'

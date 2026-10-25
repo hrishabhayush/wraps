@@ -45,7 +45,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [ ] **INF-19** Quicknode endpoints: XRPL mainnet (spy bot), XRPL testnet, XRPL EVM testnet if supported. Put URLs in `.env`. Join the Quicknode track.
 
 ### Run and demo day
-- [ ] **INF-20** Logs: Confidential Space production images send container logs to Cloud Logging only if redirect is on. Never log tokens, keys, IPs or merchant IDs together.
+- [x] **INF-20** Logs: Confidential Space production images send container logs to Cloud Logging only if redirect is on. Never log tokens, keys, IPs or merchant IDs together.
 - [ ] **INF-21** Demo host firewall: on the machine that runs the agent, allow outbound traffic only to the relay, so nothing leaks around the tunnel.
 - [ ] **INF-22** Demo day: start the VMs early and **don't restart them**. Keys and the spent list live in memory.
 - [ ] **INF-23** Fallback: run the same images as normal containers with mock attestation if Confidential Space breaks. Say so on stage if used.

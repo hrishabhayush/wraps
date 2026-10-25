@@ -131,6 +131,9 @@ mock attestation. Use it to rehearse without a VM.
   observable. Relay output is restricted to fixed startup stages and allowlisted error codes;
   never print raw errors, keys, tokens, endpoints, or merchant data. Other workloads can keep
   the `debugonly` policy unless their logs are similarly reviewed.
+- WireGuard-enabled relay launches briefly add `CAP_SYS_ADMIN` so the startup wrapper can set
+  the container guest's IPv4 forwarding sysctl. It remounts `/proc/sys` read-only afterward and
+  removes `CAP_SYS_ADMIN` from the Node process; WireGuard itself keeps only `CAP_NET_ADMIN`.
 - The production image fixes its workload settings. Relay audience, issuer URL, and relay
   hostname are non-secret public configuration passed as `tee-env-*` metadata; do not put keys,
   tokens, or credentials in instance metadata.

@@ -351,8 +351,12 @@ fn start_tunnel_from_profile(app: &AppHandle, mut joined: Value) -> Result<(), S
     let _ = fs::remove_file(&conf);
     let mut file = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&conf)
         .map_err(|e| e.to_string())?;
-    file.write_all(wg_conf.as_bytes()).map_err(|e| e.to_string())?;
+    let write_result = file.write_all(wg_conf.as_bytes());
     drop(file);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&conf);
+        return Err(error.to_string());
+    }
     let result = tunnel(app, &["up", &conf.to_string_lossy(), &address, &endpoint]);
     let _ = fs::remove_file(&conf); // the private key lives in the running tunnel now, not on disk
     result

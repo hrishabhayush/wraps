@@ -43,6 +43,7 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `deploy.sh <role> [--debug]` | Creates the Confidential Space VM (deletes an existing one with the same name first). |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
+| `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
 | `expected.json` | Image digest per role, plus the policy. The SDK reads it. Commit it after each build. |
 | `.state/` | Last known VM IPs. Not committed. |
 
@@ -50,6 +51,17 @@ The relay listens for HTTPS CONNECT on port 443 and nonce-bound HTTP attestation
 The SDK uses the attested relay key for TLS, then reaches the issuer through a restricted,
 tokenless CONNECT route. Metered merchant tunnels carry their blind-token batch in the CONNECT
 proxy authorization header.
+
+The relay serves HTTPS CONNECT on tcp:443 and its nonce attestation bootstrap endpoint on plain
+HTTP tcp:8080. To allow both ports on the existing `wraps` target tag, run:
+
+```sh
+infra/gcp/open-relay-attestation-port.sh --dry-run
+infra/gcp/open-relay-attestation-port.sh
+```
+
+The script updates only the allowed ports on `wraps-allow-443`; it preserves the rule's current
+source ranges, target tags, network, and priority. It is safe to run repeatedly.
 
 ## Commands
 

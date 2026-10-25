@@ -20,6 +20,11 @@ Checked live on Oct 25, 2026 (US time), after the relay attestation hardening de
 
 ## Live results
 
+The ingress rule `wraps-allow-443` in project `wraps-hack` allows tcp:443 and tcp:8080. Its
+source range remains `0.0.0.0/0`, target tag remains `wraps`, and network and priority remain
+`default` and `1000`. INF-07 added tcp:8080 for the relay's plain HTTP nonce endpoint; no VM was
+created or changed.
+
 | Check | Result |
 |---|---|
 | Issuer `GET /health` | HTTP 200. |

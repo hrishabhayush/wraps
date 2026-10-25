@@ -14,6 +14,25 @@ export interface RelayAttestationOptions {
   tlsCertificate: string;
   /** Workload attestation provider (Google Confidential Space in production). */
   provider: AttestationProvider;
+  /** Optional WireGuard identity for the separate /wireguard-attestation receipt. */
+  wireGuard?: {
+    publicKey: string;
+    policyHash: string;
+    endpoint: string;
+    listenPort: number;
+    interfaceAddress: string;
+    clientAllowedIPs: '0.0.0.0/0';
+  };
+}
+
+export interface WireGuardAttestationResponse {
+  format: string;
+  publicKeys: { tunnel: string; wireguard: string; policy: string };
+  endpoint: string;
+  listenPort: number;
+  interfaceAddress: string;
+  clientAllowedIPs: '0.0.0.0/0';
+  attestation: string;
 }
 
 export interface RelayAttestationListenOptions extends RelayAttestationOptions {
@@ -63,6 +82,42 @@ export async function createRelayAttestationResponse(
   };
 }
 
+/** Bind the WireGuard endpoint key and the configured peer/routing policy to a fresh receipt. */
+export async function createWireGuardAttestationResponse(
+  nonce: Uint8Array,
+  options: RelayAttestationOptions,
+): Promise<WireGuardAttestationResponse> {
+  if (!options.wireGuard) throw new TypeError('WireGuard is not configured');
+  if (nonce.byteLength !== 32) throw new TypeError('attestation nonce must be 32 bytes');
+  if (!/^[A-Za-z0-9+/]{42}=$/.test(options.wireGuard.publicKey)) throw new TypeError('invalid WireGuard public key');
+  if (Buffer.from(options.wireGuard.publicKey, 'base64').byteLength !== 32 || Buffer.from(options.wireGuard.publicKey, 'base64').toString('base64') !== options.wireGuard.publicKey) throw new TypeError('invalid WireGuard public key');
+  if (!/^[0-9a-f]{64}$/.test(options.wireGuard.policyHash)) throw new TypeError('invalid WireGuard policy hash');
+
+  const certificate = new X509Certificate(options.tlsCertificate);
+  if (certificate.subject !== certificate.issuer || !certificate.verify(certificate.publicKey)) {
+    throw new TypeError('relay TLS certificate must be self-signed');
+  }
+  const publicKeys = {
+    tunnel: new Uint8Array(certificate.publicKey.export({ type: 'spki', format: 'der' })),
+    wireguard: new Uint8Array(Buffer.from(options.wireGuard.publicKey, 'base64')),
+    policy: new Uint8Array(Buffer.from(options.wireGuard.policyHash, 'hex')),
+  };
+  const attestation = await options.provider.attest(nonce, hashPublicKeys(publicKeys));
+  return {
+    format: options.provider.format,
+    publicKeys: {
+      tunnel: Buffer.from(publicKeys.tunnel).toString('base64url'),
+      wireguard: options.wireGuard.publicKey,
+      policy: options.wireGuard.policyHash,
+    },
+    endpoint: options.wireGuard.endpoint,
+    listenPort: options.wireGuard.listenPort,
+    interfaceAddress: options.wireGuard.interfaceAddress,
+    clientAllowedIPs: options.wireGuard.clientAllowedIPs,
+    attestation,
+  };
+}
+
 /**
  * Handle GET /attestation?nonce=<64 hex chars>. Returns false for other paths
  * so the caller can route those to the relay or a health handler.
@@ -73,7 +128,8 @@ export async function serveRelayAttestation(
   options: RelayAttestationOptions,
 ): Promise<boolean> {
   const url = new URL(req.url ?? '/', 'http://relay.invalid');
-  if (url.pathname !== '/attestation') return false;
+  const wireGuardRequest = url.pathname === '/wireguard-attestation';
+  if (url.pathname !== '/attestation' && !wireGuardRequest) return false;
 
   if (req.method !== 'GET') {
     sendJson(res, 405, { error: 'GET required' });
@@ -87,7 +143,9 @@ export async function serveRelayAttestation(
   }
 
   try {
-    const receipt = await createRelayAttestationResponse(Buffer.from(nonces[0], 'hex'), options);
+    const receipt = wireGuardRequest
+      ? await createWireGuardAttestationResponse(Buffer.from(nonces[0], 'hex'), options)
+      : await createRelayAttestationResponse(Buffer.from(nonces[0], 'hex'), options);
     sendJson(res, 200, receipt);
   } catch {
     // Do not expose provider details or certificate material on failure.

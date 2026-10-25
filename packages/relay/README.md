@@ -75,3 +75,43 @@ const servers = startConfidentialRelay({
 Do not expose the attestation URL as a substitute for the TLS-pinned proxy.
 Its response is accepted only after the SDK verifies the request nonce and key
 hash with the Google-signed workload attestation.
+
+## WireGuard gateway
+
+`startWireGuardGateway()` starts an optional IPv4 full-tunnel gateway for
+pre-authorized peers. It generates the server key at startup, installs only
+validated peer public keys, NATs peer traffic to the configured egress
+interface, and rejects private/reserved IPv4 destinations. IPv6 forwarding is
+blocked; clients must use a kill switch or otherwise prevent direct IPv6
+egress. The separate `/wireguard-attestation?nonce=<64 hex chars>` receipt
+binds the WireGuard public key and a hash of the peer/routing policy together
+with the existing TLS tunnel key.
+
+Example relay setup (the entrypoint must await the async start function):
+
+```ts
+const relay = await startConfidentialWireGuardRelay({
+  tlsCertificate,
+  tlsPrivateKey,
+  attestationProvider,
+  issuerUrl,
+  wireGuardGateway: {
+    endpoint: process.env.RELAY_HOSTNAME!,
+    listenPort: 51820,
+    interfaceAddress: '10.77.0.1/24',
+    egressInterface: 'ens4',
+    peers: [{ publicKey: process.env.AGENT_WIREGUARD_PUBLIC_KEY!, allowedAddress: '10.77.0.2/32' }],
+  },
+});
+```
+
+The server requires `wg`, `wg-quick`, `ip`, `iptables`, `ip6tables`,
+`sysctl`, a writable `/dev/net/tun`, `CAP_NET_ADMIN`, and IPv4 forwarding
+already enabled by the VM runtime. Private config is held in tmpfs with mode
+`0600` while the interface runs. **Do not enable this in the current
+Confidential Space image until Infra has verified the required device and
+capabilities and the SDK verifies the WireGuard attestation receipt.**
+
+WireGuard packets do not carry the HTTP CONNECT token header. This gateway
+does not yet meter WireGuard bytes; traffic over it must not be represented as
+token-metered until peer admission and per-peer byte settlement are integrated.

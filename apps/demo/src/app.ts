@@ -22,9 +22,12 @@ export interface DemoEvent {
 export type PublishFn = (panel: DemoEvent['panel'], type: string, data?: unknown) => void;
 
 /** Starts and stops the two feeds. Tests replace it with a fake. */
+export type DemoMode = 'normal' | 'tamper';
+
 export interface DemoController {
   readonly running: boolean;
-  start(): boolean;
+  readonly mode: DemoMode | null;
+  start(mode?: DemoMode): boolean;
   stop(): Promise<void>;
 }
 
@@ -35,20 +38,22 @@ export interface LiveControllerOptions {
 
 export class LiveDemoController implements DemoController {
   running = false;
+  mode: DemoMode | null = null;
   private spy?: SpyBot;
   private spyRun?: Promise<unknown>;
   private agentRun?: Promise<void>;
 
   constructor(private publish: PublishFn, private opts: LiveControllerOptions) {}
 
-  start(): boolean {
+  start(mode: DemoMode = 'normal'): boolean {
     if (this.running) return false;
     this.running = true;
-    this.publish('system', 'status', { running: true, message: 'Live demo started.' });
+    this.mode = mode;
+    this.publish('system', 'status', { running: true, mode, message: mode === 'tamper' ? 'Tamper test started.' : 'Live demo started.' });
     this.spyRun = this.runSpy().catch((err: unknown) => {
       this.publish('spy', 'error', { message: err instanceof Error ? err.message : String(err) });
     });
-    const agentRun = runPrivateAgent((type, data = null) => this.publish('agent', type, data));
+    const agentRun = runPrivateAgent((type, data = null) => this.publish('agent', type, data), { tamper: mode === 'tamper' });
     this.agentRun = agentRun;
     void agentRun.finally(() => {
       if (this.agentRun === agentRun) this.agentRun = undefined;
@@ -94,7 +99,8 @@ export class LiveDemoController implements DemoController {
     this.spy = undefined;
     this.spyRun = undefined;
     this.agentRun = undefined;
-    this.publish('system', 'status', { running: false, message: 'Live demo stopped.' });
+    this.mode = null;
+    this.publish('system', 'status', { running: false, mode: null, message: 'Live demo stopped.' });
   }
 }
 
@@ -155,7 +161,7 @@ export function createDemoApp(opts: DemoAppOptions): DemoApp {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/status') {
-      json(res, 200, { running: controller.running, tokenRequired: opts.policy.token !== undefined });
+      json(res, 200, { running: controller.running, mode: controller.mode, tokenRequired: opts.policy.token !== undefined });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/events') {
@@ -178,8 +184,13 @@ export function createDemoApp(opts: DemoAppOptions): DemoApp {
     }
     if (req.method === 'POST' && url.pathname === '/api/start') {
       if (!allowControl(req, res, opts.policy)) return;
-      const started = controller.start();
-      json(res, started ? 202 : 409, { running: controller.running, message: started ? 'Demo is running.' : 'Demo is already running.' });
+      const tamper = url.searchParams.get('tamper') === '1';
+      const started = controller.start(tamper ? 'tamper' : 'normal');
+      json(res, started ? 202 : 409, {
+        running: controller.running,
+        mode: controller.mode,
+        message: started ? (tamper ? 'Tamper test started.' : 'Live demo started.') : 'A demo run is already active.',
+      });
       return;
     }
     if (req.method === 'POST' && url.pathname === '/api/stop') {

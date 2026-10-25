@@ -1,4 +1,4 @@
-# Confidential Payments for AI Agents
+# Incognito mode for agents 
 
 XRPL AI & Fintech Hackathon (NYC, Oct 24 to 25, 2026).
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wraps: privacy you can verify</title>
-<meta name="description" content="A pay-as-you-go VPN where the servers prove they don't log and payments can't be linked to you. For people and for AI agents.">
+<meta name="description" content="A pay-as-you-go HTTPS relay with code you can verify. Blind tokens separate top-ups from spending, for people and AI agents.">
 <link rel="icon" type="image/png" href="assets/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -31,9 +31,9 @@
   <section class="hero dark">
     <div class="wrap hero-inner">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="dot"></span>Attested no-log VPN</p>
+        <p class="eyebrow"><span class="dot"></span>Attested HTTPS relay</p>
         <h1>Privacy you can verify.</h1>
-        <p class="lede">A pay-as-you-go VPN whose servers prove they don't log, paid with tokens that can't be linked to you. It works the same for you and for your AI agents.</p>
+        <p class="lede">A pay-as-you-go private relay whose running code you can verify. Blind tokens separate a top-up from later spending. It works for you and your AI agents.</p>
         <div class="ctas">
           <a class="pill pill-light" href="#how">How it works</a>
           <a class="pill pill-ghost" href="#agents">For agents</a>
@@ -62,8 +62,8 @@
       <div class="pillars">
         <div class="card pillar">
           <span class="tag tag-green">Verified</span>
-          <h3>Proven no-log servers</h3>
-          <p>Nodes and the token issuer run open code in confidential VMs, hardware-attested by AMD SEV, verified by Google. Before you connect or pay, the app checks the attestation names the exact code. A modified or debug build is refused.</p>
+          <h3>Verified workload code</h3>
+          <p>Nodes and the token issuer run open code in confidential VMs, hardware-attested by AMD SEV and verified by Google. Before you connect or pay, the app checks the attestation names the exact code and keys. A modified or debug build is refused. This verifies the measured workload; it does not prove what an operator may log outside it.</p>
           <p class="refused mono">IMAGE_MISMATCH → refused</p>
         </div>
         <div class="card pillar">
@@ -89,7 +89,7 @@
   <section class="section dark" id="agents">
     <div class="wrap">
       <h2>Incognito mode for your agents.</h2>
-      <p class="sub">Your agent's tool calls, browsing and payments go through the same attested no-log VPN, paid per use with blind tokens. Sites, merchants and the public chain can't build a record of it.</p>
+      <p class="sub">Your agent's tool calls and browsing can go through the attested relay, paid per use with blind tokens. Sites see the relay address; blind tokens separate top-ups from spending. Timing and traffic metadata can still correlate activity.</p>
       <div class="agents">
         <div class="code">
           <div class="code-bar"><span>agent.ts</span><span class="tag tag-dark">Illustrative</span></div>
@@ -124,8 +124,8 @@
         </div>
         <div class="card-dark">
           <span class="tag tag-green">With Wraps</span>
-          <h3>Nothing to piece together</h3>
-          <p>The merchant sees a valid token from the node's IP. The chain sees one top-up to the issuer and batched payouts to merchants.</p>
+          <h3>Top-up and spending are separated</h3>
+          <p>The merchant sees a valid token from the node's IP. A top-up is visible on-chain; merchant payouts are still mocked, with batched payouts planned.</p>
           <div class="facts">
             <div><span class="big mono">RFC 9578</span><span>Privacy Pass blind tokens</span></div>
             <div><span class="big mono">AMD SEV</span><span>attested, verified by Google</span></div>
@@ -163,7 +163,7 @@
             <tr><th>Node (relay)</th><td class="y">Yes</td><td class="n">No</td><td class="y">Host name</td><td class="n">No, HTTPS</td></tr>
             <tr><th>Token issuer</th><td class="n">No, via the node</td><td class="y">Your top-up wallet</td><td class="y">Yes, at redemption</td><td class="n">No</td></tr>
             <tr><th>Merchant or site</th><td class="n">No, sees the node</td><td class="n">No, a blind token</td><td class="y">It's the site</td><td class="y">Yes, it must</td></tr>
-            <tr><th>Public chain</th><td class="n">No</td><td class="y">A top-up wallet</td><td class="n">Only batched payouts</td><td class="n">No</td></tr>
+            <tr><th>Public chain</th><td class="n">No</td><td class="y">A top-up wallet</td><td class="n">Top-ups; merchant payouts are mocked</td><td class="n">No</td></tr>
           </tbody>
         </table>
       </div>
@@ -174,19 +174,19 @@
   <section class="section surface">
     <div class="wrap">
       <h2>Privacy improves with every user.</h2>
-      <p class="sub">How often a spy correctly links a top-up to its spending.</p>
+      <p class="sub">Estimated link rate under the hourly payout model (simulation).</p>
       <div class="table-wrap">
         <table class="sim">
           <thead><tr><th>Users</th><th>Plain x402</th><th>Wraps tokens</th><th>Random guess</th></tr></thead>
           <tbody class="mono">
             <tr><td>1</td><td>100%</td><td>100%</td><td>100%</td></tr>
-            <tr><td>5</td><td>100%</td><td class="g">52%</td><td>20%</td></tr>
-            <tr><td>20</td><td>100%</td><td class="g">15%</td><td>5%</td></tr>
-            <tr><td>100</td><td>100%</td><td class="g">1.6%</td><td>1%</td></tr>
+            <tr><td>5</td><td>100%</td><td class="g">69%</td><td>20%</td></tr>
+            <tr><td>20</td><td>100%</td><td class="g">29%</td><td>5%</td></tr>
+            <tr><td>100</td><td>100%</td><td class="g">6%</td><td>1%</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="note">Timing-only simulation with hourly payouts. Real attackers could also use amounts, IPs and merchant data.</p>
+      <p class="note">Simulation only, not measured product performance. It models hourly payouts; real attackers can also use amounts, IPs and merchant data.</p>
     </div>
   </section>
 </main>

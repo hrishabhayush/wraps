@@ -21,6 +21,8 @@ export interface RelayAttestationOptions {
     endpoint: string;
     listenPort: number;
     interfaceAddress: string;
+    egressInterface: string;
+    peers: Array<{ publicKey: string; allowedAddress: string }>;
     clientAllowedIPs: '0.0.0.0/0';
   };
 }
@@ -32,6 +34,15 @@ export interface WireGuardAttestationResponse {
   listenPort: number;
   interfaceAddress: string;
   clientAllowedIPs: '0.0.0.0/0';
+  networkPolicy: {
+    endpoint: string;
+    listenPort: number;
+    interfaceAddress: string;
+    egressInterface: string;
+    peers: Array<{ publicKey: string; allowedAddress: string }>;
+    clientAllowedIPs: '0.0.0.0/0';
+    ipv6Forwarding: false;
+  };
   attestation: string;
 }
 
@@ -114,6 +125,15 @@ export async function createWireGuardAttestationResponse(
     listenPort: options.wireGuard.listenPort,
     interfaceAddress: options.wireGuard.interfaceAddress,
     clientAllowedIPs: options.wireGuard.clientAllowedIPs,
+    networkPolicy: {
+      endpoint: options.wireGuard.endpoint,
+      listenPort: options.wireGuard.listenPort,
+      interfaceAddress: options.wireGuard.interfaceAddress,
+      egressInterface: options.wireGuard.egressInterface,
+      peers: [...options.wireGuard.peers].sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
+      clientAllowedIPs: options.wireGuard.clientAllowedIPs,
+      ipv6Forwarding: false,
+    },
     attestation,
   };
 }

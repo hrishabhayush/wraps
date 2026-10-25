@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, statfs, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, join } from 'node:path';
+import { createWireGuardQuotaController, type WireGuardQuotaController } from './wireguard-quota.js';
 
 const TMPFS_MAGIC = 0x01021994;
 const DEFAULT_RUNTIME_DIRECTORY = '/dev/shm';
@@ -39,12 +40,15 @@ export interface WireGuardGatewayIdentity {
   endpoint: string;
   listenPort: number;
   interfaceAddress: string;
+  egressInterface: string;
+  peers: WireGuardPeer[];
   /** Allowed IPs advertised to the client for a full IPv4 tunnel. */
   clientAllowedIPs: '0.0.0.0/0';
 }
 
 export interface RunningWireGuardGateway {
   readonly identity: WireGuardGatewayIdentity;
+  readonly quotas: WireGuardQuotaController;
   stop(): Promise<void>;
 }
 
@@ -76,6 +80,8 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     listenPort: options.listenPort,
     interfaceAddress: options.interfaceAddress,
     egressInterface: options.egressInterface,
+    peers: [...options.peers].sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
+    egressInterface: options.egressInterface,
     peers: [...options.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
     ipv6Forwarding: false,
@@ -106,11 +112,13 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     throw new Error('WireGuard IPv4 forwarding must be enabled by the VM deployment');
   }
   let active = false;
+  const quotas = await createWireGuardQuotaController(run);
   try {
     await run('wg-quick', ['up', configPath]);
     active = true;
   } catch {
     try { await run('wg-quick', ['down', configPath]); } catch { /* clean partial setup best-effort */ }
+    await quotas.close();
     await rm(privateDirectory, { recursive: true, force: true });
     throw new Error('Could not start WireGuard; verify kernel WireGuard support, CAP_NET_ADMIN, and the host firewall tools');
   }
@@ -126,12 +134,14 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
 
   return {
     identity,
+    quotas,
     async stop() {
       if (!active) return;
       active = false;
       try {
         await run('wg-quick', ['down', configPath]);
       } finally {
+        await quotas.close();
         // The private key exists on disk only in the workload's tmpfs while the
         // interface is up. The VM/workload must still be treated as secret memory.
         await rm(privateDirectory, { recursive: true, force: true });

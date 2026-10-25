@@ -105,13 +105,29 @@ const relay = await startConfidentialWireGuardRelay({
 });
 ```
 
-The server requires `wg`, `wg-quick`, `ip`, `iptables`, `ip6tables`,
-`sysctl`, a writable `/dev/net/tun`, `CAP_NET_ADMIN`, and IPv4 forwarding
-already enabled by the VM runtime. Private config is held in tmpfs with mode
-`0600` while the interface runs. **Do not enable this in the current
-Confidential Space image until Infra has verified the required device and
-capabilities and the SDK verifies the WireGuard attestation receipt.**
+The server requires kernel WireGuard support, `wg`, `wg-quick`, `ip`, `iptables`,
+`ip6tables`, `nft`, `sysctl`, `CAP_NET_ADMIN`, and IPv4 forwarding already
+enabled by the VM runtime. Private config is held in tmpfs with mode `0600`
+while the interface runs. The nftables forwarding chain blocks every configured
+peer until token registration installs a paid quota.
 
-WireGuard packets do not carry the HTTP CONNECT token header. This gateway
-does not yet meter WireGuard bytes; traffic over it must not be represented as
-token-metered until peer admission and per-peer byte settlement are integrated.
+WireGuard packets do not carry the HTTP CONNECT token header. Instead, a client
+registers its configured public key over the relay's HTTPS
+`POST /wireguard/register` control route with a bounded serialized `PrivateToken`
+batch in the JSON `authorization` field. The relay verifies the batch, settles one token before
+forwarding, and uses a shared nftables quota for each peer's inbound and
+outbound IPv4 bytes. Each 10,000,000 byte block is settled before the quota is
+reset. The client can send another batch over the same HTTPS route to add quota.
+When the batch is exhausted, nftables keeps dropping that peer's traffic until
+more tokens are registered.
+The meter counts forwarded inner IPv4 packet bytes (including IP headers), so
+its byte unit is L3 bytes rather than HTTPS CONNECT stream payload bytes.
+Registration should happen before the client enables the full-tunnel profile;
+the profile then carries all client traffic through the relay.
+
+The registration transport must use HTTPS with the relay TLS key pinned to the
+fresh, verified WireGuard attestation. Tokens are consumed from the SDK balance
+before network I/O because a timeout can follow successful settlement. A caller
+must fetch and verify `/wireguard-attestation` and pin the relay TLS key before
+registering the peer. Register the peer before bringing up the full-tunnel profile;
+later quota refills can use the same HTTPS endpoint through the active tunnel.

@@ -60,6 +60,21 @@ function runCommand(command: string, args: string[]): Promise<void> {
 
 async function close(server: HttpServer | HttpsServer): Promise<void> {
   server.closeAllConnections?.();
+  // A listener can still be binding when its sibling fails. Wait for bind
+  // completion, then close it; skipping it while `listening` is false leaks it.
+  if (!server.listening) {
+    await new Promise<void>((resolve) => {
+      const onListening = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); resolve(); };
+      const cleanup = () => {
+        server.off('listening', onListening);
+        server.off('error', onError);
+      };
+      server.once('listening', onListening);
+      server.once('error', onError);
+      if (server.listening) onListening();
+    });
+  }
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());

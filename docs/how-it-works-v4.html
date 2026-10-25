@@ -267,8 +267,23 @@ footer { font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--lin
 
 <section>
   <span class="eyebrow">Speed</span>
-  <h2>Clears off-chain; benchmark pending</h2>
-  <p>Plain x402 on XRPL waits for the ledger. In our measurement, XRPL mainnet averaged about 4.0 s per ledger over 20 ledgers. Blind-token merchant payments clear off-chain. The chain is used for top-ups and the issuer's batched merchant payouts. Our own latency is not benchmarked on main yet (PR #7), so we make no speed comparison.</p>
+  <h2>Clears off-chain; local benchmark only</h2>
+  <p>Plain x402 on XRPL waits for the ledger. In our measurement, XRPL mainnet averaged about 4.0 s per ledger over 20 ledgers. Blind-token merchant payments clear off-chain. The chain is used for top-ups and the issuer's batched merchant payouts.</p>
+  <p>Local benchmark (PR #7, open): one paid call took p50 1.8 ms and p95 3.5 ms on one laptop, with mock attestation, mock top-up and mock payouts. That is not a production number, so we do not claim the system is faster in production.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Privacy vs crowd size</span>
+  <h2>Privacy needs a crowd and slow payouts</h2>
+  <p>Share of spend whose payer is the watcher's best guess. Simulation, PR #7 (open), 200 trials. The watcher sees only top-ups and one issuer→merchant total per merchant per payout interval, and runs EM. A per-call "oracle" view is the upper bound.</p>
+  <div class="tbl"><table class="grid">
+    <tr><th>Agents</th><th>Plain x402</th><th>Payouts every 5 min</th><th>every 1 h</th><th>every 6 h</th><th>every 24 h</th><th>Random guess</th></tr>
+    <tr><td>1</td><td>100%</td><td>100%</td><td>100%</td><td>100%</td><td>100%</td><td>100%</td></tr>
+    <tr><td>5</td><td>100%</td><td>73.0%</td><td>68.7%</td><td>50.3%</td><td>20.0%</td><td>20.0%</td></tr>
+    <tr><td>20</td><td>100%</td><td>35.6%</td><td>28.8%</td><td>13.7%</td><td>5.0%</td><td>5.0%</td></tr>
+    <tr><td>100</td><td>100%</td><td>8.1%</td><td>5.7%</td><td>2.8%</td><td>1.0%</td><td>1.0%</td></tr>
+  </table></div>
+  <p class="cap">With hourly payouts a watcher still attributes 69% of spend at 5 agents and 6% at 100. At one payout a day it falls to a random guess.</p>
 </section>
 
 <section>
@@ -282,7 +297,7 @@ footer { font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--lin
       <li>Nobody can swap the issuer's code or keys without the check failing.</li>
     </ul></div>
     <div><h3 class="leak">Managed, not solved</h3><ul>
-      <li>Timing can link top-ups to spending when few people use it. More users should help; we have not measured how much.</li>
+      <li>Timing can link top-ups to spending when few people use it. In simulation (PR #7), hourly payouts with 5 agents still let a watcher attribute 69% of spend.</li>
       <li>We trust Google's attestation service and AMD SEV. The host sees network timing. The confidential VM hides data, not traffic patterns.</li>
       <li>Until the relay ships, merchants and the issuer see the agent's IP.</li>
       <li>Once it ships, the relay sees the agent IP and destination host. A single relay hop does not hide traffic timing or destination from the relay.</li>

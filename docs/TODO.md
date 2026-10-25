@@ -63,7 +63,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **ISS-03** `POST /verify` (read-only: signature and not spent) and `POST /settle` (mark spent, add to the merchant's tab). (core agent)
 - [x] **ISS-04** Signed running-total claim for merchants, signed with a key that is in the attestation. (core agent)
 - [x] **ISS-05** Solvency: refuse to issue beyond funds held. Attest "outstanding ≤ funds held." (core agent)
-- [~] **ISS-06** Batched payouts at fixed times (mock first, RLUSD transfers on XRPL EVM later). Mock payout job done; RLUSD transfers open.
+- [x] **ISS-06** Batched payouts at fixed times. Mock and XRPL EVM RLUSD rails are implemented and tested with fake RPC and a local chain; FUP-04 tracks the separate live testnet transfer.
 - [x] **ISS-07** Run the issuer in Confidential Space (INF-08 to INF-14).
 
 ## Lane 3: Payments / AP4M (folder `packages/ap4m`)

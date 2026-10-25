@@ -148,7 +148,8 @@ with a key. It prints each paid line with an explorer link and each line still u
    ```
 
    Put the key in your shell from a password manager or an untracked file. Do not commit it.
-   Confirm `RLUSD_ADDRESS` against the AP4M portal network config (see `app/.env.example`).
+   Confirm `RLUSD_ADDRESS` on the configured XRPL EVM testnet RPC. Check chain ID `1449000`,
+   `symbol()` returns `RLUSD`, and `decimals()` matches the contract before funding the issuer.
 4. Make some sales so the merchant has a tab. In two more terminals run `npm run merchant`
    (its merchant ID is `merchant-research-data`) and then `npm run agent`. The agent tops up
    with the mock rail unless the issuer runs `ISSUER_RAIL=xrpl-evm`.

@@ -8,6 +8,8 @@ XRPL AI & Fintech Hackathon, NYC, Oct 24 to 25, 2026.
 
 **One line:** "Mastercard lets agents pay. We let them pay without being watched."
 
+**Platform:** Google Cloud Confidential Space (AMD SEV confidential VMs) on the `wraps-hack` project, using the $300 trial credit. Not AWS Nitro: the AWS account is on the Free plan, which blocks the 4-vCPU instances Nitro needs.
+
 **What changed from v3:** AP4M moved to the top-up, so the agent itself signs the voucher (Mastercard's rule). An attested relay (the VPN) hides the agent's IP from merchants. Merchant payouts are batched RLUSD transfers from the issuer.
 
 ---
@@ -35,8 +37,8 @@ Three layers. No party sees both **who** and **what**.
 | Layer | Hides | How |
 |---|---|---|
 | **Blind tokens** | Who paid | The issuer signs tokens it never sees (RFC 9578, blind RSA) |
-| **Attested relay** (VPN) | Where the request came from | Agent traffic goes through a Nitro Enclave relay. Merchants see the relay's IP |
-| **Attested issuer** | That anyone could cheat | Issuer runs in a Nitro Enclave. Agents check its code and keys before paying |
+| **Attested relay** (VPN) | Where the request came from | Agent traffic goes through a relay in a Google Confidential Space VM. Merchants see the relay's IP |
+| **Attested issuer** | That anyone could cheat | Issuer runs in a Google Confidential Space VM (AMD SEV hardware). Agents check its code and keys before paying |
 
 The merchant still sees the request. It has to, to answer it.
 
@@ -52,13 +54,13 @@ The merchant still sees the request. It has to, to answer it.
                         │ tunnel (TLS pinned to the relay's attested key)
                         ▼
                  ┌──────────────────────────────┐
-                 │  RELAY  (Nitro Enclave #1)   │  sees: agent IP, destination host
+                 │  RELAY  (Confidential VM #1) │  sees: agent IP, destination host
                  │  charges tokens per 10 MB    │  not: request content (HTTPS)
                  └──────┬───────────────┬───────┘
           top-up        │               │  purchases
                         ▼               ▼
  ┌───────────────────────────┐   ┌───────────────────────────┐
- │ ISSUER (Nitro Enclave #2)  │◀──│ MERCHANT (one, 2 services) │
+ │ ISSUER (Confidential VM #2)│◀──│ MERCHANT (one, 2 services) │
  │ separate machine           │   │ 402 → tokens → data        │
  │ /issue  /verify  /settle   │   └───────────────────────────┘
  │ spent list, tabs, claims   │
@@ -80,9 +82,9 @@ The merchant still sees the request. It has to, to answer it.
 
 ## 4. Step by step
 
-**0. Start-up.** Each enclave makes its keys inside itself. The relay makes a tunnel key. The issuer makes a token-signing key. Each gets a Nitro hardware receipt naming its code hash and public keys.
+**0. Start-up.** Each workload makes its keys inside its confidential VM. The relay makes a tunnel key. The issuer makes a token-signing key. Each gets an attestation token from Google's Confidential Computing attestation service, naming its container image digest and binding its public keys.
 
-**1. Check both enclaves.** The SDK verifies each receipt: AWS root certificate, valid signature, code hash (PCR0) matches the published build, not all-zero (debug mode), keys match, fresh nonce. Any failure stops the agent.
+**1. Check both workloads.** The SDK verifies each token: signed by Google's attestation service (checked against Google's published keys), hardware is AMD SEV, software is the production Confidential Space image, debug disabled, container image digest matches the published build, keys match, fresh nonce. Any failure stops the agent.
 
 **2. Open the tunnel.** TLS to the relay, pinned to the key in its receipt. The agent can reach only the tunnel (firewall rule), so nothing leaks around it.
 
@@ -110,7 +112,7 @@ Issuer → Merchant:  valid + signed claim "issuer owes you $4.30 total"
 Merchant → Agent:   the data
 ```
 
-**6. Merchant claims (the commitment).** Each claim is a running total signed with the issuer's attested key. The merchant verifies the signature against the key in the issuer's hardware receipt. The enclave also attests "claims outstanding ≤ funds held" (proof of reserves). Honest limit: without an AP4M channel per merchant, this is a signed, provably backed promise, not an on-chain lock.
+**6. Merchant claims (the commitment).** Each claim is a running total signed with the issuer's attested key. The merchant verifies the signature against the key in the issuer's attestation token. The issuer also signs "claims outstanding ≤ funds held" (proof of reserves). Honest limit: without an AP4M channel per merchant, this is a signed, provably backed promise, not an on-chain lock.
 
 **7. Payouts.** At fixed times, the issuer sends each merchant its total in RLUSD on the XRPL EVM sidechain, mixed across all customers. The chain shows "issuer → merchant," never which agent bought what.
 
@@ -147,19 +149,19 @@ Merchant → Agent:   the data
 
 ## 7. Components
 
-**Agent SDK (TypeScript).** Verifies both enclaves. Opens the tunnel. Blinds and unblinds tokens. Handles the `blindtoken` 402 scheme. Signs the AP4M top-up voucher. Per-call and daily caps in code, outside the model. Never falls back to a plain wallet payment.
+**Agent SDK (TypeScript).** Verifies both attestation tokens. Opens the tunnel. Blinds and unblinds tokens. Handles the `blindtoken` 402 scheme. Signs the AP4M top-up voucher. Per-call and daily caps in code, outside the model. Never falls back to a plain wallet payment.
 
 **The agent (AgentCore).** Makes money decisions on screen: compares the merchant's two services on price, decides what's worth buying, refills when low. Example: `Analytics $0.40. Filings $1.20. Filings needed. Buying both. Budget left: $8.40.`
 
-**Relay (Go, Nitro Enclave #1).** HTTPS CONNECT proxy. TLS ends inside the enclave. Takes tokens for bandwidth. Rate-limits its attestation endpoint.
+**Relay (TypeScript, Confidential Space VM #1).** HTTPS CONNECT proxy. TLS ends inside the confidential VM. Takes tokens for bandwidth. Rate-limits its attestation endpoint.
 
-**Issuer (TypeScript or Python, Nitro Enclave #2).** Token signing key made in the enclave. `/issue` behind AP4M x402. `/verify` (read-only) and `/settle` (spent list + tab + signed claim). Payout job at fixed times. Refuses to issue beyond funds held. Outbound calls through a vsock proxy.
+**Issuer (TypeScript, Confidential Space VM #2).** Token signing key made inside the confidential VM. `/issue` behind AP4M x402. `/verify` (read-only) and `/settle` (spent list + tab + signed claim). Payout job at fixed times. Refuses to issue beyond funds held. Outbound calls go out normally. AMD SEV encrypts the VM's memory.
 
 **Merchant (one, two services).** "On-chain analytics" and "filings," different whole-token prices. Accepts the `blindtoken` scheme, sends tokens to the issuer.
 
 **Spy bot.** Left screen: a normal agent paying with plain x402 on XRPL through t54. The bot loads the XRPL AI Hub directory (address → service, price), streams payments, matches price to service, groups wallets by funder. Prints only what the chain shows. Proven on mainnet.
 
-**Libraries.** Blind RSA: `blindrsa-ts` (TypeScript), `circl` (Go). AP4M: `ap4m-hackathon-sdk.js`, `ap4m-x402.mjs`, `AGENTS.md` (start with Demo 1, then Demo 2). x402 on XRPL: t54 docs have TypeScript and Python clients. Nitro: an existing attestation verifier; check the AWS root cert hash by hand.
+**Libraries.** Blind RSA: `blindrsa-ts` (TypeScript), `circl` (Go). AP4M: `ap4m-hackathon-sdk.js`, `ap4m-x402.mjs`, `AGENTS.md` (start with Demo 1, then Demo 2). x402 on XRPL: t54 docs have TypeScript and Python clients. Confidential Space: verify the attestation JWT against Google's published keys (OIDC discovery).
 
 ---
 
@@ -169,11 +171,11 @@ Merchant → Agent:   the data
 |---|---|
 | AP4M top-up by the agent (Demo 1, then Demo 2 pattern) | Must-have |
 | Blind tokens + issuer `/issue` `/verify` `/settle` | Must-have |
-| Issuer in Nitro + attestation check + tamper demo | Must-have |
+| Issuer in Confidential Space + attestation check + tamper demo | Must-have |
 | Merchant with two services + agent money decisions | Must-have |
 | Spy bot (left screen) | Must-have |
 | Quicknode for chain calls | Free, do it |
-| Relay (VPN) in Nitro Enclave #1 | After must-haves, about 3 to 5 hours |
+| Relay (VPN) in Confidential Space VM #1 | After must-haves, about 3 to 5 hours |
 | Merchant payouts in batches | After relay |
 | AgentCore wrap | If cheap |
 | Ledger approval for over-limit refills | Last |
@@ -181,7 +183,7 @@ Merchant → Agent:   the data
 | Stream | Hours 0 to 12 | Hours 12 to 20 | Hours 20 to 26 |
 |---|---|---|---|
 | Payments | AP4M Demo 1, then agent top-up via 402 | Issuer token signing, `/verify` `/settle`, claims | Batched payouts |
-| Enclaves | Issuer enclave boots, keys in receipt | SDK verification, tamper demo | Relay enclave |
+| Confidential VMs | Issuer VM boots, keys in token | SDK verification, tamper demo | Relay VM |
 | Agent + merchant | Merchant, two services, token scheme | Agent money decisions, caps | AgentCore wrap |
 | Demo | Spy bot on mainnet + left-screen agent | Split-screen UI | Closing slide |
 
@@ -196,7 +198,7 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 3. **0:30 Left screen.** A normal agent pays with plain x402. The spy bot prints its vendors, amounts, times and funder group.
 4. **1:00 Right screen.** Our agent hits a 402 on its low balance, signs an AP4M voucher, refills. `VoucherRedeemed` on the explorer, RLUSD at the issuer.
 5. **1:30** It compares prices, buys through the relay with tokens. The spy bot sees nothing about it. The merchant sees the relay's IP.
-6. **2:00 Proof.** Enclave receipts verified live. A modified issuer is refused.
+6. **2:00 Proof.** Attestation tokens verified live. A modified issuer is refused.
 7. **2:20 Safety.** Daily cap reached. The agent stops. (Ledger approval if built.)
 8. **2:35 Numbers.** Spy bot accuracy vs number of agents. Payment speed: ours vs about 4 s for plain x402.
 9. **2:50 Close.** "Three layers, and no one sees the whole picture. Agents will do most of the buying soon. We make it confidential, and we prove it."
@@ -207,7 +209,7 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 
 > "x402 made agent payments less private than a card. Every payment publishes your agent's spending record forever, and the facilitator sees every wallet next to every URL. Agents rotate wallets to hide, and on mainnet most of them were funded straight from an exchange, which knows who you are.
 >
-> We give agents confidential payments. The agent refills its budget on its own through Mastercard's AP4M, then pays any merchant with blind tokens our issuer can't trace, through an attested relay that hides its IP. Both run in AWS Nitro Enclaves, so you verify our code instead of trusting us. Nobody sees both who your agent is and what it buys."
+> We give agents confidential payments. The agent refills its budget on its own through Mastercard's AP4M, then pays any merchant with blind tokens our issuer can't trace, through an attested relay that hides its IP. Both run in Google Cloud Confidential Space on AMD SEV hardware, so you verify our code instead of trusting us. Nobody sees both who your agent is and what it buys."
 
 ---
 
@@ -219,9 +221,9 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 
 **"Isn't this a mixer?"** "Every funder is known at top-up. Spending is confidential from the public and from us. Owners keep receipts. It works like a corporate card."
 
-**"Why trust your issuer?"** "You don't have to. Even if it logged everything, blind signatures stop it linking tokens to buyers. And it runs in a Nitro Enclave you can verify."
+**"Why trust your issuer?"** "You don't have to. Even if it logged everything, blind signatures stop it linking tokens to buyers. And it runs in Google Confidential Space, where you can verify the exact container image."
 
-**"You hold the money. Aren't you the new middleman?"** "You trust us with your money, not your secrets. Reserves are attested in the enclave."
+**"You hold the money. Aren't you the new middleman?"** "You trust us with your money, not your secrets. Reserves are signed by the attested issuer."
 
 **"How big is this market?"** "Early. About $30K settled on XRPL, about $19M of real x402 spending across all chains. We're building the privacy layer before the money arrives."
 
@@ -233,24 +235,25 @@ Hours 26 to 29: freeze, rehearse three times. Mastercard needs a **live** run.
 
 ## 12. Security must-fixes
 
-- Reject debug-mode attestations (all-zero PCRs).
-- Expected code hashes from a reproducible build.
+- Reject tokens from the debug Confidential Space image (debug must be disabled).
+- Expected container image digests from a reproducible build (`infra/gcp/expected.json`).
 - One issuer signing key, inside the receipt. The SDK checks it, so the issuer can't tag users.
 - Spent-list check across all merchants.
 - Caps in code, outside the model. Refuse a 402 above the price cap.
 - HTTPS only through the relay. Agent firewalled to the tunnel.
 - Relay and issuer on separate machines.
 - Rate-limit attestation endpoints.
-- Don't restart enclaves during the demo: keys and the spent list live in memory.
+- Don't restart the confidential VMs during the demo: keys and the spent list live in memory.
 
 ---
 
 ## 13. Honest limits
 
 - Timing can link a top-up to spending when few people use it. Fixed bundle sizes and early top-ups help. It improves with users.
-- The AWS hosts see network timing. Enclaves hide data, not traffic patterns.
+- Google's hosts see network timing. Confidential VMs hide memory, not traffic patterns.
+- We trust Google's attestation service and AMD SEV. Say "hardware-attested by AMD SEV, verified by Google".
 - One relay hop: the relay sees agent IP and destination. Its verified code doesn't log. Two hops is roadmap.
-- In the demo our team runs both enclaves. Say so.
+- In the demo our team runs both VMs. Say so.
 - An agent can reveal itself with logins, API keys or revealing queries.
 - Merchant claims are signed and reserve-backed, not on-chain locks.
 - RLUSD clawback is enabled on the main ledger.
@@ -313,7 +316,7 @@ Hackathon: strong. Business today: tiny dollar market, a bet on growth. After th
 | Risk | Fallback |
 |---|---|
 | Teams can't use AP4M for issuer top-ups | Ask the booth early. Fallback: agent pays our merchant directly via AP4M for one service, tokens for the rest |
-| Nitro networking fails | Run the issuer outside the enclave, keep the attestation demo, say so |
+| Confidential Space deploy fails | Run the issuer as a normal container with mock attestation, say so |
 | Relay not done | Skip it. Say "merchants see the agent's IP until the relay ships" |
 | t54 testnet down (left screen) | Show the mainnet spy bot output instead |
 | Live demo breaks | Restart the run. No recording for Mastercard |
@@ -347,6 +350,6 @@ Hackathon: strong. Business today: tiny dollar market, a bet on growth. After th
 - [ ] Agent wallet with XRP gas, funding wallet, issuer payout address (all different)
 - [ ] Quicknode track joined. AWS and Ledger tracks selected
 - [ ] Must-haves working end to end
-- [ ] Tests: tampered enclave refused, debug mode refused, wrong key refused, replayed receipt refused, double spend rejected, price cap holds, injected "buy 500 more" blocked
+- [ ] Tests: tampered image refused, debug mode refused, wrong key refused, replayed receipt refused, double spend rejected, price cap holds, injected "buy 500 more" blocked
 - [ ] Benchmarks measured: payment speed, spy bot accuracy vs agents
 - [ ] Live run rehearsed three times

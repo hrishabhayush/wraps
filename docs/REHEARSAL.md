@@ -71,9 +71,19 @@ The live local merchant signs settlement requests. Set `MERCHANT_AUTH_PRIVATE_KE
 
 For a new canary, generate a merchant key with `npm run merchant:auth-key -- merchant-research-data`, keep the private line local, and add only the matching public map entry to the canary issuer configuration before building its image. Do not enable enforcement on the production issuer until every production settlement client has a registered credential.
 
-## Current live preflight
+## Current production status
 
-On 2026-10-25, the latest unmodified `npm run demo:preflight` reached both VMs but refused their running images: issuer reported `sha256:b02a233a401ab19b31cbb9bcfa71f1d080e67ce2d6e19c0745a2413616aa0a54` while `expected.json` requires `sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea`; relay reported `sha256:f6831b65a31668b167d5ab07e3a71b2d98f3d9fb02e20553e986218737433ef8` while `expected.json` requires `sha256:c1ffed0e504db15584d25dcdd0c742f1781e31ae7d64525c5750962d62b9d55e`. Both public XRPL nodes and `cloudflared` were reachable. A prior read-only `/health` probe reported `merchantAuth: legacy-open`; the current preflight could not verify that mode after rejecting the issuer digest. The local merchant signing key is also not configured. The relay's `/wireguard-attestation` returned a valid receipt for a 32-byte hex nonce and rejected a 16-byte nonce with HTTP 400, but authorized WireGuard packet forwarding remains unvalidated. No full live rehearsal is counted. Rebuild from the reviewed source and update the expected digests before attempting the canary; do not bless these unverified running digests.
+On 2026-10-25, a read-only `npm run demo:preflight` against the existing production VMs reached both services but refused their running images: issuer reported `sha256:b02a233a401ab19b31cbb9bcfa71f1d080e67ce2d6e19c0745a2413616aa0a54` while `expected.json` requires `sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea`; relay reported `sha256:f6831b65a31668b167d5ab07e3a71b2d98f3d9fb02e20553e986218737433ef8` while `expected.json` requires `sha256:c1ffed0e504db15584d25dcdd0c742f1781e31ae7d64525c5750962d62b9d55e`. A prior read-only `/health` probe reported `merchantAuth: legacy-open`. Production was not redeployed or changed during the rehearsal.
+
+## Canary rehearsal results (2026-10-25)
+
+Built disposable issuer and relay images from the reviewed integration tree and deployed side-by-side Confidential Space canaries in `us-central1`. The issuer digest was `sha256:24417ce56e84ec5dbba8defbf940626ae8b771a93a1c7e2c8c4bfd55a3222453`; the relay digest was `sha256:e176825fe6e6ce4ec0e16ff271348c7756d652554a7059d50b536e42de088267`. The issuer reported merchant authentication `enforced`; preflight verified both nonce-bound attestations, exact image digests, TLS key pins, and the issuer connection through the attested relay. The demo used a temporary merchant key registered only in the canary image.
+
+Three runs completed against those same running VMs, without restarting either workload. Each used a mock top-up and mock merchant payout; AP4M and real funds were not used. Each run completed a signed merchant settlement, and the merchant's forwarded client IP matched the relay IP. The live spy panel observed 16, 16, and 17 XRPL mainnet payment events, respectively, with 15 funder events and no warnings in each run. These live observations are not an accuracy benchmark against ground truth.
+
+A separate live tamper probe changed the expected issuer digest. The SDK refused with `IMAGE_MISMATCH` before top-up or purchase. A separate WireGuard check used one mock-funded token for a 10 MB peer, verified a live handshake from a temporary client VM, and confirmed an HTTPS egress request exited as the canary relay IP. The client route was limited to the test endpoint. All canary VMs, the client VM, and temporary firewall rules were deleted after the checks; production VMs and the production WireGuard firewall rule were left unchanged.
+
+The canary's GCS/KMS snapshots were encrypted, but the store does not prevent rollback to an older snapshot. No restart-recovery or rollback-resistance claim was tested. Keep SEC-06/INF-24 open for production until an external monotonic anchor is in place. The live top-up and payout rails also remain mocked, so these runs do not satisfy Mastercard's live-payment requirement.
 
 ## Local mock rehearsal evidence
 
@@ -89,6 +99,6 @@ These runs validate local behavior only and do not count toward the three live r
 
 | Run | Date | Issuer + relay verified | Wrong digest refused | Mainnet spy events | Merchant saw relay IP | Outcome / issue |
 |---|---|---|---|---|---|---|
-| 1 |  |  |  |  |  |  |
-| 2 |  |  |  |  |  |  |
-| 3 |  |  |  |  |  |  |
+| 1 | 2026-10-25 | Yes | Separate live probe passed (`IMAGE_MISMATCH`) | 16 payments / 15 funders | Yes | Completed; mock top-up and payout |
+| 2 | 2026-10-25 | Yes | Separate live probe passed (`IMAGE_MISMATCH`) | 16 payments / 15 funders | Yes | Completed; mock top-up and payout |
+| 3 | 2026-10-25 | Yes | Separate live probe passed (`IMAGE_MISMATCH`) | 17 payments / 15 funders | Yes | Completed; mock top-up and payout |

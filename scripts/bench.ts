@@ -5,13 +5,14 @@ import { MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
 import { Merchant } from '@wraps/merchant';
 import { startIssuer } from '@wraps/issuer';
 import { MockTopUpWallet, PrivatePayClient } from '@wraps/sdk';
-import { DEFAULT_SIM, formatTable, simulate } from '../packages/spybot/src/sim';
+import { DEFAULT_SIM, formatReport, report } from '../packages/spybot/src/sim';
 
 const { values } = parseArgs({
   options: {
     samples: { type: 'string', default: '50' },
     warmup: { type: 'string', default: '5' },
     agents: { type: 'string', default: '1,5,20,100' },
+    'payout-min': { type: 'string', default: '5,60,360,1440' },
     trials: { type: 'string', default: String(DEFAULT_SIM.trials) },
     seed: { type: 'string', default: String(DEFAULT_SIM.seed) },
     json: { type: 'boolean', default: false },
@@ -23,11 +24,13 @@ const warmupCount = Number(values.warmup);
 const trials = Number(values.trials);
 const seed = Number(values.seed);
 const agentCounts = values.agents.split(',').map(Number);
+const intervals = values['payout-min'].split(',').map(Number);
 if (!Number.isInteger(sampleCount) || sampleCount < 1 || sampleCount > 5000) throw new Error('--samples must be an integer from 1 to 5000');
 if (!Number.isInteger(warmupCount) || warmupCount < 0 || warmupCount > 500) throw new Error('--warmup must be an integer from 0 to 500');
 if (!Number.isInteger(trials) || trials < 1) throw new Error('--trials must be a positive integer');
 if (!Number.isFinite(seed)) throw new Error('--seed must be a number');
 if (agentCounts.some((n) => !Number.isInteger(n) || n < 1)) throw new Error('--agents must be comma-separated positive integers');
+if (intervals.some((n) => !Number.isFinite(n) || n <= 0)) throw new Error('--payout-min must be comma-separated positive minutes');
 
 const quiet = () => {};
 const verifier = new MockAttestationVerifier({ expectedPcrs: mockPcrs('issuer') });
@@ -73,14 +76,16 @@ try {
   };
 
   const simParams = { ...DEFAULT_SIM, trials, seed };
-  const privacy = agentCounts.map((agents) => simulate({ ...simParams, agents }));
+  const privacy = report(simParams, agentCounts, intervals);
   if (values.json) {
     process.stdout.write(JSON.stringify({ latency, privacy, simulation: simParams }, null, 2) + '\n');
   } else {
-    process.stdout.write('Paid-call latency (local mock flow; not a Nitro or ledger benchmark)\n');
+    process.stdout.write('Paid-call latency, measured locally (local HTTP servers, mock attestation and rails; not a Nitro, Confidential Space or ledger benchmark)\n');
     process.stdout.write(`samples=${sampleCount}, warmup=${warmupCount} · p50 ${latency.p50Ms} ms · p95 ${latency.p95Ms} ms · min ${latency.minMs} ms · max ${latency.maxMs} ms\n\n`);
-    process.stdout.write(`Watcher attribution accuracy (${trials} seeded trials; seed ${seed})\n`);
-    process.stdout.write(formatTable(privacy) + '\n');
+    process.stdout.write(`Watcher inference, simulated (${trials} seeded trials; seed ${seed}).\n`);
+    process.stdout.write('Realistic: the watcher sees only top-ups and one payout total per merchant per interval.\n');
+    process.stdout.write("Oracle: the watcher also sees every hidden call's exact time and merchant. Upper bound, not observable on chain.\n\n");
+    process.stdout.write(formatReport(privacy) + '\n');
   }
 } finally {
   await merchant.close();

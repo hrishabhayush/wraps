@@ -127,34 +127,70 @@ Events: `directory`, `catalog`, `payment`, `funder`, `progress`, `cluster`, `ret
 
 ## Simulation (DEM-03)
 
-`npm run sim` asks: if a watcher sees every top-up and every payout, how often can it link a paid call to the right agent?
+`npm run sim` asks: from public chain data alone, what can a watcher infer about which agent paid which merchant?
 
-**Model.**
+**Day model.**
 
-- N agents. Each tops up once, at a random time in the first 12 hours of a 24-hour day. The top-up is public: wallet and time.
-- After its top-up, each agent makes 20 paid calls. The gap from top-up to each call is exponential with a mean of 120 minutes.
-- Plain x402: each call is an on-chain payment from the agent's wallet. The watcher reads the payer, so it is always right.
-- Our system: calls spend blind tokens and leave no per-call trace. The issuer pays merchants in one batch every 60 minutes. The watcher learns only which payout window a call fell in.
-- Naive timing linker: it gives every call in a window to the agent with the most recent top-up before the window closes.
-- Score: the share of calls given to the right agent. 200 seeded trials per row.
+- N agents and M = 10 merchants over a 24-hour day.
+- Each agent tops up once, at a random time in the first 12 hours, with the same 20-token bundle.
+- Each agent has one home merchant that gets 60% of its calls (`--home-share`). The other calls go to a random merchant.
+- The gap from top-up to each call is exponential with a mean of 120 minutes. Calls after 24 hours are dropped.
 
-**Result** (`npm run sim`, seed 42):
+**What the watcher sees.**
 
-| Agents (N) | Plain x402 | Batched blind tokens, timing linker | Random guess (1/N) |
-|---:|---:|---:|---:|
-| 1 | 100.0% | 100.0% | 100.0% |
-| 5 | 100.0% | 51.9% | 20.0% |
-| 20 | 100.0% | 14.7% | 5.0% |
-| 100 | 100.0% | 1.6% | 1.0% |
+- Plain x402: every call is an on-chain payment from the agent's wallet. The watcher reads the payer, so every score is 100%.
+- Our system, **realistic mode**: only what the chain shows. Each top-up (wallet, amount, time). Per payout interval, one issuer → merchant total for each merchant. No single call is ever visible. `publicBatches()` builds this view and `inferFromBatches()` takes only top-ups and batches.
+- Our system, **oracle mode**: an upper bound. The watcher also sees every hidden call on its own, with exact time and merchant. Only the payer is hidden. The chain does not show this.
 
-The payout interval matters. With payouts every 5 minutes the linker gets 59.8% / 24.6% / 5.0% for N = 5 / 20 / 100. With one payout a day it falls to a random guess. Try `npm run sim -- --payout-min 5`.
+**The watcher.** It knows the day model. For each batch (or call) it computes how likely each agent is from the top-up times. It runs EM over each agent's merchant habits. It ends with a probability over agents for each batch.
+
+**Scores.** Ground truth is used only to score.
+
+- Merchant top spender: for each merchant, is the watcher's most likely top spender one of the agents that really spent most there?
+- Payer probability: the average probability the watcher puts on the true payer of a token.
+- Spend share: the share of spend whose payer is the watcher's best guess for its batch.
+
+**Result** (`npm run sim`, 200 seeded trials, seed 42):
+
+**Merchant top spender named correctly**
+
+| Agents (N) | Plain x402 | Realistic, payouts every 5 min | Realistic, payouts every 1 h | Realistic, payouts every 6 h | Realistic, payouts every 24 h | Oracle (per-call view) | Random guess |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| 5 | 100.0% | 78.2% | 74.5% | 57.3% | 26.9% | 78.3% | 27.8% |
+| 20 | 100.0% | 48.5% | 37.4% | 16.9% | 7.0% | 49.5% | 6.3% |
+| 100 | 100.0% | 10.0% | 6.0% | 3.0% | 1.9% | 10.8% | 1.4% |
+
+**Probability the watcher puts on the true payer**
+
+| Agents (N) | Plain x402 | Realistic, payouts every 5 min | Realistic, payouts every 1 h | Realistic, payouts every 6 h | Realistic, payouts every 24 h | Oracle (per-call view) | Random guess |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| 5 | 100.0% | 63.4% | 59.2% | 41.0% | 20.0% | 63.8% | 20.0% |
+| 20 | 100.0% | 23.5% | 19.5% | 10.4% | 5.0% | 23.9% | 5.0% |
+| 100 | 100.0% | 4.3% | 3.6% | 2.0% | 1.0% | 4.4% | 1.0% |
+
+**Share of spend whose payer is the watcher's best guess**
+
+| Agents (N) | Plain x402 | Realistic, payouts every 5 min | Realistic, payouts every 1 h | Realistic, payouts every 6 h | Realistic, payouts every 24 h | Oracle (per-call view) | Random guess |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% |
+| 5 | 100.0% | 73.0% | 68.7% | 50.3% | 20.0% | 73.7% | 20.0% |
+| 20 | 100.0% | 35.6% | 28.8% | 13.7% | 5.0% | 36.5% | 5.0% |
+| 100 | 100.0% | 8.1% | 5.7% | 2.8% | 1.0% | 8.3% | 1.0% |
+
+**Compared with the earlier version.** The earlier simulation gave the watcher each call's payout window and a naive linker (latest top-up wins). It reported 51.9% / 14.7% / 1.6% for N = 5 / 20 / 100 at hourly payouts. A call's window carries the same information as one total per interval, so the flaw was the weak linker, not extra data. The new watcher is stronger: 68.7% / 28.8% / 5.7% spend share at hourly payouts, and 55.8% / 21.7% / 5.3% even with no merchant habits (`--home-share 0`). The old numbers overstated privacy.
+
+**What the numbers say.** Short intervals leak. At 5 minutes, realistic mode is within a point of the oracle. Long intervals hide the payer: at one payout a day every score falls to a random guess. Privacy needs both a crowd and slow payouts.
 
 **What this does not show.**
 
 - One agent alone gets no privacy. Blind tokens need a crowd.
-- The model has no unique amounts, no IP or TLS fingerprints, no merchant-side knowledge, and no repeat habits across days. Each of these helps a real attacker.
-- The linker is naive on purpose. A smarter one can do better at small N.
-- The crowd is assumed active over the same day. A quiet hour shrinks it.
+- All agents buy the same bundle. Varied top-up amounts would leak more.
+- The model has no IP or TLS fingerprints, no merchant-side knowledge, and no habits across days. Each of these helps a real attacker.
+- EM is strong but not optimal. Oracle and realistic use the same method, so an oracle score below realistic by under a point is noise.
+
+Options: `--agents 1,5,20,100`, `--payout-min 5,60,360,1440`, `--trials`, `--calls`, `--merchants`, `--home-share`, `--delay-min`, `--seed`, `--json`.
 
 ## Limits of the live bot
 

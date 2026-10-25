@@ -43,7 +43,7 @@ if [ "${ROLE}" = relay ]; then
     [ -n "${WG_ENDPOINT:-}" ] || die "WG_ENDPOINT is required when WG_ENABLED=true"
     [ -n "${WG_INTERFACE_ADDRESS:-}" ] || die "WG_INTERFACE_ADDRESS is required when WG_ENABLED=true"
     [ -n "${WG_PEERS_JSON:-}" ] || die "WG_PEERS_JSON is required when WG_ENABLED=true"
-    WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-ens4}"
+    WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-eth0}"
     for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
       [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "WireGuard metadata values cannot contain newlines"
     done

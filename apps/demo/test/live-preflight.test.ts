@@ -64,6 +64,7 @@ function deps(overrides: Partial<PreflightDependencies> = {}): PreflightDependen
     probeXrplNode: vi.fn(async () => {}),
     vmHint: vi.fn(async (role) => `check VM for ${role}`),
     checkMerchantTunnel: vi.fn(async () => 'cloudflared available'),
+    checkDemoMerchantKey: vi.fn(),
     ...overrides,
   };
 }
@@ -94,5 +95,14 @@ describe('live demo preflight checklist', () => {
     expect(result.checks.find((check) => check.name === 'Relay image digest matches expected.json')?.passed).toBe(false);
     expect(result.checks.find((check) => check.name === 'XRPL mainnet public nodes reachable')?.passed).toBe(true);
     expect(lines.at(-1)).toMatch(/Preflight failed/);
+  });
+
+  it('refuses rehearsal when the live merchant signing key is not configured', async () => {
+    const result = await runLivePreflight(config, deps({
+      checkDemoMerchantKey: () => { throw new Error('MERCHANT_AUTH_PRIVATE_KEY is missing'); },
+    }), () => {});
+    expect(result.passed).toBe(false);
+    expect(result.checks.find((check) => check.name === 'Live merchant signing key configured'))
+      .toMatchObject({ passed: false, detail: 'MERCHANT_AUTH_PRIVATE_KEY is missing' });
   });
 });

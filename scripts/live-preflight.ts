@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { AttestationError } from '@wraps/attestation';
-import { fetchAttestedIssuer, type AttestedIssuer, type Transport } from '@wraps/issuer';
+import { fetchAttestedIssuer, merchantPrivateKeyFromB64u, type AttestedIssuer, type Transport } from '@wraps/issuer';
 import { createPinnedRelayTransport, type PinnedRelayTransport } from '@wraps/sdk';
 import { createLiveVerifier, resolveLiveConfigForPreflight, vmAvailabilityHint, type LiveDemoConfig } from './live-config';
 
@@ -34,6 +34,7 @@ export interface PreflightDependencies {
   probeXrplNode(url: string): Promise<void>;
   vmHint(role: 'issuer' | 'relay'): Promise<string>;
   checkMerchantTunnel(): Promise<string>;
+  checkDemoMerchantKey(): void;
 }
 
 const defaultDependencies: PreflightDependencies = {
@@ -51,6 +52,11 @@ const defaultDependencies: PreflightDependencies = {
   probeXrplNode: probeXrplNode,
   vmHint: vmAvailabilityHint,
   checkMerchantTunnel,
+  checkDemoMerchantKey: () => {
+    const encoded = process.env.MERCHANT_AUTH_PRIVATE_KEY;
+    if (!encoded) throw new Error('MERCHANT_AUTH_PRIVATE_KEY is missing; configure the live merchant signing key locally');
+    merchantPrivateKeyFromB64u(encoded);
+  },
 };
 
 /** Executes a fully injectable checklist so tests never depend on live services. */
@@ -170,6 +176,14 @@ export async function runLivePreflight(
     add('Local merchant HTTPS tunnel available', true, await deps.checkMerchantTunnel());
   } catch (error) {
     add('Local merchant HTTPS tunnel available', false, errorMessage(error));
+  }
+
+  try {
+    deps.checkDemoMerchantKey();
+    add('Live merchant signing key configured', true,
+      'valid Ed25519 key; confirm its public key is in the issuer image map');
+  } catch (error) {
+    add('Live merchant signing key configured', false, errorMessage(error));
   }
 
   await relay?.close().catch(() => {});

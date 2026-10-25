@@ -3,6 +3,7 @@ import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
 import { AttestationError, type ConfidentialSpaceDetails, type VerifiedAttestation } from '@wraps/attestation';
 import { ResearchAgent, DEMO_TASKS } from '@wraps/agent';
+import { merchantPrivateKeyFromB64u } from '@wraps/issuer';
 import { Merchant } from '@wraps/merchant';
 import { MockTopUpWallet, PrivatePayClient, createPinnedRelayTransport, type PinnedRelayTransport } from '@wraps/sdk';
 import { createLiveVerifier, mismatchedDigest, resolveLiveConfig, vmAvailabilityHint, LiveConfigError, type LiveDemoConfig } from '../../../scripts/live-config';
@@ -102,9 +103,11 @@ export async function runLivePrivateAgent(
 
     publish('step', { message: 'Starting the local merchant against the live, attested issuer.' });
     currentRole = 'merchant';
+    const merchantAuthPrivateKey = merchantPrivateKeyFromB64u(process.env.MERCHANT_AUTH_PRIVATE_KEY ?? '');
     merchant = new Merchant({
       issuerUrl: liveConfig.issuerUrl,
       verifier: createLiveVerifier(liveConfig, 'issuer'),
+      authPrivateKey: merchantAuthPrivateKey,
       log: (message) => publish('merchant', { message }),
     });
     const localMerchantUrl = await merchant.start();

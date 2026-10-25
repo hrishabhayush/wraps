@@ -17,7 +17,7 @@ Detailed steps are in [REHEARSAL.md](REHEARSAL.md). This page is the short versi
 
 ## 45 minutes before
 
-The issuer and relay VMs stop on their own after 24 hours, so check them early.
+The issuer and relay VMs stop on their own after 12 hours, so check them early.
 
 1. **Check what is running:**
    ```sh
@@ -37,7 +37,7 @@ The issuer and relay VMs stop on their own after 24 hours, so check them early.
    ```sh
    npm run demo:preflight
    ```
-   **All 12 checks must be green**: issuer and relay reachable, both attestations verify, both image digests match, TLS keys pinned, issuer reachable through the relay, XRPL mainnet nodes reachable, cloudflared available. If one is red, the line says what to fix.
+   **Every check must be green**: issuer and relay reachability and attestations, both image digests, TLS pins, issuer routing through the relay, XRPL mainnet node reachability, merchant HTTPS tunnel, and the live merchant signing key. If one is red, the line says what to fix.
 
 ---
 
@@ -71,9 +71,9 @@ Stop with the **Stop** button or Ctrl-C. That closes the local merchant and the 
 | Why trust your issuer? | Blind signatures stop it linking a token to its buyer even if it logs everything. And it runs in Confidential Space with a Google-signed attestation you just watched us verify. |
 | Is the payment real? | Top-up in the demo uses a mock rail (AP4M is skipped). Real RLUSD payouts on XRPL EVM are built and tested on a local chain; no live testnet send yet. |
 | How private is it really? | Simulation, PR #7: with hourly payouts a watcher still pins 69% of spending at 5 agents and 6% at 100. Privacy needs a crowd and slow payouts. |
-| Is it faster? | Locally, a token payment takes about 1.8 ms (mock rails). Plain x402 on XRPL waits about 4 s for the ledger. Local number, not production. |
+| Is it faster? | The latest local mock paid-call benchmark measured p50 1.95 ms and p95 3.72 ms. Plain x402 on XRPL waits about 4 s for the ledger. The local measurement is not production latency. |
 | SEV or SEV-SNP? | AMD SEV, verified by Google. Not SNP. |
-| Is the WireGuard gateway attested? | The WireGuard path inside the Confidential Space relay is attested and was verified live (HTTPS 200 through the tunnel). The separate standalone gateway VM is not attested. |
+| Is the WireGuard gateway attested? | The relay serves a nonce-bound attestation receipt for its WireGuard settings. A temporary canary peer completed a handshake and HTTPS egress through the relay on 2026-10-25; production packet forwarding was not revalidated. The separate standalone gateway VM is not attested. |
 
 ---
 

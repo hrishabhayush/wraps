@@ -1,5 +1,7 @@
-// AWS Nitro attestation: STUBS. The infra lane (INF-12 to INF-14) owns the
-// enclave side. Fill these in once a real enclave returns documents.
+// AWS Nitro attestation: NOT USED. Stubs only.
+// The team's AWS account is on the Free plan, which cannot run Nitro Enclaves, so the
+// project moved to Google Cloud Confidential Space (see confidential-space.ts and
+// infra/gcp/). These stubs stay so the Nitro path can come back later.
 import { readFileSync } from 'node:fs';
 import {
   AttestationError,

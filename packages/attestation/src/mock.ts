@@ -175,6 +175,7 @@ export class MockAttestationVerifier implements AttestationVerifier {
       moduleId: doc.moduleId,
       timestamp: doc.timestamp,
       pcrs: doc.pcrs,
+      measurement: doc.pcrs['0'],
       publicKeysHash: doc.userData,
       nonce: doc.nonce,
     };

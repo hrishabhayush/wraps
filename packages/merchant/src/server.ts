@@ -8,6 +8,7 @@ import {
   SignedClaim,
   Transport,
   fetchAttestedIssuer,
+  issuerTransport,
   listenUrl,
   sendJson,
   verifyClaim,
@@ -31,6 +32,8 @@ export class Merchant {
   readonly claims: SignedClaim[] = [];
   private issuer?: AttestedIssuer;
   private readonly transport: Transport;
+  /** Calls to the issuer. Over https this is pinned to the attested TLS key. */
+  private issuerCall?: Transport;
   private readonly log: (msg: string) => void;
   server?: Server;
 
@@ -48,7 +51,9 @@ export class Merchant {
   /** Checks the issuer's attestation first, then listens. */
   async start(port = 0): Promise<string> {
     this.issuer = await fetchAttestedIssuer(this.opts.issuerUrl, this.opts.verifier, this.transport);
-    this.log(`issuer attestation verified (PCR0 ${this.issuer.attestation.pcrs['0'].slice(0, 12)}…)`);
+    this.issuerCall = issuerTransport(this.issuer, this.transport);
+    const pinned = this.issuer.tlsKey ? ', TLS key pinned' : '';
+    this.log(`issuer attestation verified (${this.issuer.attestation.format}, ${this.issuer.attestation.measurement.slice(0, 19)}…${pinned})`);
     this.server = createServer((req, res) => void this.handle(req, res));
     await new Promise<void>((r) => this.server!.listen(port, '127.0.0.1', r));
     return listenUrl(this.server);
@@ -121,7 +126,7 @@ export class Merchant {
   }
 
   private async callIssuer(path: string, body: unknown): Promise<{ ok: boolean; body: any }> {
-    const r = await this.transport(`${this.opts.issuerUrl}${path}`, {
+    const r = await this.issuerCall!(`${this.opts.issuerUrl}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),

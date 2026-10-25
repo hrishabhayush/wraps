@@ -6,6 +6,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@peculiar/x509": "^1.12.0",
-    "cbor-x": "^1.6.0"
+    "cbor-x": "^1.6.0",
+    "jose": "^5.10.0"
   }
 }

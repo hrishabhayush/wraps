@@ -32,8 +32,8 @@ export interface AttestationResponse {
   format: string;
   attestation: string;
   issuerName: string;
-  /** base64url public keys. Their hashPublicKeys() is in the attestation. */
-  publicKeys: { token: string; claim: string };
+  /** base64url public keys. Their hashPublicKeys() is in the attestation. "tls" is the SPKI of the TLS key, if served over https. */
+  publicKeys: { token: string; claim: string; tls?: string };
 }
 
 /** Running total the issuer owes a merchant. Signed with the attested claim key. */

@@ -34,6 +34,8 @@ export interface IssuerOptions {
   name?: string;
   provider: AttestationProvider;
   rail: TopUpRail;
+  /** SPKI of the TLS key, if the issuer serves https. It joins the attested key hash as "tls". */
+  tlsPublicKey?: Uint8Array;
   /** Most blinded requests in one /issue call. */
   maxBatch?: number;
   quoteTtlMs?: number;
@@ -59,7 +61,7 @@ export interface PayoutLine {
 
 export class IssuerCore {
   readonly name: string;
-  readonly publicKeys: { token: Uint8Array; claim: Uint8Array };
+  readonly publicKeys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array };
   private readonly tokenIssuer: TokenIssuer;
   private readonly verifier: TokenVerifier;
   private readonly spent = new Set<string>();
@@ -78,6 +80,7 @@ export class IssuerCore {
     this.tokenIssuer = new TokenIssuer(tokenKeys, this.name);
     this.verifier = new TokenVerifier(tokenKeys.publicKeyBytes, this.name);
     this.publicKeys = { token: tokenKeys.publicKeyBytes, claim: claimKeys.publicKeyBytes };
+    if (opts.tlsPublicKey) this.publicKeys.tls = opts.tlsPublicKey;
     this.log = opts.log ?? (() => {});
   }
 
@@ -99,7 +102,11 @@ export class IssuerCore {
       format: this.opts.provider.format,
       attestation,
       issuerName: this.name,
-      publicKeys: { token: b64u(this.publicKeys.token), claim: b64u(this.publicKeys.claim) },
+      publicKeys: {
+        token: b64u(this.publicKeys.token),
+        claim: b64u(this.publicKeys.claim),
+        ...(this.publicKeys.tls ? { tls: b64u(this.publicKeys.tls) } : {}),
+      },
     };
   }
 

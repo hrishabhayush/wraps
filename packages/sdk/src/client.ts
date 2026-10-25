@@ -10,6 +10,7 @@ import {
   TopUpWallet,
   Transport,
   fetchAttestedIssuer,
+  issuerTransport,
   tokensToRlusd,
 } from '@wraps/issuer';
 import { Token, TokenVerifier, blindTokens, encodeAuthorization, equalBytes, finalizeTokens } from '@wraps/tokens';
@@ -38,7 +39,8 @@ export class InsufficientTokensError extends Error {
 }
 
 export type SdkEvent =
-  | { type: 'attested'; pcr0: string }
+  /** measurement: PCR0 (mock) or container image digest (Confidential Space). pcr0 is kept as an alias. */
+  | { type: 'attested'; pcr0: string; measurement: string; format: string }
   | { type: 'topup-402'; tokens: number; amountRlusd: string; scheme: string }
   | { type: 'topup-done'; tokens: number; balance: number }
   | { type: 'paid'; url: string; price: number; balance: number; spentToday: number }
@@ -66,6 +68,8 @@ export interface PrivatePayOptions {
 
 export class PrivatePayClient {
   private issuer?: AttestedIssuer;
+  /** Calls to the issuer. Over https this is pinned to the attested TLS key. */
+  private issuerCall?: Transport;
   private tokenVerifier?: TokenVerifier;
   private tokens: Token[] = [];
   private spent = { day: '', tokens: 0 };
@@ -100,10 +104,13 @@ export class PrivatePayClient {
   /** Verifies the issuer's attestation. Nothing else works until this succeeds. Throws AttestationError. */
   async connect(): Promise<AttestedIssuer> {
     this.issuer = undefined;
+    this.issuerCall = undefined;
     const issuer = await fetchAttestedIssuer(this.opts.issuerUrl, this.opts.verifier, this.transport);
+    this.issuerCall = issuerTransport(issuer, this.transport);
     this.issuer = issuer;
     this.tokenVerifier = new TokenVerifier(issuer.tokenKey, issuer.issuerName);
-    this.emit({ type: 'attested', pcr0: issuer.attestation.pcrs['0'] });
+    const m = issuer.attestation.measurement;
+    this.emit({ type: 'attested', pcr0: m, measurement: m, format: issuer.attestation.format });
     return issuer;
   }
 
@@ -209,7 +216,8 @@ export class PrivatePayClient {
   }
 
   private async post(path: string, body: unknown, headers: Record<string, string> = {}) {
-    const res = await this.transport(`${this.attested().url}${path}`, {
+    const url = `${this.attested().url}${path}`;
+    const res = await this.issuerCall!(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
       body: JSON.stringify(body),

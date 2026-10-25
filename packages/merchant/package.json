@@ -6,6 +6,7 @@
   "exports": "./src/index.ts",
   "dependencies": {
     "@wraps/attestation": "*",
+    "@wraps/issuer": "*",
     "@wraps/tokens": "*"
   }
 }

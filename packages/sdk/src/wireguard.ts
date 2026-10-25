@@ -63,7 +63,11 @@ export async function fetchVerifiedWireGuardReceipt(
   };
 }
 
-/** Format a full IPv4 tunnel profile. Generate and retain the private key on the client device. */
+/**
+ * Format a Linux wg-quick profile with an output kill switch. Generate and retain
+ * the private key on the client device. Other platforms must use their native
+ * app's "block untunneled traffic" option instead of importing this profile.
+ */
 export function createWireGuardClientProfile(
   receipt: VerifiedWireGuardReceipt,
   clientPrivateKey: string,
@@ -85,11 +89,19 @@ export function createWireGuardClientProfile(
     `PrivateKey = ${clientPrivateKey}`,
     `Address = ${clientAddress}`,
     `DNS = ${dns}`,
+    // wg-quick assigns a fwmark for the default route; only marked WireGuard
+    // transport packets and local traffic may leave through the physical NIC.
+    'PostUp = iptables -I OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT',
+    'PostDown = iptables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT',
+    // The server deliberately does not forward IPv6. Block client IPv6 egress
+    // while this full-tunnel profile is active, including if the peer drops.
+    'PostUp = ip6tables -I OUTPUT ! -o %i -m addrtype ! --dst-type LOCAL -j REJECT',
+    'PostDown = ip6tables -D OUTPUT ! -o %i -m addrtype ! --dst-type LOCAL -j REJECT',
     '',
     '[Peer]',
     `PublicKey = ${receipt.serverPublicKey}`,
     `Endpoint = ${receipt.endpoint}:${receipt.listenPort}`,
-    'AllowedIPs = 0.0.0.0/0',
+    `AllowedIPs = ${receipt.clientAllowedIPs}`,
     'PersistentKeepalive = 25',
     '',
   ].join('\n');

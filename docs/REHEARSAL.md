@@ -67,7 +67,7 @@ The demo uses real issuer and relay attestations, but mock top-up and merchant p
 
 ## Current live preflight
 
-On 2026-10-25, the read-only preflight reached both VMs and the public XRPL nodes, and found `cloudflared` available. It did not pass attestation: the running issuer digest was `0df7b9d4797a71aa6bb093d050bdb3f253d9987476dd3c2b8ead8c8320aaa808` and the relay digest was `c88938e820d729dcd388492ece1fa68b15d632a1113e7ef04e1cd4fafb8ba9d3`; `infra/gcp/expected.json` still contains different digests. The live issuer also reported `legacy-open` merchant authentication. Both running images' Cloud Build source archives match their tagged source commits, which are on draft PR #55. No live rehearsal is counted until the images and merchant-auth mode are approved and the preflight is green.
+On 2026-10-25, the read-only preflight reached both VMs and the public XRPL nodes, and found `cloudflared` available. The running issuer digest was `0df7b9d4797a71aa6bb093d050bdb3f253d9987476dd3c2b8ead8c8320aaa808` and the relay digest was `c88938e820d729dcd388492ece1fa68b15d632a1113e7ef04e1cd4fafb8ba9d3`; `infra/gcp/expected.json` still contains different digests. Both Cloud Build source archives match their tagged source commits, which are on draft PR #55. With temporary digest overrides, issuer and relay attestations, TLS pins, and issuer-through-relay routing passed. The live issuer reported `legacy-open` merchant authentication, so the complete preflight remained red and no live rehearsal is counted.
 
 ## Record each rehearsal
 

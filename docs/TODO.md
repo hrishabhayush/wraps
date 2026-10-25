@@ -122,9 +122,9 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ## Follow-ups (from the Oct 25 review pass)
 
-- [ ] **FUP-01** PR #42 (INF-20, production forwarding for WireGuard in the relay): rebuild the relay image from committed source. The PR records a `-dirty` digest. Then merge.
-- [ ] **FUP-02** Close PR #22 (INF-09). PR #42 supersedes it (same files, newer image).
-- [ ] **FUP-03** Stop the test and debug VMs when nobody needs them: `wraps-relay-debug`, `wraps-relay-inf09-wireguard`, `wraps-wg-client-test`. Keep `wraps-issuer`, `wraps-relay`, `wraps-wg-gateway` for the demo. Release unused reserved IPs (`wraps-relay-inf09-test-ip`, and the others after the demo).
+- [~] **FUP-01** PR #42 (INF-20, production forwarding for WireGuard in the relay): rebuilt from committed source and verified live in production with tunneled HTTPS egress. The clean digest is pinned; waiting for a human to merge PR #42.
+- [x] **FUP-02** Close PR #22 (INF-09). Its `eth0` and WireGuard endpoint fixes are folded into PR #42.
+- [x] **FUP-03** Removed the temporary test/debug VMs (`wraps-relay-debug`, `wraps-wg-client-test`, `wraps-relay-inf28-debug`, and `wraps-relay-inf09-test`; `wraps-relay-inf09-wireguard` was already absent). Released `wraps-relay-inf09-test-ip`. Kept `wraps-issuer`, `wraps-relay`, and `wraps-wg-gateway`.
 - [ ] **FUP-04** Live testnet payout: fund an issuer wallet with testnet RLUSD and XRP for gas, then follow `packages/issuer/README.md` (`payout:dry-run`, `payout:once`).
 - [ ] **FUP-05** The standalone WireGuard gateway (PR #43) runs on a plain VM, outside Confidential Space: no attestation, no token metering. Don't describe it as attested.
 

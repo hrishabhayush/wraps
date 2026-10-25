@@ -66,6 +66,7 @@ export interface PayoutTx {
 const TRANSFER_SELECTOR = 'a9059cbb';
 const word = (hex: string) => hex.replace(/^0x/, '').toLowerCase().padStart(64, '0');
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+const fromUnitsText = (v: bigint, decimals: number) => (Number(v) / 10 ** decimals).toFixed(4);
 
 /**
  * SR8 equivalent: the only on-chain action the issuer signs for a payout is a plain
@@ -323,6 +324,43 @@ export class XrplEvmPayoutRail implements PayoutRail {
     if (!this.account) return 0; // legacy `send` hook: fees are the caller's business
     const wei = (await this.gasPrice()) * (this.opts?.maxGasPerTransfer ?? 100_000n) * BigInt(lines.length);
     return (Number(wei) / 1e18) * (this.opts?.xrpPriceRlusd ?? 5);
+  }
+
+  // --- sweep ---------------------------------------------------------------
+
+  /**
+   * Sends the whole RLUSD balance, then the XRP left after gas, to `to`. For an issuer whose key
+   * lives only in memory: run it before a planned restart, or the funds are stranded with the key.
+   */
+  async sweep(to: string): Promise<string[]> {
+    if (!this.opts || !this.account) throw new Error('sweep needs a payout key');
+    if (!EVM_ADDRESS.test(to)) throw new Error('bad sweep address');
+    if (this.busy) throw new Error('a payout batch is running; try again shortly');
+    this.busy = true;
+    try {
+      await this.prepare();
+      const from = this.account.address;
+      const gasPrice = await this.gasPrice();
+      let nonce = await this.nonce('pending');
+      const hashes: string[] = [];
+      const send = async (tx: { to: Hex; data?: Hex; value: bigint; gas: bigint }) => {
+        const raw = await this.account!.signTransaction({ type: 'legacy', chainId: this.chainId, nonce, gasPrice, ...tx });
+        await this.rpc<string>('eth_sendRawTransaction', [raw]);
+        hashes.push(keccak256(raw));
+        nonce++;
+      };
+      const rlusd = BigInt(await this.rpc<string>('eth_call', [{ to: this.opts.token, data: '0x70a08231' + word(from) }, 'latest']));
+      const data = ('0x' + TRANSFER_SELECTOR + word(to) + word(rlusd.toString(16))) as Hex;
+      const tokenGas = rlusd > 0n ? BigInt(await this.rpc<string>('eth_estimateGas', [{ from, to: this.opts.token, data, value: '0x0' }])) : 0n;
+      if (rlusd > 0n) await send({ to: this.opts.token as Hex, data, value: 0n, gas: tokenGas });
+      const xrp = BigInt(await this.rpc<string>('eth_getBalance', [from, 'latest']));
+      const left = xrp - (21_000n + tokenGas) * gasPrice;
+      if (left > 0n) await send({ to: to as Hex, value: left, gas: 21_000n });
+      this.log(`swept ${fromUnitsText(rlusd, this.decimals ?? 18)} RLUSD and ${fromUnitsText(left > 0n ? left : 0n, 18)} XRP to ${to}: ${hashes.join(', ') || 'nothing to send'}`);
+      return hashes;
+    } finally {
+      this.busy = false;
+    }
   }
 
   // --- sending ------------------------------------------------------------

@@ -13,6 +13,7 @@
 //   GET  /payouts?merchantId=<id>   signed payout records (amount, tx hash) for one merchant
 //   GET  /payouts/pending           admin: next payout batch and its transfers, nothing sent
 //   POST /payouts/run               admin: send one payout batch now
+//   POST /sweep                     anyone: empty the issuer's own wallet to the fixed sweep address
 // Admin routes need `authorization: Bearer <adminToken>`, or a loopback caller when no token is set.
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, IncomingMessage, Server } from 'node:http';
@@ -34,6 +35,8 @@ export interface IssuerServerOptions {
   payouts?: PayoutScheduler;
   /** Bearer token for admin routes. Without it, only loopback callers are allowed. */
   adminToken?: string;
+  /** Fixed address that POST /sweep empties the issuer's own wallet to. Anyone may trigger it. */
+  sweepTo?: string;
   /** Per-merchant settlement and payout-history authentication. No configured credentials means legacy-open compatibility mode. */
   merchantAuth?: MerchantAuthConfig;
   /** Logger used for the legacy-open startup warning. */
@@ -149,6 +152,16 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
           throw new HttpError(409, e.message);
         });
         return sendJson(res, 200, { ...info, paid, unpaid: core.pendingPayouts() });
+      }
+
+      if (route === 'POST /sweep') {
+        // Safe to open to anyone: the funds can only go to the address fixed in the attested image.
+        const rail = opts.payouts?.rail as { sweep?: (to: string) => Promise<string[]> } | undefined;
+        if (!opts.sweepTo || !rail?.sweep) throw new HttpError(404, 'not found');
+        const txs = await rail.sweep(opts.sweepTo).catch((e: Error) => {
+          throw new HttpError(409, e.message);
+        });
+        return sendJson(res, 200, { to: opts.sweepTo, txs });
       }
 
       throw new HttpError(404, 'not found');

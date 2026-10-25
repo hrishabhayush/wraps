@@ -225,6 +225,10 @@ export class PrivatePayClient {
     if (first.status !== 402) throw new Error(`expected 402 from /issue, got ${first.status}`);
     const req = (first.body as PaymentRequiredBody).accepts?.find((a) => a.scheme === this.opts.wallet.scheme);
     if (!req) throw new PaymentRefusedError('UNSUPPORTED_SCHEME', 'issuer offers no scheme this wallet can pay');
+    // An issuer with an attested wallet is paid there and nowhere else.
+    if (issuer.walletAddress && req.scheme !== 'mock-ap4m-voucher' && req.payTo.toLowerCase() !== issuer.walletAddress) {
+      throw new PaymentRefusedError('BAD_QUOTE', `issuer asked to be paid at ${req.payTo}, not its attested wallet ${issuer.walletAddress}`);
+    }
     if (req.tokens !== n || req.amountRlusd !== tokensToRlusd(n)) {
       throw new PaymentRefusedError('BAD_QUOTE', `issuer quoted ${req.amountRlusd} RLUSD for ${req.tokens} tokens, expected ${tokensToRlusd(n)} for ${n}`);
     }

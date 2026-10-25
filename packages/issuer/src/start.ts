@@ -28,6 +28,10 @@ export interface StartIssuerOptions {
   log?: (msg: string) => void;
   /** Defaults to the mock AP4M rail. */
   rail?: TopUpRail;
+  /** The issuer's own XRPL EVM wallet address, made in the enclave. It joins the attestation. */
+  walletAddress?: string;
+  /** Where POST /sweep sends the issuer wallet's funds. */
+  sweepTo?: string;
   /** More rails offered beside `rail` (for example XRPL EVM RLUSD beside the mock rail). */
   extraRails?: TopUpRail[];
   corsOrigins?: string[];
@@ -76,13 +80,14 @@ export async function startIssuer(opts: StartIssuerOptions = {}): Promise<Runnin
     extraRails: opts.extraRails,
     log,
     tlsPublicKey: tls?.spki,
+    walletAddress: opts.walletAddress,
     tokenKeyLifetimeMs: opts.tokenKeyLifetimeMs,
     minTokenLifetimeMs: opts.minTokenLifetimeMs,
     now: opts.now,
     stateStore: opts.stateStore,
   });
   const payouts = new PayoutScheduler(core, opts.payoutRail ?? new MockPayoutRail(log), opts.payoutIntervalMs ?? 30_000, opts.payoutCaps, log);
-  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins, payouts, adminToken: opts.adminToken, merchantAuth: opts.merchantAuth, log });
+  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins, payouts, adminToken: opts.adminToken, sweepTo: opts.sweepTo, merchantAuth: opts.merchantAuth, log });
   await new Promise<void>((r) => server.listen(opts.port ?? 0, opts.host ?? '127.0.0.1', r));
   payouts.start();
   return {

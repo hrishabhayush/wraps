@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { b64u } from '@wraps/attestation';
 import { blindTokens } from '@wraps/tokens';
-import { MockTopUpRail, MockTopUpWallet, PaymentRequirement, RunningIssuer, TopUpRail, startIssuer } from '../src/index';
+import { MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
+import { MockTopUpRail, MockTopUpWallet, PaymentRequirement, RunningIssuer, TopUpRail, fetchAttestedIssuer, startIssuer } from '../src/index';
 
 // A second rail that records what it redeemed, standing in for XRPL EVM.
 class FakeChainRail extends EventEmitter implements TopUpRail {
@@ -25,6 +26,7 @@ beforeAll(async () => {
   issuer = await startIssuer({
     rail: new MockTopUpRail(),
     extraRails: [chain],
+    walletAddress: chain.payTo,
     merchantAuth: { developmentMode: true },
     log: () => {},
     payoutIntervalMs: 3_600_000,
@@ -74,5 +76,10 @@ describe('issuer with two top-up rails', () => {
     // A mock voucher (no txHash) pointed at the chain quote: the chain rail must refuse it.
     const voucher = JSON.parse(Buffer.from(await new MockTopUpWallet().pay({ ...q, scheme: 'mock-ap4m-voucher' }), 'base64url').toString());
     expect((await post('/issue', { requests: await requests(1), payment: voucher })).status).toBe(402);
+  });
+
+  it('names its own wallet in the attestation', async () => {
+    const attested = await fetchAttestedIssuer(issuer.url, new MockAttestationVerifier({ expectedPcrs: mockPcrs('issuer') }));
+    expect(attested.walletAddress).toBe(chain.payTo.toLowerCase());
   });
 });

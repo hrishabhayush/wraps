@@ -54,6 +54,8 @@ export interface IssuerOptions {
   rail: TopUpRail;
   /** More rails offered beside `rail`, one per scheme. A quote names the scheme it was made for. */
   extraRails?: TopUpRail[];
+  /** The issuer's own XRPL EVM wallet (made in the enclave). It joins the attested key hash as "wallet". */
+  walletAddress?: string;
   /** SPKI of the TLS key, if the issuer serves https. It joins the attested key hash as "tls". */
   tlsPublicKey?: Uint8Array;
   /** Most blinded requests in one /issue call. */
@@ -122,7 +124,7 @@ export const DEFAULT_TOKEN_KEY_LIFETIME_MS = 30 * 24 * 3600_000;
 export class IssuerCore {
   readonly name: string;
   /** Current keys. `token` changes when a new key epoch starts. "tls" is the SPKI of the TLS key, if served over https. */
-  readonly publicKeys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array };
+  readonly publicKeys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array; wallet?: Uint8Array };
   private readonly epochs = new Map<string, KeyEpoch>();
   private current!: KeyEpoch;
   private readonly now: () => number;
@@ -152,6 +154,7 @@ export class IssuerCore {
     this.now = opts.now ?? Date.now;
     this.publicKeys = { token: tokenKeys.publicKeyBytes, claim: claimKeys.publicKeyBytes };
     if (opts.tlsPublicKey) this.publicKeys.tls = opts.tlsPublicKey;
+    if (opts.walletAddress) this.publicKeys.wallet = Buffer.from(opts.walletAddress.replace(/^0x/, ''), 'hex');
     this.addEpoch(tokenKeys);
     this.log = opts.log ?? (() => {});
     if (state) this.restoreState(state);
@@ -331,8 +334,9 @@ export class IssuerCore {
     // Snapshot one epoch and build every field from it, before the await. A rotation while the
     // provider attests must not mix keys from two epochs in one response.
     const epoch = this.current;
-    const keys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array } = { token: epoch.keys.publicKeyBytes, claim: this.publicKeys.claim };
+    const keys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array; wallet?: Uint8Array } = { token: epoch.keys.publicKeyBytes, claim: this.publicKeys.claim };
     if (this.publicKeys.tls) keys.tls = this.publicKeys.tls;
+    if (this.publicKeys.wallet) keys.wallet = this.publicKeys.wallet;
     const tokenKeys = this.tokenKeys(epoch);
     const attestation = await this.opts.provider.attest(nonce, hashPublicKeys(keys));
     return {
@@ -343,6 +347,7 @@ export class IssuerCore {
         token: b64u(keys.token),
         claim: b64u(keys.claim),
         ...(keys.tls ? { tls: b64u(keys.tls) } : {}),
+        ...(keys.wallet ? { wallet: b64u(keys.wallet) } : {}),
       },
       tokenKeyId: epoch.keyId,
       tokenKeyNotAfter: epoch.notAfter,

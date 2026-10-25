@@ -183,4 +183,22 @@ describe.skipIf(!hasAnvil)('XrplEvmPayoutRail on a local EVM (anvil, chain 14490
     expect(await balanceOf(token, a)).toBe(RLUSD('0.1'));
     expect(core.pendingPayouts()).toEqual([]);
   });
+
+  it('sweeps the whole RLUSD balance and the XRP left after gas to the fixed address', async () => {
+    // A fresh in-memory wallet, like the enclave makes at boot, funded with RLUSD and gas.
+    const key = ('0x' + Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex')) as Hex;
+    const me = privateKeyToAccount(key);
+    const token = await deployToken();
+    await sendFrom(funder, { to: token, data: transferData(me.address, RLUSD('3')) });
+    await rpc('anvil_setBalance', [me.address, '0x' + (10n ** 18n).toString(16)]);
+    const to = randomAddress();
+    const r = new XrplEvmPayoutRail({ token, payoutAddresses: {}, privateKey: key, rpc: RPC, pollMs: 20 });
+    const txs = await r.sweep(to);
+    expect(txs).toHaveLength(2);
+    for (let i = 0; i < 100 && !(await rpc('eth_getTransactionReceipt', [txs[1]])); i++) await sleep(20);
+    expect(await balanceOf(token, to)).toBe(RLUSD('3'));
+    expect(await balanceOf(token, me.address)).toBe(0n);
+    expect(BigInt(await rpc('eth_getBalance', [to, 'latest']))).toBeGreaterThan(9n * 10n ** 17n);
+    expect((await r.sweep(to)).length).toBeLessThanOrEqual(1); // at most XRP dust is left
+  });
 });

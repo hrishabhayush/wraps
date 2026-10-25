@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Page } from 'playwright';
 import { checkControl, controlPolicy } from './control';
 import { paymentConfig, purchase } from './browser-payment';
+import { parseAgentRequest, runGeneralAgent, openaiModel, type AgentRequest, type ResearchTools } from './general-agent';
+import { browserEnvironment, checkBrowserUrl } from './browser-safety';
 
 const port = Number(process.env.BROWSER_DEMO_PORT ?? 4176);
 const base = `http://127.0.0.1:${port}`;
@@ -16,6 +18,8 @@ const clients = new Set<ServerResponse>();
 const history: { type: string; message: string; at: string }[] = [];
 let browser: Browser | undefined, page: Page | undefined, frame: Buffer | undefined;
 let running = false, capturing = false;
+let activeRun: AbortController | undefined;
+const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 let network: { ip?: string; checkedAt?: string; error?: string } = {};
 let checking: Promise<typeof network> | undefined;
 
@@ -45,13 +49,11 @@ async function capture() {
   try { frame = await page.screenshot({ type: 'jpeg', quality: 70, timeout: 2500 }); } catch { /* Window may be navigating or closing. */ }
   finally { capturing = false; }
 }
-async function run() {
-  try {
-    publish('task', 'Research XRP transaction fees. Open the reference, then evaluate the paid report within a 1 RLUSD ceiling.');
+async function runDemo(request: AgentRequest, signal: AbortSignal) {
+    publish('task', `Scripted task: research XRP transaction fees, then evaluate the paid report within a ${request.budget} RLUSD ceiling.`);
     publish('mode', config.ready ? 'AP4M live payment enabled. One retained purchase operation.' : 'Preview: browser actions are real; sample payment challenge only. No vouchers signed or money spent.');
     await browser?.close();
-    const { AGENT_PRIVATE_KEY: _key, ...browserEnv } = process.env;
-    browser = await chromium.launch({ headless: process.env.BROWSER_DEMO_HEADLESS === '1', slowMo: 250, env: browserEnv });
+    browser = await chromium.launch({ headless: process.env.BROWSER_DEMO_HEADLESS === '1', slowMo: 250, env: browserEnvironment(process.env) });
     page = await browser.newPage({ viewport: { width: 1100, height: 740 }, serviceWorkers: 'block' });
     await page.goto(`${base}/research`);
     await page.getByLabel('Research topic').fill('XRP transaction fees');
@@ -77,18 +79,90 @@ async function run() {
     }
     const net = await checkNetwork();
     publish('network', net.ip ? `Agent egress: ${net.ip}; expected exit: ${expectedIp}.` : net.error!);
-    publish('decision', `Accept only a valid AP4M channel challenge costing at most ${config.maximum} RLUSD. The SDK checks this before signing.`);
-    const result = await purchase(process.env, net.ip ?? '', expectedIp, publish);
+    signal.throwIfAborted();
+    publish('decision', `Accept only a valid AP4M channel challenge costing at most ${request.budget} RLUSD. The SDK checks this before signing.`);
+    const result = await purchase(process.env, net.ip ?? '', expectedIp, publish, request.budget);
     publish('transaction', result.transactionHash);
     publish('complete', `Voucher redemption confirmed on-chain. Paid resource received. Operation: ${result.operation}.`);
     await page.goto(`${base}/research`);
     await page.locator('#result').evaluate((element, content) => { element.textContent = JSON.stringify(content, null, 2); }, result.resource);
     await capture();
+}
+
+async function requireExit() {
+  if (!config.ready) return;
+  const net = await checkNetwork();
+  if (net.ip !== expectedIp) throw new Error(`Connect Wraps first: agent IP ${net.ip ?? 'unavailable'} does not match ${expectedIp}.`);
+}
+
+async function runAgent(request: AgentRequest, signal: AbortSignal) {
+  if (!process.env.OPENAI_API_KEY) throw new Error('Set OPENAI_API_KEY in the terminal and restart this demo.');
+  await requireExit();
+  await browser?.close();
+  browser = await chromium.launch({ headless: process.env.BROWSER_DEMO_HEADLESS === '1', slowMo: 200, env: browserEnvironment(process.env) });
+  const context = await browser.newContext({ viewport: { width: 1100, height: 740 }, serviceWorkers: 'block', acceptDownloads: false });
+  await context.route('**/*', async route => {
+    try {
+      if (!['GET', 'HEAD'].includes(route.request().method())) return await route.abort();
+      await checkBrowserUrl(route.request().url());
+      await route.continue();
+    } catch { await route.abort().catch(() => {}); }
+  });
+  page = await context.newPage();
+  context.on('page', extra => { if (extra !== page) void extra.close(); });
+  page.setDefaultTimeout(12000);
+  await page.setContent('<!doctype html><html><body style="background:#0a0a0a;color:white;font:24px system-ui;padding:60px"><h1>wraps / Agent browser</h1><p>Preparing your research task…</p></body></html>');
+  let links: { index: number; text: string; url: string }[] = [];
+  const read = async () => {
+    const current = page!;
+    const title = await current.title();
+    const text = (await current.locator('body').innerText()).slice(0, 14000);
+    links = await current.locator('a[href]').evaluateAll(elements => elements
+      .filter(e => e.getClientRects().length && (e.textContent ?? '').trim())
+      .slice(0, 60).map((e, index) => ({ index, text: (e.textContent ?? '').trim().slice(0, 140), url: (e as HTMLAnchorElement).href })));
+    await capture();
+    publish('observation', `${title.slice(0, 140)} · ${current.url()}`);
+    return { url: current.url(), title, text, links };
+  };
+  const open = async (url: string) => {
+    signal.throwIfAborted();
+    const safe = await checkBrowserUrl(url);
+    await page!.goto(safe, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    return read();
+  };
+  const tools: ResearchTools = {
+    search: query => open(`https://www.google.com/search?q=${encodeURIComponent(query)}`),
+    open, read,
+    follow: index => {
+      const link = links.find(link => link.index === index);
+      if (!link) throw new Error('Link index is no longer available');
+      return open(link.url);
+    },
+    buy: async budget => {
+      await requireExit();
+      const net = await checkNetwork();
+      signal.throwIfAborted();
+      return purchase(process.env, net.ip ?? '', expectedIp, publish, budget);
+    },
+  };
+  await runGeneralAgent({ ...request, model, call: openaiModel(process.env.OPENAI_API_KEY), tools,
+    publish, checkNetwork: requireExit, signal,
+    reportDescription: config.ready ? 'A saved XRPL EVM testnet block snapshot: timestamp, block number, transaction count and gas usage. It is not current token pricing or a native XRPL report.' : 'No paid merchant configured. Use free sources only.',
+  });
+}
+
+async function run(request: AgentRequest) {
+  const control = new AbortController(); activeRun = control;
+  publish('task', request.task);
+  publish('mode', request.mode === 'agent' ? `Model agent · ${model} · task budget ${request.budget} RLUSD` : 'Scripted demonstration');
+  try {
+    if (request.mode === 'agent') await runAgent(request, control.signal);
+    else { await requireExit(); control.signal.throwIfAborted(); await runDemo(request, control.signal); }
   } catch (error) {
-    // SDK errors may contain merchant bodies; keep payment headers and private data out of the UI.
-    const message = error instanceof Error ? error.message : String(error);
-    publish('error', message.replace(/0x[0-9a-fA-F]{64,}/g, '[redacted]').slice(0, 240));
-  } finally { running = false; publish('status', 'Run finished. The browser stays open for inspection.'); }
+    let message = error instanceof Error ? error.message : String(error);
+    for (const secret of [process.env.AGENT_PRIVATE_KEY, process.env.OPENAI_API_KEY]) if (secret) message = message.split(secret).join('[redacted]');
+    publish('error', control.signal.aborted ? 'Run stopped. Any already submitted payment may still complete; retry using the same retained state.' : message.replace(/0x[0-9a-fA-F]{64,}/g, '[redacted]').slice(0, 300));
+  } finally { running = false; activeRun = undefined; publish('status', 'Run finished. The browser stays open for inspection.'); }
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -100,10 +174,19 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', base);
   if (req.method === 'POST' && url.pathname === '/api/run') {
     if (running) return json(res, 409, { error: 'A run is already active' });
-    running = true; void run(); return json(res, 202, { running });
+    try {
+      let body = '';
+      for await (const chunk of req) { body += chunk.toString(); if (Buffer.byteLength(body) > 8192) return json(res, 413, { error: 'Task request too large' }); }
+      const request = parseAgentRequest(JSON.parse(body), config.maximum);
+      if (request.mode === 'agent' && !process.env.OPENAI_API_KEY) return json(res, 409, { error: 'Set OPENAI_API_KEY in the terminal and restart the demo.' });
+      // Re-check after reading the body so concurrent requests cannot start two agents.
+      if (running) return json(res, 409, { error: 'A run is already active' });
+      running = true; void run(request); return json(res, 202, { running });
+    } catch { return json(res, 400, { error: `Enter a task, mode, and budget between 0 and ${config.maximum} RLUSD.` }); }
   }
+  if (req.method === 'POST' && url.pathname === '/api/stop') { activeRun?.abort(); publish('status', 'Stop requested. Already submitted payments cannot be cancelled.'); return json(res, 202, { stopping: running }); }
   if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
-  if (url.pathname === '/api/status') return json(res, 200, { running, payments: config.ready, missing: config.missing, maximum: config.maximum, network, expectedIp });
+  if (url.pathname === '/api/status') return json(res, 200, { running, payments: config.ready, missing: config.missing, maximum: config.maximum, modelReady: Boolean(process.env.OPENAI_API_KEY), model, network, expectedIp });
   if (url.pathname === '/frame.jpg') {
     if (!frame) { res.writeHead(204); return res.end(); }
     res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store' }); return res.end(frame);
@@ -138,7 +221,7 @@ const checks = setInterval(() => void checkNetwork(), 15000);
 void checkNetwork();
 server.listen(port, '127.0.0.1', () => console.log(`Browser agent demo: ${base} (${config.ready ? 'LIVE AP4M' : 'preview; payments disabled'})`));
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, async () => {
-  clearInterval(snapshots); clearInterval(checks);
+  activeRun?.abort(); clearInterval(snapshots); clearInterval(checks);
   await browser?.close();
   for (const client of clients) client.end();
   server.close();

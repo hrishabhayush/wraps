@@ -76,7 +76,7 @@ try {
   await new Promise<void>((resolve, reject) => { merchant!.server.once('error', reject); merchant!.server.listen(4180, '127.0.0.1', resolve); });
   console.log(`Merchant ready: ${resourceUrl}`);
   console.log(`Quoted price: 0.05 testnet RLUSD. Payout: ${channel.payout}. Channel: ${channelId}`);
-  console.log('Dashboard: http://127.0.0.1:4177 — starting it makes no purchase. Run research initiates the paid flow.');
+  console.log('Dashboard: http://127.0.0.1:4177 — enter a task and budget, then Run agent. Startup makes no purchase.');
   child = spawn(process.execPath, ['--import', 'tsx', 'apps/demo/src/browser-server.ts'], {
     cwd: new URL('..', import.meta.url), stdio: 'inherit', env: { ...process.env,
       AGENT_PRIVATE_KEY: key, AP4M_CHANNEL_ID: channelId, AP4M_RESOURCE_URL: resourceUrl,

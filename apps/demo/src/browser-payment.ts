@@ -1,5 +1,7 @@
-import { readFile, stat } from 'node:fs/promises';
-import { JsonRpcProvider, Wallet, parseUnits } from 'ethers';
+import { readFile, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { decodeX402PaymentSignature } from '@ap4m/sdk';
+import { JsonRpcProvider, Wallet, parseUnits, formatUnits } from 'ethers';
 
 export function paymentConfig(env: NodeJS.ProcessEnv) {
   const required = ['AP4M_RESOURCE_URL', 'AP4M_CHANNEL_ID', 'AP4M_STATE_DIR'];
@@ -22,10 +24,26 @@ export function paymentConfig(env: NodeJS.ProcessEnv) {
 }
 
 /** The vendor toolkit validates the channel, price, voucher and exact confirmed redemption. */
-export async function purchase(env: NodeJS.ProcessEnv, currentIp: string, expectedIp: string, publish: (type: string, message: string) => void) {
+export async function purchase(env: NodeJS.ProcessEnv, currentIp: string, expectedIp: string, publish: (type: string, message: string) => void, budget?: string) {
   const cfg = paymentConfig(env);
   if (!cfg.ready) throw new Error('Real AP4M payments are disabled or channel configuration is incomplete');
   if (!expectedIp || currentIp !== expectedIp) throw new Error('Agent egress does not match the configured VPN exit; payment blocked');
+  const maximum = budget ?? cfg.maximum;
+  if (!/^\d+(\.\d{1,18})?$/.test(maximum) || parseUnits(maximum, 18) > parseUnits(cfg.maximum, 18)) throw new Error('Task budget exceeds the server payment limit');
+  let retained;
+  try { retained = JSON.parse(await readFile(join(env.AP4M_STATE_DIR!, 'purchase.json'), 'utf8')); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  const identityMatches = retained?.intent?.channelId === env.AP4M_CHANNEL_ID && retained?.intent?.resourceUrl === cfg.resourceUrl && retained?.intent?.operation === 'xrp-research-1';
+  if (retained && !identityMatches) throw new Error('Saved purchase belongs to another resource or channel; keep its state for recovery');
+  const alreadyPaid = retained?.complete === true;
+  if (alreadyPaid) {
+    try {
+      const cached = JSON.parse(await readFile(join(env.AP4M_STATE_DIR!, 'result.json'), 'utf8'));
+      if (cached.channelId === env.AP4M_CHANNEL_ID && cached.resourceUrl === cfg.resourceUrl) return { ...cached.result, spentRlusd: '0', cached: true };
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
+  if (!alreadyPaid && parseUnits(maximum, 18) === 0n) throw new Error('This task has a zero payment budget');
+  if (retained && !alreadyPaid && retained.intent.maximumAmount !== parseUnits(maximum, 18).toString()) throw new Error('An unresolved payment must resume with its original budget; do not start a new purchase');
   let key = env.AGENT_PRIVATE_KEY?.trim();
   if (!key) {
     const keyFile = env.AP4M_AGENT_KEY_FILE!;
@@ -42,10 +60,10 @@ export async function purchase(env: NodeJS.ProcessEnv, currentIp: string, expect
   const provider = new JsonRpcProvider('https://rpc.testnet.xrplevm.org');
   try {
     const wallet = new Wallet(key, provider);
-    return await buyResource({
+    const result = await buyResource({
       context, provider, wallet, stateDirectory: env.AP4M_STATE_DIR!,
       resourceUrl: cfg.resourceUrl!, channelId: env.AP4M_CHANNEL_ID!,
-      maximumAmount: parseUnits(cfg.maximum, 18).toString(),
+      maximumAmount: alreadyPaid ? retained.intent.maximumAmount : parseUnits(maximum, 18).toString(),
       // Re-running this demo resumes this same purchase; it never invents a new payment intent.
       operation: 'xrp-research-1',
       requestFetch: async (url: string, init: RequestInit) => {
@@ -56,5 +74,10 @@ export async function purchase(env: NodeJS.ProcessEnv, currentIp: string, expect
         return response;
       },
     });
+    const record = JSON.parse(await readFile(join(env.AP4M_STATE_DIR!, 'purchase.json'), 'utf8'));
+    const amount = decodeX402PaymentSignature(record.header).accepted.amount;
+    const output = { ...result, amountWei: amount, spentRlusd: alreadyPaid ? '0' : formatUnits(amount, 18), cached: alreadyPaid };
+    await writeFile(join(env.AP4M_STATE_DIR!, 'result.json'), JSON.stringify({ channelId: env.AP4M_CHANNEL_ID, resourceUrl: cfg.resourceUrl, result: output }), { mode: 0o600 });
+    return output;
   } finally { provider.destroy(); }
 }

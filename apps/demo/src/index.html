@@ -41,6 +41,7 @@
       .btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); padding: 9px 14px; border-radius: 9px; cursor: pointer; }
       .btn:hover { border-color: #526273; }
       .btn.primary { background: var(--green); color: #07140f; border-color: var(--green); font-weight: 750; }
+      .btn.tamper { color: var(--amber); border-color: #725c32; background: #201b12; }
       .btn:disabled { opacity: .5; cursor: wait; }
       .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 4px 0 22px; }
       h1 { font-size: clamp(23px, 3vw, 34px); line-height: 1.15; letter-spacing: -.035em; margin: 0; }
@@ -92,6 +93,7 @@
         <div class="controls">
           <div class="live-state"><span id="dot" class="dot"></span><span id="state">Connecting to event stream</span></div>
           <button id="stop" class="btn" disabled>Stop</button>
+          <button id="tamper" class="btn tamper">Tamper test</button>
           <button id="start" class="btn primary">Start live demo</button>
         </div>
       </header>
@@ -139,6 +141,7 @@
           $('#dot').classList.toggle('on', Boolean(event.data.running));
           $('#state').textContent = event.data.message;
           $('#start').disabled = Boolean(event.data.running);
+          $('#tamper').disabled = Boolean(event.data.running);
           $('#stop').disabled = !event.data.running;
           return;
         }
@@ -153,6 +156,7 @@
         const type = document.createElement('span');
         type.className = 'event-type';
         type.textContent = event.type.replaceAll(':', ' · ');
+        if (event.type.startsWith('tamper')) type.style.color = 'var(--amber)';
         const time = document.createElement('span');
         time.className = 'event-time';
         time.textContent = new Date(event.at).toLocaleTimeString();
@@ -174,6 +178,8 @@
         if (event.type === 'reasoning' || event.type === 'warning' || event.type === 'error' || event.type === 'status' || event.type === 'issuer' || event.type === 'merchant' || event.type === 'retry') {
           return d?.message ?? JSON.stringify(d);
         }
+        if (event.type === 'tamper') return `${d.message}\nExpected PCR0 ${d.expectedPcr0.slice(0, 20)}… · running PCR0 ${d.actualPcr0.slice(0, 20)}…`;
+        if (event.type === 'tamper-refused') return d.message;
         if (event.type === 'funder') return `${d.account} funded ${d.funder ?? 'unknown'}${d.likelyExchange ? ' · likely exchange' : ''}`;
         return d == null ? 'Event received.' : JSON.stringify(d);
       }
@@ -187,15 +193,21 @@
         }
         return res;
       }
-      $('#start').addEventListener('click', async () => {
+      async function beginRun(tamper = false) {
         $('#start').disabled = true;
-        const res = await control('/api/start');
+        $('#tamper').disabled = true;
+        const before = await fetch('/api/status').then((r) => r.json());
+        if (tamper && before.running) await control('/api/stop');
+        const res = await control(tamper ? '/api/start?tamper=1' : '/api/start');
         const status = await fetch('/api/status').then((r) => r.json());
         $('#dot').classList.toggle('on', status.running);
-        if (res.status !== 403) $('#state').textContent = status.running ? 'Live demo running' : 'Ready';
-        $('#start').disabled = status.running;
+        if (res.status !== 403) $('#state').textContent = status.mode === 'tamper' ? 'Tamper test running' : status.running ? 'Live demo running' : 'Ready';
         $('#stop').disabled = !status.running;
-      });
+        $('#start').disabled = status.running;
+        $('#tamper').disabled = status.running;
+      }
+      $('#start').addEventListener('click', () => void beginRun(false));
+      $('#tamper').addEventListener('click', () => void beginRun(true));
       $('#stop').addEventListener('click', async () => {
         $('#stop').disabled = true;
         const res = await control('/api/stop');
@@ -203,8 +215,9 @@
       });
       fetch('/api/status').then((r) => r.json()).then((s) => {
         $('#dot').classList.toggle('on', s.running);
-        $('#state').textContent = s.running ? 'Live demo running' : 'Ready to start';
+        $('#state').textContent = s.mode === 'tamper' ? 'Tamper test running' : s.running ? 'Live demo running' : 'Ready to start';
         $('#start').disabled = s.running;
+        $('#tamper').disabled = s.running;
         $('#stop').disabled = !s.running;
       });
     </script>

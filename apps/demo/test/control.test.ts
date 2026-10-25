@@ -1,20 +1,23 @@
 import type { AddressInfo } from 'node:net';
 import type { IncomingMessage } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createDemoApp, type DemoApp, type DemoController } from '../src/app';
+import { createDemoApp, type DemoApp, type DemoController, type DemoMode } from '../src/app';
 import { checkControl, controlPolicy, isLoopbackHost, TOKEN_HEADER, type ControlPolicy } from '../src/control';
 
 class FakeController implements DemoController {
   running = false;
+  mode: DemoMode | null = null;
   starts = 0;
-  start() {
+  start(mode: DemoMode = 'normal') {
     if (this.running) return false;
     this.running = true;
+    this.mode = mode;
     this.starts++;
     return true;
   }
   async stop() {
     this.running = false;
+    this.mode = null;
   }
 }
 
@@ -114,6 +117,6 @@ describe('control endpoints, non-loopback host', () => {
   it('keeps the page and status readable without the token', async () => {
     const base = await serve(controlPolicy('0.0.0.0'));
     expect((await fetch(`${base}/`)).status).toBe(200);
-    expect(await (await fetch(`${base}/api/status`)).json()).toEqual({ running: false, tokenRequired: true });
+    expect(await (await fetch(`${base}/api/status`)).json()).toEqual({ running: false, mode: null, tokenRequired: true });
   });
 });

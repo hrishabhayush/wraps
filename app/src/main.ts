@@ -16,8 +16,8 @@ const inTauri = '__TAURI_INTERNALS__' in window;
 const api = inTauri ? new TauriBackend() : new MockBackend();
 const realVpn = inTauri;
 const tauri = api as TauriBackend;
-// One connect pays the relay this many kept tokens (10 MB each). An empty wallet buys them first.
-const VPN_TOKENS = 10;
+// One connect pays for one relay quota block (10 MB). More quota requires another token.
+const VPN_TOKENS = 1;
 
 type Screen = 'onboarding' | 'home' | 'nodes' | 'wallet';
 type Verified = Extract<Attestation, { ok: true }>;
@@ -140,7 +140,7 @@ function home() {
   return `<div class="panel">
     <header class="row between">
       <div class="row brand">${mark(20)}<span>wraps</span></div>
-      <button class="chip" data-act="go" data-arg="wallet">${usd(tk.usd())}</button>
+      <button class="chip" data-act="go" data-arg="wallet" title="Spendable balance: ${tk.count()} unspent blind tokens">${usd(tk.usd())}</button>
     </header>
     <section class="card status row between">
       <div class="col">
@@ -160,14 +160,15 @@ function home() {
         <button class="link row gap5" data-act="go" data-arg="nodes">${bars(n.latencyMs)}Change${ic('down', 14)}</button>
       </div>
       <div class="row gap8">
-        <div class="tile"><span class="circ">${ic('upload', 14)}</span><div class="col"><small>Upload</small><b>${on ? `${c.up} Mbps` : '—'}</b></div></div>
-        <div class="tile"><span class="circ">${ic('download', 14)}</span><div class="col"><small>Download</small><b>${on ? `${c.down} Mbps` : '—'}</b></div></div>
+        <div class="tile"><span class="circ">${ic('upload', 14)}</span><div class="col"><small>Upload</small><b>${on && !realVpn ? `${c.up} Mbps` : '—'}</b></div></div>
+        <div class="tile"><span class="circ">${ic('download', 14)}</span><div class="col"><small>Download</small><b>${on && !realVpn ? `${c.down} Mbps` : '—'}</b></div></div>
       </div>
       <div class="meter row between">
-        <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? (realVpn ? 'Prepaid · this session' : 'Metered · this session') : `Billed only while connected`}</span>
-          <span class="mono">${on && realVpn ? `${c.spent} tokens = ${m.mb} MB` : `${m.mb.toFixed(1)} MB × $${n.pricePerMB}`}</span></div>
+        <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? (realVpn ? 'Prepaid quota · this connection' : 'Metered · this session') : `Billed only while connected`}</span>
+          <span class="mono">${on && realVpn ? `${c.spent} token${c.spent === 1 ? '' : 's'} · up to ${m.mb} MB quota` : `${m.mb.toFixed(1)} MB × $${n.pricePerMB}`}</span></div>
         <span class="cost mono">$${m.cost.toFixed(m.cost < 1 ? 3 : 2)}</span>
       </div>
+      ${on && realVpn ? '<small class="mono muted">A $0.10 token prepays up to 10 MB (one token minimum); reconnect with another token to continue.</small>' : ''}
     </section>
     <footer class="row gap6">
       <button class="ghost" data-act="go" data-arg="nodes">${ic('globe', 14)}Nodes</button>
@@ -456,16 +457,18 @@ root.addEventListener('click', e => {
 setInterval(async () => {
   const c = s.conn;
   if (c.kind !== 'connected') return;
-  // Prepaid (spent tokens not yet used up) plus what's left in the wallet.
-  const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
-  c.meter = r.meter;
-  if (!realVpn && c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
-    c.spending = true;
-    tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
+  // Browser preview only: the live Tauri session is charged in prepaid relay quota blocks.
+  if (!realVpn) {
+    const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
+    c.meter = r.meter;
+    if (c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
+      c.spending = true;
+      tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
+    }
+    c.up = 28 + Math.round(Math.random() * 6);
+    c.down = 36 + Math.round(Math.random() * 8);
+    if (r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   }
-  c.up = 28 + Math.round(Math.random() * 6);
-  c.down = 36 + Math.round(Math.random() * 8);
-  if (!realVpn && r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   if (Date.now() - c.att.checkedAt > 60_000 && !s.rechecking) {
     s.rechecking = true;
     const att = await api.attest(s.nodeId);

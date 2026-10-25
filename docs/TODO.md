@@ -128,6 +128,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **FUP-03** Removed the temporary test/debug VMs (`wraps-relay-debug`, `wraps-wg-client-test`, `wraps-relay-inf28-debug`, and `wraps-relay-inf09-test`; `wraps-relay-inf09-wireguard` was already absent). Released `wraps-relay-inf09-test-ip`. Kept `wraps-issuer`, `wraps-relay`, and `wraps-wg-gateway`.
 - [ ] **FUP-04** Live testnet payout: fund an issuer wallet with testnet RLUSD and XRP for gas, then follow `packages/issuer/README.md` (`payout:dry-run`, `payout:once`).
 - [ ] **FUP-05** The standalone WireGuard gateway (PR #43) runs on a plain VM, outside Confidential Space: no attestation, no token metering. Don't describe it as attested.
+- [~] **APP-USE-01** Desktop VPN uses the existing relay quota accurately: consume one 10 MB quota token on connect, show the remaining blind-token wallet balance, and label prepaid quota without presenting simulated traffic as actual usage.
 
 ---
 
@@ -137,5 +138,3 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 2. Implement and verify **PAY-03**; then finish the real top-up path in **SDK-03** and RLUSD payouts in **ISS-06**.
 3. For the WireGuard path, the **RLY-04** implementation (#32, #38), **INF-27** runtime (#33), **INF-28** deployment (#40) and **SDK-06** profile (#37) are merged. Add and test the missing receipt route in **RLY-05**, then validate an authorized peer before completing the live path and **SDK-07** (#39).
 4. Address **SEC-01** and finish **SPY-01 to SPY-03**, **DEM-03**, **DEM-04** and **DEM-06** before the live demo.
-
-- [ ] **APP-USE-01** Desktop VPN uses the existing relay quota accurately: consume one 10 MB quota token on connect, show the remaining blind-token wallet balance, and label prepaid quota without presenting simulated traffic as actual usage.

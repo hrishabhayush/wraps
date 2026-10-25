@@ -3,7 +3,26 @@ import { TLSSocket } from 'node:tls';
 import { parseAuthorization, serializeToken } from '@wraps/tokens';
 import type { RelayIssuer } from './meter.js';
 import { WIREGUARD_BYTES_PER_TOKEN, type WireGuardQuotaController } from './wireguard-quota.js';
-import type { WireGuardPeer } from './wireguard.js';
+import { nextFreePeerAddress, type WireGuardPeer } from './wireguard.js';
+
+/** Open, paid registration: unknown keys get the next free address once they pay. */
+export interface OpenWireGuardRegistration {
+  maxPeers: number;
+  interfaceAddress: string;
+  addPeer(peer: WireGuardPeer): Promise<void>;
+}
+
+const WIREGUARD_KEY = /^[A-Za-z0-9+/]{43}=$/;
+const STAGE_LABELS = new Set(['token-encoding-failed', 'verify-failed', 'address-failed', 'peer-add-failed', 'settle-failed', 'quota-failed', 'quota-read-failed', 'quota-reset-failed']);
+
+/** Run one registration step; on failure rethrow only a fixed label. */
+async function stage<T>(label: string, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch {
+    throw new Error(label);
+  }
+}
 
 interface MeteredPeer {
   /** Every registered block has been settled before it becomes available. */
@@ -17,6 +36,7 @@ export class WireGuardTokenMeter {
   private readonly peers = new Map<string, WireGuardPeer>();
   private readonly sessions = new Map<string, MeteredPeer>();
   private readonly registrationLimits = new Map<string, { startedAt: number; count: number }>();
+  private readonly staticPeers: number;
   private polling?: NodeJS.Timeout;
   private pollingNow = false;
   private operations: Promise<void> = Promise.resolve();
@@ -27,38 +47,57 @@ export class WireGuardTokenMeter {
     private readonly issuer: RelayIssuer,
     private readonly quotas: WireGuardQuotaController,
     pollIntervalMs = 200,
+    private readonly open?: OpenWireGuardRegistration,
   ) {
     for (const peer of peers) this.peers.set(peer.publicKey, peer);
+    this.staticPeers = peers.length;
     this.polling = setInterval(() => { void this.poll(); }, pollIntervalMs);
     this.polling.unref();
   }
 
-  async register(publicKey: string, tokens: string[]): Promise<void> {
-    const peer = this.peers.get(publicKey);
-    if (!peer) throw new Error('unknown peer');
+  /** Pays for a quota block. Returns the peer's tunnel address. */
+  async register(publicKey: string, tokens: string[]): Promise<string> {
     if (tokens.length !== 1) throw new Error('exactly one token is required per registration');
-    return this.serialize(async () => {
-      if (!(await this.issuer.verify(tokens))) throw new Error('invalid tokens');
+    if (!this.open && !this.peers.has(publicKey)) throw new Error('unknown peer');
+    if (!WIREGUARD_KEY.test(publicKey) || Buffer.from(publicKey, 'base64').toString('base64') !== publicKey) {
+      throw new Error('malformed public key');
+    }
+    let address = '';
+    await this.serialize(async () => {
+      if (!(await stage('verify-failed', () => this.issuer.verify(tokens)))) throw new Error('invalid tokens');
+      let peer = this.peers.get(publicKey);
+      if (!peer) {
+        // Open relay: admit this key. It gets no forwarding until its quota is paid below.
+        if (this.peers.size - this.staticPeers >= this.open!.maxPeers) throw new Error('relay is full');
+        const allowedAddress = await stage('address-failed', async () =>
+          nextFreePeerAddress(this.open!.interfaceAddress, [...this.peers.values()].map((p) => p.allowedAddress)));
+        if (!allowedAddress) throw new Error('relay is full');
+        peer = { publicKey, allowedAddress };
+        await stage('peer-add-failed', () => this.open!.addPeer(peer!));
+        this.peers.set(publicKey, peer);
+      }
+      address = peer.allowedAddress;
       const existing = this.sessions.get(publicKey);
       if (!existing) {
         // Settle the first prepaid block before adding any forwarding allowance.
-        await this.issuer.settle(this.merchantId, tokens[0]);
-        await this.quotas.enable(publicKey, peer.allowedAddress.split('/')[0]);
+        await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0]));
+        await stage('quota-failed', () => this.quotas.enable(publicKey, peer!.allowedAddress.split('/')[0]));
         this.sessions.set(publicKey, { paidBlocks: 1, usedBlocks: 0, quotaExhausted: false });
         return;
       }
       if (existing.paidBlocks >= 1000) throw new Error('peer quota limit reached');
       // Reconcile before payment in case the packet quota expired before the
       // asynchronous poller observed it.
-      const usage = await this.quotas.usedBytes();
-      await this.reconcile(publicKey, existing, usage.get(publicKey) ?? 0);
-      await this.issuer.settle(this.merchantId, tokens[0]);
+      const usage = await stage('quota-read-failed', () => this.quotas.usedBytes());
+      await stage('quota-reset-failed', () => this.reconcile(publicKey, existing, usage.get(publicKey) ?? 0));
+      await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0]));
       existing.paidBlocks++;
       if (existing.quotaExhausted) {
         await this.quotas.reset(publicKey);
         existing.quotaExhausted = false;
       }
     });
+    return address;
   }
 
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -81,18 +120,23 @@ export class WireGuardTokenMeter {
         return this.respond(res, 401, 'a valid PrivateToken header is required');
       }
       if (parsed.length !== 1) return this.respond(res, 401, 'exactly one PrivateToken is required per registration');
-      await this.register(body.publicKey, parsed.map(serializeToken));
+      let serialized: string[];
+      try { serialized = parsed.map(serializeToken); } catch { throw new Error('token-encoding-failed'); }
+      const address = await this.register(body.publicKey, serialized);
       res.writeHead(201, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ registered: true, bytesPerToken: WIREGUARD_BYTES_PER_TOKEN }));
+      res.end(JSON.stringify({ registered: true, address, bytesPerToken: WIREGUARD_BYTES_PER_TOKEN }));
       return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       const status = message === 'unknown peer' ? 404
         : message === 'invalid tokens' ? 401
-          : message === 'peer quota limit reached' ? 409
+          : message === 'malformed public key' ? 400
+          : message === 'peer quota limit reached' || message === 'relay is full' ? 409
             : message === 'request body too large' ? 413
               : error instanceof SyntaxError ? 400 : 503;
-      return this.respond(res, status, status === 503 ? 'peer registration failed' : message);
+      // 503s carry only a fixed stage label, never raw error text.
+      const label = STAGE_LABELS.has(message) ? message : 'peer registration failed';
+      return this.respond(res, status, status === 503 ? label : message);
     }
   }
 

@@ -10,6 +10,8 @@ import {
 } from './wireguard-quota.js';
 
 const TMPFS_MAGIC = 0x01021994;
+/** Most peers an open relay admits before refusing new keys. */
+export const WIREGUARD_OPEN_MAX_PEERS = 200;
 const DEFAULT_RUNTIME_DIRECTORY = '/dev/shm';
 
 export interface WireGuardPeer {
@@ -33,8 +35,14 @@ export interface WireGuardGatewayOptions {
   interfaceAddress: string;
   /** Host interface used for Internet egress/NAT, for example ens4. */
   egressInterface: string;
-  /** Pre-authorized peer public keys and tunnel addresses. Must be non-empty. */
+  /** Pre-authorized peer public keys and tunnel addresses. Empty means open, paid registration. */
   peers: WireGuardPeer[];
+  /**
+   * Open registration: any well-formed key that pays a token gets the next free
+   * address. Defaults to on when `peers` is empty. The mode and cap are bound
+   * into the attested policy hash.
+   */
+  openRegistration?: { maxPeers: number };
   /** Defaults to /dev/shm, which must be tmpfs. A private subdirectory is created there. */
   runtimeDirectory?: string;
   /** Test seam. Production uses the system `wg` and `wg-quick` commands. */
@@ -56,12 +64,69 @@ export interface WireGuardGatewayIdentity {
   metering: 'bidirectional-inner-ipv4';
   /** Allowed IPs advertised to the client for a full IPv4 tunnel. */
   clientAllowedIPs: '0.0.0.0/0';
+  /** `open-paid`: any key may register by paying; `static`: only `peers`. */
+  registration: 'static' | 'open-paid';
+  /** Peer cap for open registration. */
+  maxPeers?: number;
 }
 
 export interface RunningWireGuardGateway {
   readonly identity: WireGuardGatewayIdentity;
   readonly quotas: WireGuardQuotaController;
+  /** Add a peer to the live interface. Forwarding still needs a paid quota. */
+  addPeer(peer: WireGuardPeer): Promise<void>;
   stop(): Promise<void>;
+}
+
+/** Resolve whether a gateway runs open registration, and with which cap. */
+export function openRegistrationOf(options: Pick<WireGuardGatewayOptions, 'peers' | 'openRegistration'>): { maxPeers: number } | undefined {
+  if (options.openRegistration) return options.openRegistration;
+  return options.peers.length === 0 ? { maxPeers: WIREGUARD_OPEN_MAX_PEERS } : undefined;
+}
+
+/** Canonical JSON input of the attested WireGuard policy hash. The SDK recomputes this exactly. */
+export function wireGuardPolicyHashInput(policy: {
+  endpoint: string;
+  listenPort: number;
+  interfaceAddress: string;
+  egressInterface: string;
+  peers: WireGuardPeer[];
+  registration: 'static' | 'open-paid';
+  maxPeers?: number;
+}): string {
+  const base = {
+    endpoint: policy.endpoint,
+    listenPort: policy.listenPort,
+    interfaceAddress: policy.interfaceAddress,
+    egressInterface: policy.egressInterface,
+    peers: [...policy.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => compareWireGuardPublicKeys(a.publicKey, b.publicKey)),
+    clientAllowedIPs: '0.0.0.0/0',
+    ipv6Forwarding: false,
+    bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
+    metering: 'bidirectional-inner-ipv4',
+  };
+  // Static relays keep the original hash input, so existing receipts still verify.
+  return JSON.stringify(policy.registration === 'open-paid'
+    ? { ...base, registration: 'open-paid', maxPeers: policy.maxPeers }
+    : base);
+}
+
+/**
+ * Next free peer address in the server subnet: skips the network, broadcast and
+ * server addresses and every address in `used`. Returns undefined when full.
+ */
+export function nextFreePeerAddress(interfaceAddress: string, used: Iterable<string>): string | undefined {
+  const iface = parseIpv4Cidr(interfaceAddress);
+  const taken = new Set([...used].map((value) => value.split('/')[0]));
+  taken.add(iface.address);
+  const mask = (0xffffffff << (32 - iface.prefix)) >>> 0;
+  const network = (iface.numeric & mask) >>> 0;
+  const broadcast = (network | (~mask >>> 0)) >>> 0;
+  for (let candidate = network + 1; candidate < broadcast; candidate++) {
+    const address = numberToIpv4(candidate >>> 0);
+    if (!taken.has(address)) return `${address}/32`;
+  }
+  return undefined;
 }
 
 /**
@@ -87,16 +152,16 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
   const privateDirectory = await mkdtemp(join(runtimeDirectory, 'wraps-wireguard-'));
   const configPath = join(privateDirectory, `${interfaceName}.conf`);
   const interfaceAddress = parseIpv4Cidr(options.interfaceAddress);
-  const policyHash = createHash('sha256').update(JSON.stringify({
+  const open = openRegistrationOf(options);
+  const registration = open ? 'open-paid' as const : 'static' as const;
+  const policyHash = createHash('sha256').update(wireGuardPolicyHashInput({
     endpoint: options.endpoint,
     listenPort: options.listenPort,
     interfaceAddress: options.interfaceAddress,
     egressInterface: options.egressInterface,
-    peers: [...options.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => compareWireGuardPublicKeys(a.publicKey, b.publicKey)),
-    clientAllowedIPs: '0.0.0.0/0',
-    ipv6Forwarding: false,
-    bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
-    metering: 'bidirectional-inner-ipv4',
+    peers: options.peers,
+    registration,
+    maxPeers: open?.maxPeers,
   })).digest('hex');
 
   const policy = buildFirewallPolicy(interfaceName, options.egressInterface, interfaceAddress.network);
@@ -147,11 +212,23 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     clientAllowedIPs: '0.0.0.0/0',
     bytesPerToken: WIREGUARD_BYTES_PER_TOKEN,
     metering: 'bidirectional-inner-ipv4',
+    registration,
+    ...(open ? { maxPeers: open.maxPeers } : {}),
   };
 
   return {
     identity,
     quotas: quotas!,
+    async addPeer(peer) {
+      if (!active) throw new Error('WireGuard gateway is stopped');
+      validateWireGuardKey(peer.publicKey, 'peer public key');
+      const address = parseIpv4Cidr(peer.allowedAddress);
+      if (address.prefix !== 32 || !contains(interfaceAddress, address.numeric) || address.address === interfaceAddress.address ||
+          isNetworkOrBroadcast(interfaceAddress, address.numeric)) {
+        throw new TypeError('peer address must be an IPv4 /32 inside the server subnet');
+      }
+      await run('wg', ['set', interfaceName, 'peer', peer.publicKey, 'allowed-ips', peer.allowedAddress]);
+    },
     async stop() {
       if (!active) return;
       active = false;
@@ -174,10 +251,18 @@ function validateOptions(options: WireGuardGatewayOptions): void {
     throw new RangeError('WireGuard listenPort must be a UDP port');
   }
   if (!/^[a-zA-Z0-9_.-]{1,15}$/.test(options.egressInterface)) throw new TypeError('egressInterface is invalid');
-  if (!Array.isArray(options.peers) || options.peers.length === 0 || options.peers.length > 1024) {
-    throw new RangeError('WireGuard needs between 1 and 1024 configured peers');
+  if (!Array.isArray(options.peers) || options.peers.length > 1024) {
+    throw new RangeError('WireGuard allows at most 1024 configured peers');
   }
   const iface = parseIpv4Cidr(options.interfaceAddress);
+  const open = openRegistrationOf(options);
+  if (!open && options.peers.length === 0) throw new RangeError('WireGuard needs configured peers or open registration');
+  if (open) {
+    const hosts = 2 ** (32 - iface.prefix) - 3; // minus network, broadcast and server addresses
+    if (!Number.isSafeInteger(open.maxPeers) || open.maxPeers < 1 || open.maxPeers > hosts - options.peers.length) {
+      throw new RangeError('open registration maxPeers must fit in the server subnet');
+    }
+  }
   if (iface.prefix > 30) throw new TypeError('WireGuard server subnet must leave room for peer addresses');
   if (!isPrivateIPv4(iface.numeric)) throw new TypeError('WireGuard tunnel subnet must use RFC1918 private IPv4 space');
   if (isNetworkOrBroadcast(iface, iface.numeric)) throw new TypeError('WireGuard server address cannot be the subnet network or broadcast address');

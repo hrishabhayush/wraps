@@ -46,7 +46,8 @@ if [ "${ROLE}" = relay ]; then
   if [ "${WG_ENABLED:-false}" = true ]; then
     [ -n "${WG_ENDPOINT:-}" ] || die "WG_ENDPOINT is required when WG_ENABLED=true"
     [ -n "${WG_INTERFACE_ADDRESS:-}" ] || die "WG_INTERFACE_ADDRESS is required when WG_ENABLED=true"
-    [ -n "${WG_PEERS_JSON:-}" ] || die "WG_PEERS_JSON is required when WG_ENABLED=true"
+    # Empty peer list = open, paid registration: any key that pays a token can join.
+    WG_PEERS_JSON="${WG_PEERS_JSON:-[]}"
     case "${WG_ENDPOINT}" in
       *:*|*/*|*' '* ) die "WG_ENDPOINT must be a bare hostname or IPv4 address; the UDP port is configured separately" ;;
     esac

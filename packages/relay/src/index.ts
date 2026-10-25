@@ -8,7 +8,7 @@ import type { AttestationProvider } from '@wraps/attestation';
 import { parseAuthorization, serializeToken, tokenId } from '@wraps/tokens';
 import { BandwidthMeter, HttpRelayIssuer, MAX_TOKENS_PER_TUNNEL, type RelayIssuer } from './meter.js';
 import { startRelayAttestationServer, type RelayAttestationListenOptions } from './attestation.js';
-import { startWireGuardGateway, type RunningWireGuardGateway, type WireGuardGatewayIdentity, type WireGuardGatewayOptions } from './wireguard.js';
+import { startWireGuardGateway, type RunningWireGuardGateway, type WireGuardGatewayIdentity, type WireGuardGatewayOptions, openRegistrationOf } from './wireguard.js';
 import { WireGuardTokenMeter } from './wireguard-meter.js';
 export type { RelayIssuer } from './meter.js';
 export * from './attestation.js';
@@ -218,11 +218,16 @@ export async function startConfidentialWireGuardRelay(options: ConfidentialWireG
     await wireGuard.stop();
     throw new Error('WireGuard requires a configured relay issuer for token metering');
   }
+  const open = openRegistrationOf(options.wireGuardGateway);
   const tokenMeter = new WireGuardTokenMeter(
     options.wireGuardGateway.peers,
     options.merchantId ?? 'relay',
     issuer,
     wireGuard.quotas,
+    undefined,
+    open
+      ? { maxPeers: open.maxPeers, interfaceAddress: options.wireGuardGateway.interfaceAddress, addPeer: (peer) => wireGuard.addPeer(peer) }
+      : undefined,
   );
   try {
     const servers = startConfidentialRelayInternal(

@@ -6,6 +6,7 @@
 //   POST /verify   {tokens}         read-only: signature valid and not spent
 //   POST /settle   {merchantId, tokens}  mark spent, add to tab, signed running-total claim
 //   GET  /reserves                  signed "outstanding ≤ funds held"
+//   GET  /keys                      token key epochs with not-after times, signed with the claim key
 import { createServer, Server } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { IssuerCore, IssuerError } from './core';
@@ -84,6 +85,7 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       }
 
       if (route === 'GET /reserves') return sendJson(res, 200, core.reserves());
+      if (route === 'GET /keys') return sendJson(res, 200, core.tokenKeys());
 
       throw new HttpError(404, 'not found');
     } catch (e) {

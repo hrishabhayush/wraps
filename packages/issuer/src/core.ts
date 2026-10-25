@@ -9,16 +9,22 @@ import {
   TokenVerifier,
   deserializeToken,
   generateIssuerKeys,
+  serializeToken,
+  toHex,
   tokenId,
+  tokenKeyId,
 } from '@wraps/tokens';
 import {
   AttestationResponse,
   PaymentRequirement,
   SignedClaim,
   SignedReserves,
+  SignedTokenKeys,
+  TokenKeyEpoch,
   VerifyResult,
   signClaim,
   signReserves,
+  signTokenKeys,
   tokensToRlusd,
 } from './protocol';
 import { TopUpRail } from './rail';
@@ -40,6 +46,28 @@ export interface IssuerOptions {
   maxBatch?: number;
   quoteTtlMs?: number;
   log?: (msg: string) => void;
+  /**
+   * SR3 (USENIX'26): how long tokens from one signing key stay valid. A key's not-after time is
+   * its start plus this. Default 30 days.
+   */
+  tokenKeyLifetimeMs?: number;
+  /**
+   * The issuer stops signing with a key once less than this much of its life is left, and makes
+   * a new key epoch. So every token gets at least this long to be spent. Default: half the lifetime.
+   */
+  minTokenLifetimeMs?: number;
+  /** Clock. Tests move it to expire key epochs and quotes. */
+  now?: () => number;
+}
+
+/** One token-signing key and the window in which its tokens are valid. */
+interface KeyEpoch {
+  keyId: string;
+  keys: IssuerKeyPair;
+  issuer: TokenIssuer;
+  verifier: TokenVerifier;
+  notBefore: number;
+  notAfter: number;
 }
 
 interface Tab {
@@ -59,11 +87,15 @@ export interface PayoutLine {
   amountRlusd: string;
 }
 
+export const DEFAULT_TOKEN_KEY_LIFETIME_MS = 30 * 24 * 3600_000;
+
 export class IssuerCore {
   readonly name: string;
+  /** Current keys. `token` changes when a new key epoch starts. "tls" is the SPKI of the TLS key, if served over https. */
   readonly publicKeys: { token: Uint8Array; claim: Uint8Array; tls?: Uint8Array };
-  private readonly tokenIssuer: TokenIssuer;
-  private readonly verifier: TokenVerifier;
+  private readonly epochs = new Map<string, KeyEpoch>();
+  private current!: KeyEpoch;
+  private readonly now: () => number;
   private readonly spent = new Set<string>();
   private readonly tabs = new Map<string, Tab>();
   private readonly quotes = new Map<string, Quote>();
@@ -77,11 +109,59 @@ export class IssuerCore {
     private readonly claimKeys: Ed25519KeyPair,
   ) {
     this.name = opts.name ?? DEFAULT_ISSUER_NAME;
-    this.tokenIssuer = new TokenIssuer(tokenKeys, this.name);
-    this.verifier = new TokenVerifier(tokenKeys.publicKeyBytes, this.name);
+    this.now = opts.now ?? Date.now;
     this.publicKeys = { token: tokenKeys.publicKeyBytes, claim: claimKeys.publicKeyBytes };
     if (opts.tlsPublicKey) this.publicKeys.tls = opts.tlsPublicKey;
+    this.addEpoch(tokenKeys);
     this.log = opts.log ?? (() => {});
+  }
+
+  private get lifetimeMs(): number {
+    return this.opts.tokenKeyLifetimeMs ?? DEFAULT_TOKEN_KEY_LIFETIME_MS;
+  }
+
+  private addEpoch(keys: IssuerKeyPair) {
+    const now = this.now();
+    const epoch: KeyEpoch = {
+      keyId: toHex(tokenKeyId(keys.publicKeyBytes)),
+      keys,
+      issuer: new TokenIssuer(keys, this.name),
+      verifier: new TokenVerifier(keys.publicKeyBytes, this.name),
+      notBefore: now,
+      notAfter: now + this.lifetimeMs,
+    };
+    this.epochs.set(epoch.keyId, epoch);
+    this.current = epoch;
+    this.publicKeys.token = keys.publicKeyBytes;
+  }
+
+  /**
+   * Starts a new key epoch. New tokens are signed with the new key. Old keys stay verifiable
+   * until their not-after time, then their tokens are refused as expired (SR3).
+   */
+  async rotateTokenKey(keys?: IssuerKeyPair): Promise<TokenKeyEpoch> {
+    // Expired epochs are kept (they are small) so their tokens get a clear "expired" answer.
+    this.addEpoch(keys ?? (await generateIssuerKeys()));
+    this.log(`token key rotated: ${this.current.keyId.slice(0, 12)}…`);
+    return this.epochView(this.current);
+  }
+
+  /** Rotates first if the current key has too little life left to give new tokens. */
+  private async signingEpoch(): Promise<KeyEpoch> {
+    const minLife = this.opts.minTokenLifetimeMs ?? this.lifetimeMs / 2;
+    if (this.current.notAfter - this.now() < minLife) await this.rotateTokenKey();
+    return this.current;
+  }
+
+  private epochView(e: KeyEpoch): TokenKeyEpoch {
+    return { keyId: e.keyId, publicKey: b64u(e.keys.publicKeyBytes), notBefore: e.notBefore, notAfter: e.notAfter, current: e === this.current };
+  }
+
+  /** Every key whose tokens are still accepted, signed with the attested claim key. */
+  tokenKeys(): SignedTokenKeys {
+    const now = this.now();
+    const keys = [...this.epochs.values()].filter((e) => e === this.current || now <= e.notAfter).map((e) => this.epochView(e));
+    return signTokenKeys(this.claimKeys.privateKey, { v: 1, issuer: this.name, keys, at: now });
   }
 
   /** Keys are made here, at start-up, inside the (future) enclave. */
@@ -97,22 +177,28 @@ export class IssuerCore {
 
   async attestation(nonce: Uint8Array): Promise<AttestationResponse> {
     if (nonce.length < 16 || nonce.length > 64) throw new IssuerError(400, 'nonce must be 16 to 64 bytes');
-    const attestation = await this.opts.provider.attest(nonce, hashPublicKeys(this.publicKeys));
+    const keys = { ...this.publicKeys };
+    const attestation = await this.opts.provider.attest(nonce, hashPublicKeys(keys));
     return {
       format: this.opts.provider.format,
       attestation,
       issuerName: this.name,
       publicKeys: {
-        token: b64u(this.publicKeys.token),
-        claim: b64u(this.publicKeys.claim),
-        ...(this.publicKeys.tls ? { tls: b64u(this.publicKeys.tls) } : {}),
+        token: b64u(keys.token),
+        claim: b64u(keys.claim),
+        ...(keys.tls ? { tls: b64u(keys.tls) } : {}),
       },
+      tokenKeyId: this.current.keyId,
+      tokenKeyNotAfter: this.current.notAfter,
+      tokenKeys: this.tokenKeys(),
     };
   }
 
   // --- issuance (top-up) -------------------------------------------------
 
   quote(tokens: number): PaymentRequirement {
+    // SR5: no zero, negative or fractional quotes. They are economically meaningless.
+    if (!Number.isInteger(tokens) || tokens < 1) throw new IssuerError(400, 'tokens must be a positive integer');
     // Never quote more than one /issue call can sign, or a payer could pay and get nothing.
     if (tokens > (this.opts.maxBatch ?? 200)) throw new IssuerError(400, 'too many tokens for one top-up');
     const quoteId = randomBytes(16).toString('hex');
@@ -124,7 +210,7 @@ export class IssuerCore {
       tokens,
       payTo: this.rail.payTo,
       quoteId,
-      expiresAt: Date.now() + (this.opts.quoteTtlMs ?? 5 * 60_000),
+      expiresAt: this.now() + (this.opts.quoteTtlMs ?? 5 * 60_000),
       description: `${tokens} private payment tokens`,
     };
     this.quotes.set(quoteId, { requirement, used: false });
@@ -142,7 +228,7 @@ export class IssuerCore {
     }
     const q = quoteId ? this.quotes.get(quoteId) : undefined;
     if (!q || q.used) throw new IssuerError(402, 'unknown or used quote');
-    if (Date.now() > q.requirement.expiresAt) throw new IssuerError(402, 'quote expired');
+    if (this.now() > q.requirement.expiresAt) throw new IssuerError(402, 'quote expired');
     if (requests.length > q.requirement.tokens) {
       throw new IssuerError(402, `paid for ${q.requirement.tokens} tokens, asked for ${requests.length}: refusing to issue beyond funds`);
     }
@@ -168,7 +254,8 @@ export class IssuerCore {
     // Reserve before the await so concurrent calls can't both pass the check.
     this.unspentIssued += requests.length;
     try {
-      const out = await this.tokenIssuer.issue(requests.map(fromB64u));
+      const epoch = await this.signingEpoch();
+      const out = await epoch.issuer.issue(requests.map(fromB64u));
       return out.map(b64u);
     } catch (e) {
       this.unspentIssued -= requests.length;
@@ -183,24 +270,39 @@ export class IssuerCore {
 
   // --- redemption --------------------------------------------------------
 
-  /** Read-only: signature valid and not spent. Duplicates in one batch are invalid. */
+  /**
+   * Read-only: canonical encoding, known key epoch not past its not-after time, signature valid,
+   * not spent. Duplicates in one batch are invalid.
+   */
   async verify(serialized: string[]): Promise<VerifyResult & { tokens: (Token | null)[] }> {
     if (!Array.isArray(serialized) || serialized.length === 0) throw new IssuerError(400, 'tokens must be a non-empty array');
+    // SR6/SR5: bound the work one request can cause.
+    if (serialized.length > (this.opts.maxBatch ?? 200)) throw new IssuerError(400, 'too many tokens in one request');
     const seen = new Set<string>();
     const results: VerifyResult['results'] = [];
     const tokens: (Token | null)[] = [];
     for (const s of serialized) {
-      let t: Token;
+      let t: Token | null = null;
       try {
-        t = deserializeToken(s);
+        t = typeof s === 'string' ? deserializeToken(s) : null;
+        // M1 canonical encoding: truncated, padded or trailing bytes do not round-trip.
+        if (t && serializeToken(t) !== s) t = null;
       } catch {
+        t = null;
+      }
+      if (!t) {
         results.push({ ok: false, reason: 'malformed' });
         tokens.push(null);
         continue;
       }
       tokens.push(t);
-      if (!(await this.verifier.verify(t))) {
+      const epoch = this.epochs.get(toHex(t.authInput.tokenKeyId));
+      if (!epoch || !(await epoch.verifier.verify(t))) {
         results.push({ ok: false, reason: 'bad signature' });
+        continue;
+      }
+      if (this.now() > epoch.notAfter) {
+        results.push({ ok: false, reason: 'expired' });
         continue;
       }
       const id = tokenId(t);
@@ -216,6 +318,7 @@ export class IssuerCore {
   async settle(merchantId: string, serialized: string[]): Promise<SignedClaim> {
     if (typeof merchantId !== 'string' || !merchantId) throw new IssuerError(400, 'merchantId required');
     const checked = await this.verify(serialized);
+    // SR7: verification is redone here, never trusted from an earlier /verify.
     // From here to the end there is no await, so the check and the mark are atomic.
     const ids = checked.tokens.map((t) => (t ? tokenId(t) : ''));
     if (!checked.valid || ids.some((id) => this.spent.has(id))) {
@@ -235,7 +338,7 @@ export class IssuerCore {
       totalTokens: tab.earned,
       totalRlusd: tokensToRlusd(tab.earned),
       seq: tab.seq,
-      at: Date.now(),
+      at: this.now(),
     });
   }
 
@@ -262,7 +365,7 @@ export class IssuerCore {
       unpaidTabsTokens: this.unpaidTabs(),
       outstandingTokens: outstanding,
       solvent: outstanding <= this.fundsHeld,
-      at: Date.now(),
+      at: this.now(),
     });
   }
 

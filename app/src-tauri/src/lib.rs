@@ -22,7 +22,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .manage(bridge::Pending::default())
-        .invoke_handler(tauri::generate_handler![quit, bridge::browser_wallet, vpn::vpn_attest, vpn::vpn_connect, vpn::vpn_disconnect])
+        .manage(vpn::PendingJoin::default())
+        .invoke_handler(tauri::generate_handler![quit, bridge::browser_wallet, vpn::vpn_attest, vpn::vpn_connect, vpn::vpn_quote, vpn::vpn_connect_paid, vpn::vpn_cancel, vpn::vpn_disconnect, vpn::open_tx])
         .manage(LastHide(Mutex::new(Instant::now() - Duration::from_secs(1))))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {

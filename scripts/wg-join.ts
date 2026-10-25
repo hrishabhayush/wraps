@@ -2,17 +2,20 @@
 //
 // The WireGuard key is generated here and never leaves this machine. The script
 // verifies the relay's Confidential Space attestation and WireGuard receipt, buys
-// blind tokens from the attested issuer (mock top-up rail), pays the relay with
-// them, and writes a WireGuard profile (plus a QR code for the phone app).
+// blind tokens from the attested issuer (mock top-up rail, or RLUSD on XRPL EVM with
+// --pay rlusd), pays the relay with them, and writes a WireGuard profile (plus a QR
+// code for the phone app).
 //
 //   npm run wg:join                       # 10 tokens = 100 MB, QR in the terminal
 //   npm run wg:join -- --tokens 3 --out my.conf --no-qr
+//   ... --json --pay rlusd                # desktop app: prints {"quote":...}, reads the tx hash on stdin
 
 import { generateKeyPairSync } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import QRCode from 'qrcode';
-import { MockTopUpWallet, PrivatePayClient, fetchVerifiedWireGuardReceipt } from '@wraps/sdk';
+import { MockTopUpWallet, PrivatePayClient, fetchVerifiedWireGuardReceipt, type TopUpWallet } from '@wraps/sdk';
+import { createInterface } from 'node:readline';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,6 +43,9 @@ const json = process.argv.includes('--json');
 const log = (...m: unknown[]) => (json ? console.error : console.log)(...m);
 const tokens = Number(arg('--tokens') ?? 10);
 if (!Number.isInteger(tokens) || tokens < 1 || tokens > 20) throw new Error('--tokens must be 1 to 20 (1 token = 10 MB)');
+const pay = arg('--pay') ?? 'mock';
+if (pay !== 'mock' && pay !== 'rlusd') throw new Error('--pay must be mock or rlusd');
+if (pay === 'rlusd' && !json) throw new Error('--pay rlusd needs --json (the desktop app pays the quote)');
 const out = arg('--out') ?? `wraps-${randomBytes(3).toString('hex')}.conf`;
 
 function newWireGuardKeyPair(): { privateKey: string; publicKey: string } {
@@ -64,16 +70,31 @@ if (process.argv.includes('--attest-only')) {
   process.exit(0);
 }
 
+// RLUSD on XRPL EVM: the user's own wallet pays. This helper prints the attested issuer's
+// quote and waits for the transaction hash on stdin; the issuer checks the transfer on-chain.
+const rlusdWallet: TopUpWallet = {
+  scheme: 'xrpl-evm-erc20-transfer',
+  address: 'user-wallet',
+  async pay(req) {
+    process.stdout.write(`${JSON.stringify({ quote: req })}\n`);
+    const line = await createInterface({ input: process.stdin })[Symbol.asyncIterator]().next();
+    const txHash = String(line.value ?? '').trim();
+    if (line.done || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error('payment cancelled: no transaction hash');
+    log(`  paid on XRPL EVM: ${txHash}`);
+    return Buffer.from(JSON.stringify({ quoteId: req.quoteId, txHash })).toString('base64url');
+  },
+};
+
 const sdk = new PrivatePayClient({
   issuerUrl: config.issuerUrl,
   verifier: createLiveVerifier(config, 'issuer'),
-  wallet: new MockTopUpWallet(),
+  wallet: pay === 'rlusd' ? rlusdWallet : new MockTopUpWallet(),
   caps: { perCallTokens: 5, dailyTokens: 50, maxTopUpTokens: 20 },
 });
 await sdk.connect();
 log('✓ issuer attestation verified, TLS key pinned');
 await sdk.topUp(tokens);
-log(`✓ bought ${tokens} blind tokens (mock top-up rail)`);
+log(`✓ bought ${tokens} blind tokens (${pay === 'rlusd' ? 'RLUSD on XRPL EVM' : 'mock top-up rail'})`);
 
 const keys = newWireGuardKeyPair();
 let address: string | undefined;

@@ -15,6 +15,9 @@ const inTauri = '__TAURI_INTERNALS__' in window;
 // In the desktop app the VPN is real: the relay meters bandwidth and is paid by the connect helper.
 const api = inTauri ? new TauriBackend() : new MockBackend();
 const realVpn = inTauri;
+const tauri = api as TauriBackend;
+// One connect buys this many tokens (10 MB each) from the issuer, then pays them to the relay.
+const VPN_TOKENS = 10;
 
 type Screen = 'onboarding' | 'home' | 'nodes' | 'wallet';
 type Verified = Extract<Attestation, { ok: true }>;
@@ -42,6 +45,7 @@ const s = {
   rechecking: false,
   trust: {} as Record<string, 'ok' | 'bad'>, // attestation results this session
   toast: '',
+  paidTx: '', // XRPL EVM transaction that paid for this VPN session
 };
 
 const node = (id = s.nodeId) => s.nodes.find(n => n.id === id)!;
@@ -117,7 +121,11 @@ function home() {
   }[c.kind];
   const line = {
     off: `${ic('shield', 12, 2.2)}Every node is attested before you connect`,
-    verifying: `${ic('shield', 12, 2.2)}Checking ${esc(n.city)}’s enclave…`,
+    verifying: `${ic('shield', 12, 2.2)}${
+      s.stage === 'approve' ? `Approve ${usd(VPN_TOKENS * USD_PER_TOKEN)} RLUSD in your wallet…`
+      : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
+      : s.stage === 'minting' ? 'Minting tokens, paying the relay…'
+      : `Checking ${esc(n.city)}’s enclave…`}`,
     connected: on ? `<span class="g">${ic('shield', 12, 2.2)}</span>TEE attested · ${ago(c.att.checkedAt)}` : '',
     refused: c.kind === 'refused' ? `<span class="r">${ic('alert', 12, 2.2)}</span>${esc(c.reason)}` : '',
   }[c.kind];
@@ -132,6 +140,7 @@ function home() {
         <div class="timer ${on ? '' : 'idle'}">${clock(secs)}</div>
         ${pill}
         <div class="att">${line}</div>
+        ${on && s.paidTx ? `<button class="link small txlink" data-act="openTx" data-arg="${s.paidTx}">Paid ${usd(VPN_TOKENS * USD_PER_TOKEN)} RLUSD · ${short(s.paidTx)} ↗</button>` : ''}
       </div>
       <button class="power ${c.kind}" data-act="power" ${c.kind === 'verifying' ? 'disabled' : ''} aria-label="${on ? 'Disconnect' : 'Connect'}">
         <span>${ic('power', 24, 2.4)}</span>
@@ -204,7 +213,7 @@ function wallet() {
     <section class="activity">${tk.history()
       .slice(0, 3)
       .map(a => `<div class="row gap10 act"><span class="circ grey">${ic(a.usd > 0 ? 'plus' : 'globe', 14)}</span>
-        <div class="col grow"><b>${esc(a.title)}</b><span class="mono muted">${esc(a.detail)}</span></div>
+        <div class="col grow"><b>${esc(a.title)}</b>${a.tx ? `<button class="link small mono" data-act="openTx" data-arg="${a.tx}">${esc(a.detail)} ↗</button>` : `<span class="mono muted">${esc(a.detail)}</span>`}</div>
         <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}</span></div>`)
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
@@ -283,8 +292,17 @@ async function connect(id: string) {
   s.trust[id] = att.ok ? 'ok' : 'bad';
   if (!att.ok) { s.conn = { kind: 'refused', reason: att.reason }; return render(); }
   if (realVpn) {
-    // One click: pay the relay with blind tokens and bring WireGuard up (macOS asks for the admin password).
-    try { await api.connect(id); } catch (e) { s.conn = { kind: 'off' }; return toast(String(e).slice(0, 90)); }
+    // One click: buy blind tokens, pay the relay with them, bring WireGuard up (macOS asks for the admin password).
+    // With a wallet connected the tokens are paid in RLUSD on XRPL EVM; otherwise on the mock rail.
+    s.paidTx = '';
+    try {
+      if (s.acct && wc.cfg.token) await payAndConnect();
+      else await api.connect(id);
+    } catch (e) {
+      s.stage = '';
+      s.conn = { kind: 'off' };
+      return toast(String((e as Error).message ?? e).slice(0, 90));
+    }
   } else {
     // Pay for the first chunk up front with one real token.
     try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
@@ -294,12 +312,30 @@ async function connect(id: string) {
   render();
 }
 
+/** RLUSD path: the issuer quotes, the user's wallet pays on-chain, the helper mints and pays the relay. */
+async function payAndConnect() {
+  const q = await tauri.quote(VPN_TOKENS);
+  let tx: string;
+  try {
+    tx = await wc.payQuote(q, st => { s.stage = st; render(); });
+  } catch (e) {
+    await tauri.cancel();
+    throw e;
+  }
+  s.stage = 'minting'; render();
+  tk.record({ title: 'VPN · RLUSD on XRPL EVM', detail: `${q.tokens} tokens · ${short(tx)}`, usd: -Number(q.amountRlusd), at: Date.now(), tx });
+  await tauri.connectPaid(tx);
+  s.stage = '';
+  s.paidTx = tx;
+}
+
 async function disconnect(reason?: string) {
   const c = s.conn;
   if (c.kind !== 'connected') return;
   s.conn = { kind: 'off' };
   await api.disconnect();
   const mins = Math.max(1, Math.round((Date.now() - c.since) / 60000));
+  if (realVpn) return reason ? toast(reason) : render(); // paid up front at connect; nothing to record
   tk.record({ title: `Session · ${node().country}`, detail: `${c.meter.mb.toFixed(0)} MB · ${mins} min · ${c.spent} token${c.spent === 1 ? '' : 's'}`, usd: -c.spent * USD_PER_TOKEN, at: Date.now() });
   reason ? toast(reason) : render();
 }
@@ -348,6 +384,7 @@ const actions: Record<string, (arg: string) => unknown> = {
     s.stage = '';
     refreshBalance();
   },
+  openTx: arg => tauri.openTx(arg).catch(e => toast(String(e).slice(0, 90))),
   copyUri: async () => { await navigator.clipboard.writeText(s.uri); toast('Link copied'); },
   cancelWc: () => { s.qr = s.uri = ''; render(); },
   disconnectWallet: async () => { await wc.disconnect(); refreshBalance(); },

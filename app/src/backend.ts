@@ -1,6 +1,8 @@
 // Seam between the UI and the VPN network (nodes, attestation, tunnel). TauriBackend is the
 // real one-click VPN (attested relay + WireGuard, see src-tauri/src/vpn.rs); MockBackend is
 // for the browser dev preview. Wallet top-ups live in tokens.ts.
+import type { Quote } from './tokens.ts';
+
 
 export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
 
@@ -18,7 +20,7 @@ export type Attestation =
   | { ok: true; tee: 'tdx' | 'sev' | 'sev-snp'; build: string; checkedAt: number }
   | { ok: false; reason: string; checkedAt: number };
 
-export type Activity = { title: string; detail: string; usd: number; at: number };
+export type Activity = { title: string; detail: string; usd: number; at: number; tx?: string };
 
 export interface Backend {
   listNodes(): Promise<VpnNode[]>;
@@ -75,7 +77,13 @@ export class TauriBackend implements Backend {
       return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
     }
   }
-  /** Buys and pays 10 tokens (100 MB), registers a fresh key, turns the tunnel on. */
+  /** Mock rail: buys and pays 10 tokens (100 MB), registers a fresh key, turns the tunnel on. */
   async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: 10 }); }
+  /** RLUSD: verifies relay and issuer, returns the issuer's quote for `tokens` (10 MB each). */
+  async quote(tokens: number) { return this.call<Quote>('vpn_quote', { tokens }); }
+  /** RLUSD: the quote is paid in `txHash`; mint tokens, pay the relay, turn the tunnel on. */
+  async connectPaid(txHash: string) { await this.call('vpn_connect_paid', { txHash }); }
+  async cancel() { await this.call('vpn_cancel'); }
+  async openTx(txHash: string) { await this.call('open_tx', { txHash }); }
   async disconnect() { await this.call('vpn_disconnect'); }
 }

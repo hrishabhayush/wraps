@@ -86,7 +86,8 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
         const body = await readJson(req);
         const tokens = body.tokens;
         if (!Number.isInteger(tokens) || tokens < 1) throw new HttpError(400, 'tokens must be a positive integer');
-        return sendJson(res, 200, core.quote(tokens));
+        if (body.scheme !== undefined && typeof body.scheme !== 'string') throw new HttpError(400, 'scheme must be a string');
+        return sendJson(res, 200, core.quote(tokens, body.scheme));
       }
       if (route === 'POST /issue') {
         const body = await readJson(req);
@@ -102,7 +103,7 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
         const pr: PaymentRequiredBody = {
           x402Version: 1,
           error: 'payment required to issue tokens',
-          accepts: [core.quote(requests.length)],
+          accepts: core.quoteAll(requests.length),
         };
         return sendJson(res, 402, pr);
       }

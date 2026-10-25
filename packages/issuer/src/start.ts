@@ -28,6 +28,8 @@ export interface StartIssuerOptions {
   log?: (msg: string) => void;
   /** Defaults to the mock AP4M rail. */
   rail?: TopUpRail;
+  /** More rails offered beside `rail` (for example XRPL EVM RLUSD beside the mock rail). */
+  extraRails?: TopUpRail[];
   corsOrigins?: string[];
   /** SR6: caps on one payout batch. */
   payoutCaps?: PayoutCaps;
@@ -71,6 +73,7 @@ export async function startIssuer(opts: StartIssuerOptions = {}): Promise<Runnin
   const core = await IssuerCore.create({
     provider: provider(opts),
     rail,
+    extraRails: opts.extraRails,
     log,
     tlsPublicKey: tls?.spki,
     tokenKeyLifetimeMs: opts.tokenKeyLifetimeMs,

@@ -52,6 +52,8 @@ export interface IssuerOptions {
   name?: string;
   provider: AttestationProvider;
   rail: TopUpRail;
+  /** More rails offered beside `rail`, one per scheme. A quote names the scheme it was made for. */
+  extraRails?: TopUpRail[];
   /** SPKI of the TLS key, if the issuer serves https. It joins the attested key hash as "tls". */
   tlsPublicKey?: Uint8Array;
   /** Most blinded requests in one /issue call. */
@@ -310,6 +312,17 @@ export class IssuerCore {
     return this.opts.rail;
   }
 
+  /** Every top-up rail, the default first. */
+  get rails(): TopUpRail[] {
+    return [this.opts.rail, ...(this.opts.extraRails ?? [])];
+  }
+
+  private railFor(scheme: string): TopUpRail {
+    const rail = this.rails.find((r) => r.scheme === scheme);
+    if (!rail) throw new IssuerError(400, `unsupported payment scheme: ${scheme}`);
+    return rail;
+  }
+
   // --- attestation -------------------------------------------------------
 
   async attestation(nonce: Uint8Array): Promise<AttestationResponse> {
@@ -339,19 +352,25 @@ export class IssuerCore {
 
   // --- issuance (top-up) -------------------------------------------------
 
-  quote(tokens: number): PaymentRequirement {
+  /** One quote per rail, for a 402 answer. */
+  quoteAll(tokens: number): PaymentRequirement[] {
+    return this.rails.map((r) => this.quote(tokens, r.scheme));
+  }
+
+  quote(tokens: number, scheme = this.rail.scheme): PaymentRequirement {
+    const rail = this.railFor(scheme);
     // SR5: no zero, negative or fractional quotes. They are economically meaningless.
     if (!Number.isInteger(tokens) || tokens < 1) throw new IssuerError(400, 'tokens must be a positive integer');
     // Never quote more than one /issue call can sign, or a payer could pay and get nothing.
     if (tokens > (this.opts.maxBatch ?? 200)) throw new IssuerError(400, 'too many tokens for one top-up');
     const quoteId = randomBytes(16).toString('hex');
     const requirement: PaymentRequirement = {
-      scheme: this.rail.scheme,
-      network: this.rail.network,
+      scheme: rail.scheme,
+      network: rail.network,
       asset: 'RLUSD',
       amountRlusd: tokensToRlusd(tokens),
       tokens,
-      payTo: this.rail.payTo,
+      payTo: rail.payTo,
       quoteId,
       expiresAt: this.now() + (this.opts.quoteTtlMs ?? 5 * 60_000),
       description: `${tokens} private payment tokens`,
@@ -392,7 +411,7 @@ export class IssuerCore {
     }
     let redeemed;
     try {
-      redeemed = await this.rail.redeem(paymentHeader, q.requirement);
+      redeemed = await this.railFor(q.requirement.scheme).redeem(paymentHeader, q.requirement);
     } catch (e) {
       q.used = false;
       throw new IssuerError(402, `payment refused: ${(e as Error).message}`);

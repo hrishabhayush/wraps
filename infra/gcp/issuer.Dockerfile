@@ -22,12 +22,17 @@ FROM node:22.11.0-bookworm-slim@sha256:f035ba7ffee18f67200e2eb8018e0f13c954ec163
 COPY --from=build /out/issuer.mjs /app/issuer.mjs
 
 # Fixed in the image, so the operator cannot change them: no allow_env_override label.
+# Top-ups: the mock rail (agent demo) and RLUSD on XRPL EVM paid to ISSUER_PAYOUT (desktop app).
 ENV NODE_ENV=production \
     TZ=UTC \
     ATTESTATION=confidential-space \
     ISSUER_TLS=1 \
     ISSUER_HOST=0.0.0.0 \
-    ISSUER_PORT=443
+    ISSUER_PORT=443 \
+    ISSUER_RAIL=mock,xrpl-evm \
+    ISSUER_PAYOUT=0x34A7142038CDd6946ecc8a231e49c45E62A7F562 \
+    RLUSD_ADDRESS=0x27b57a9D0b8d24EB97259c4E2279e45255e016f3 \
+    XRPL_EVM_RPC=https://rpc.testnet.xrplevm.org/
 
 # Confidential Space blocks inbound ports unless the image exposes them.
 EXPOSE 443/tcp

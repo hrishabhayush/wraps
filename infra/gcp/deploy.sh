@@ -114,7 +114,7 @@ if [ "${DRY_RUN}" = 1 ]; then
   if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
     printf 'DRY RUN (if firewall rule exists):'
     printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules update wraps-allow-wireguard \
-      --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+      --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
     printf '\nDRY RUN (otherwise):'
     printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
       --direction=INGRESS --priority=1000 --network=default --allow=udp:51820 \

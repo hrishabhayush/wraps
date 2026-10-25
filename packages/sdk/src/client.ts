@@ -384,11 +384,20 @@ export class PrivatePayClient {
     return true;
   }
 
-  /** Spend blind tokens to activate this configured peer's metered WireGuard quota. */
+  /** Spend blind tokens to activate this peer's metered WireGuard quota. Returns tokens spent. */
   async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, clientPrivateKey: string, tlsPort = 443): Promise<number> {
+    return (await this.joinWireGuard(receipt, clientPrivateKey, tlsPort)).tokens;
+  }
+
+  /**
+   * Spend one blind token to register (or top up) a WireGuard peer. On an open
+   * relay any key may join; the relay returns the tunnel address it assigned.
+   */
+  async joinWireGuard(receipt: VerifiedWireGuardReceipt, clientPrivateKey: string, tlsPort = 443): Promise<{ tokens: number; address?: string }> {
     this.attested();
     const publicKey = deriveWireGuardPublicKey(clientPrivateKey);
-    if (!isVerifiedWireGuardReceipt(receipt) || !receipt.peers.some((peer) => peer.publicKey === publicKey)) {
+    if (!isVerifiedWireGuardReceipt(receipt) ||
+        (receipt.registration !== 'open-paid' && !receipt.peers.some((peer) => peer.publicKey === publicKey))) {
       throw new TypeError('a verified receipt containing this peer is required');
     }
     const tokenCount = 1;
@@ -401,8 +410,9 @@ export class PrivatePayClient {
     const reservedDay = this.spent.day;
     const batch = this.tokens.splice(0, tokenCount);
     this.spent.tokens += tokenCount;
+    let address: string | undefined;
     try {
-      await registerPeer(receipt, clientPrivateKey, batch, tlsPort);
+      address = await registerPeer(receipt, clientPrivateKey, batch, tlsPort);
     } catch (error) {
       if (error instanceof WireGuardRegistrationError && error.outcome === 'rejected') {
         this.tokens.unshift(...batch);
@@ -410,7 +420,7 @@ export class PrivatePayClient {
       }
       throw error;
     }
-    return tokenCount;
+    return { tokens: tokenCount, address };
   }
 
   private checkChallenge(res: Response, body: BlindTokenRequiredBody) {

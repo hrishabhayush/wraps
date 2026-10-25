@@ -20,6 +20,10 @@ export interface VerifiedWireGuardReceipt {
   /** DER SubjectPublicKeyInfo of the TLS key bound by the verified receipt. */
   readonly tunnelSpki: string;
   readonly peers: ReadonlyArray<Readonly<{ publicKey: string; allowedAddress: string }>>;
+  /** `open-paid`: any key may register by paying a token and gets an address back. */
+  readonly registration: 'static' | 'open-paid';
+  /** Peer cap of an open relay. */
+  readonly maxPeers?: number;
   readonly [verifiedReceiptBrand]: true;
 }
 
@@ -93,6 +97,8 @@ export async function fetchVerifiedWireGuardReceipt(
       ipv6Forwarding?: boolean;
       bytesPerToken?: number;
       metering?: string;
+      registration?: string;
+      maxPeers?: number;
     };
     attestation?: string;
   };
@@ -114,7 +120,13 @@ export async function fetchVerifiedWireGuardReceipt(
     if (typeof peer.publicKey !== 'string' || typeof peer.allowedAddress !== 'string') throw new TypeError('malformed WireGuard peer policy');
     return { publicKey: peer.publicKey, allowedAddress: peer.allowedAddress };
   }).sort((a, b) => a.publicKey < b.publicKey ? -1 : a.publicKey > b.publicKey ? 1 : 0);
-  const policyHash = createHash('sha256').update(JSON.stringify({
+  const open = networkPolicy.registration === 'open-paid';
+  if (networkPolicy.registration !== undefined && !open) throw new TypeError('unsupported WireGuard registration mode');
+  if (open && (!Number.isSafeInteger(networkPolicy.maxPeers) || networkPolicy.maxPeers! < 1 || networkPolicy.maxPeers! > 65_534)) {
+    throw new TypeError('malformed WireGuard open registration policy');
+  }
+  if (!open && peers.length === 0) throw new TypeError('malformed WireGuard network policy');
+  const basePolicy = {
     endpoint: networkPolicy.endpoint,
     listenPort: networkPolicy.listenPort,
     interfaceAddress: networkPolicy.interfaceAddress,
@@ -124,7 +136,11 @@ export async function fetchVerifiedWireGuardReceipt(
     ipv6Forwarding: false,
     bytesPerToken: 10_000_000,
     metering: 'bidirectional-inner-ipv4',
-  })).digest('hex');
+  };
+  // Must match the relay's wireGuardPolicyHashInput exactly.
+  const policyHash = createHash('sha256').update(JSON.stringify(open
+    ? { ...basePolicy, registration: 'open-paid', maxPeers: networkPolicy.maxPeers }
+    : basePolicy)).digest('hex');
   if (policyHash !== policy) throw new Error('WireGuard policy is not bound to the attested policy hash');
   const verified = await verifier.verify(receipt.attestation, {
     nonce,
@@ -148,6 +164,8 @@ export async function fetchVerifiedWireGuardReceipt(
     serverPublicKey: wireguard,
     tunnelSpki: tunnel,
     peers: frozenPeers,
+    registration: open ? 'open-paid' as const : 'static' as const,
+    ...(open ? { maxPeers: networkPolicy.maxPeers } : {}),
     [verifiedReceiptBrand]: true as const,
   });
   verifiedReceipts.add(frozen);
@@ -228,7 +246,9 @@ export function createWireGuardClientProfile(
     throw new TypeError('WireGuard keys must be standard base64 32-byte keys');
   }
   const clientPublicKey = deriveWireGuardPublicKey(clientPrivateKey);
-  if (!receipt.peers.some((peer) => peer.publicKey === clientPublicKey && peer.allowedAddress === clientAddress)) {
+  // On an open relay the address comes from the registration response, not the policy.
+  if (receipt.registration !== 'open-paid' &&
+      !receipt.peers.some((peer) => peer.publicKey === clientPublicKey && peer.allowedAddress === clientAddress)) {
     throw new TypeError('peer key and address are not in the verified WireGuard policy');
   }
   if (!/^\d{1,3}(?:\.\d{1,3}){3}\/32$/.test(clientAddress) ||
@@ -264,24 +284,29 @@ export function createWireGuardClientProfile(
   ].join('\n');
 }
 
-/** Register a configured peer over the relay's HTTPS control route using blind tokens. */
+/**
+ * Register a peer over the relay's HTTPS control route using blind tokens.
+ * Resolves with the tunnel address the relay assigned (open relays) or holds (static).
+ */
 export async function registerWireGuardPeer(
   receipt: VerifiedWireGuardReceipt,
   clientPrivateKey: string,
   tokens: Token[],
   tlsPort = 443,
-): Promise<void> {
+): Promise<string | undefined> {
   if (!isVerifiedWireGuardReceipt(receipt)) throw new TypeError('a verified WireGuard attestation receipt is required');
   validateEndpoint(receipt.endpoint);
   if (!Number.isInteger(tlsPort) || tlsPort < 1 || tlsPort > 65535) throw new RangeError('invalid relay TLS port');
   const url = new URL(`https://${receipt.endpoint}:${tlsPort}/wireguard/register`);
   if (tokens.length !== 1) throw new RangeError('register exactly one blind token at a time');
   const publicKey = deriveWireGuardPublicKey(clientPrivateKey);
-  if (!receipt.peers.some((peer) => peer.publicKey === publicKey)) throw new TypeError('client private key does not match a configured peer');
+  if (receipt.registration !== 'open-paid' && !receipt.peers.some((peer) => peer.publicKey === publicKey)) {
+    throw new TypeError('client private key does not match a configured peer');
+  }
   const expectedSpki = Buffer.from(receipt.tunnelSpki, 'base64url');
   if (!expectedSpki.length) throw new TypeError('missing attested relay TLS key');
   const body = JSON.stringify({ publicKey, authorization: encodeAuthorization(tokens) });
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<string | undefined>((resolve, reject) => {
     let bodySent = false;
     const timer = setTimeout(() => req.destroy(new Error('WireGuard registration timed out')), 10_000);
     const fail = (error: Error) => {
@@ -306,7 +331,17 @@ export async function registerWireGuardPeer(
         if (res.statusCode !== 201) {
           const definitelyRejected = [400, 401, 404, 409, 413, 415, 429].includes(res.statusCode ?? 0);
           reject(new WireGuardRegistrationError(definitelyRejected ? 'rejected' : 'unknown', `WireGuard peer registration failed (${res.statusCode ?? 'no status'})`));
-        } else resolve();
+        } else {
+          let address: string | undefined;
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { address?: unknown };
+            if (typeof parsed.address === 'string' && /^\d{1,3}(?:\.\d{1,3}){3}\/32$/.test(parsed.address)) address = parsed.address;
+          } catch { /* older relays answer without a body we need */ }
+          if (!address && receipt.registration !== 'open-paid') {
+            address = receipt.peers.find((peer) => peer.publicKey === publicKey)?.allowedAddress;
+          }
+          resolve(address);
+        }
       });
     });
     req.once('socket', (socket) => {

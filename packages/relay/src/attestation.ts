@@ -27,6 +27,8 @@ export interface RelayAttestationOptions {
     clientAllowedIPs: '0.0.0.0/0';
     bytesPerToken: number;
     metering: 'bidirectional-inner-ipv4';
+    registration?: 'static' | 'open-paid';
+    maxPeers?: number;
   };
 }
 
@@ -47,6 +49,9 @@ export interface WireGuardAttestationResponse {
     ipv6Forwarding: false;
     bytesPerToken: number;
     metering: 'bidirectional-inner-ipv4';
+    /** Present only for open relays: any key may register by paying. */
+    registration?: 'open-paid';
+    maxPeers?: number;
   };
   attestation: string;
 }
@@ -140,6 +145,9 @@ export async function createWireGuardAttestationResponse(
       ipv6Forwarding: false,
       bytesPerToken: options.wireGuard.bytesPerToken,
       metering: options.wireGuard.metering,
+      ...(options.wireGuard.registration === 'open-paid'
+        ? { registration: 'open-paid' as const, maxPeers: options.wireGuard.maxPeers }
+        : {}),
     },
     attestation,
   };

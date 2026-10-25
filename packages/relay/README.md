@@ -31,3 +31,35 @@ The proxy binds to loopback by default and rejects destinations that resolve to
 private, loopback, link-local, or reserved IP ranges. If it is exposed on a
 network, put it behind deployment-level access controls. It supports HTTPS
 CONNECT only, on port 443. TLS remains end-to-end to the destination.
+
+## Confidential Space attestation endpoint
+
+`@wraps/relay/attestation` creates a nonce-bound receipt from the relay's
+self-signed TLS certificate and an injected `AttestationProvider`. The provider
+must be the Confidential Space implementation supplied by the attestation
+lane. The TLS key and certificate must be generated inside the workload and
+shared with the HTTPS proxy listener; the attestation endpoint hashes the
+certificate's SPKI so the SDK can pin the same key.
+
+The receipt listener is separate HTTP because the SDK-02 transport fetches its
+nonce-bound receipt over HTTP by default. Start it on a dedicated port and set
+the SDK's `attestationUrl` explicitly, for example
+`http://relay.example:8080/attestation`; set the proxy URL to the HTTPS
+listener, such as `https://relay.example:443`. The endpoint disables caching
+and limits each client IP to 60 requests per minute by default. The Cloud
+firewall must allow the selected attestation port from the demo agent.
+
+```ts
+import { startRelayAttestationServer } from '@wraps/relay/attestation';
+
+const server = startRelayAttestationServer({
+  host: '0.0.0.0',
+  port: 8080,
+  tlsCertificate: certificatePem,
+  provider: confidentialSpaceAttestationProvider,
+});
+```
+
+Do not expose the attestation URL as a substitute for the TLS-pinned proxy.
+Its response is accepted only after the SDK verifies the request nonce and key
+hash with the Google-signed workload attestation.

@@ -127,11 +127,18 @@ Our own tests against the paper's rules. Not an external audit. Details: `docs/S
 
 ---
 
-## Privacy grows with every user (in progress)
+## Privacy needs a crowd and slow payouts
 
-- Plain x402: a spy links every payment to its wallet. That is our measured mainnet finding.
-- With blind tokens, a spy must guess which top-up funded which purchase. The more agents, the harder the guess.
-- A realistic measurement is **in progress (PR #7)**. Our earlier simulation used an oracle assumption the watcher cannot observe, so we do not quote its numbers.
+Share of spend whose payer is the watcher's best guess. **Simulation, PR #7 (open)**, 200 trials.
+
+| Agents | Plain x402 | Payouts every 5 min | every 1 h | every 6 h | every 24 h | Random guess |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 100% | 100% | 100% | 100% | 100% | 100% |
+| 5 | 100% | 73.0% | 68.7% | 50.3% | 20.0% | 20.0% |
+| 20 | 100% | 35.6% | 28.8% | 13.7% | 5.0% | 5.0% |
+| 100 | 100% | 8.1% | 5.7% | 2.8% | 1.0% | 1.0% |
+
+Model: the watcher sees only top-ups and one issuer→merchant total per merchant per payout interval, and runs EM. A per-call "oracle" view is the upper bound. With hourly payouts a watcher still attributes 69% of spend at 5 agents and 6% at 100. At one payout a day it falls to a random guess. Our earlier table overstated privacy.
 
 Background: Dingledine and Mathewson, ["Anonymity Loves Company"](https://www.freehaven.net/anonbib/cache/usability:weis2006.pdf) (2006).
 
@@ -141,7 +148,8 @@ Background: Dingledine and Mathewson, ["Anonymity Loves Company"](https://www.fr
 
 - Plain x402 on XRPL waits for the ledger: XRPL mainnet averaged **about 4.0 s** per ledger over 20 ledgers (our measurement).
 - wraps merchant payments clear **off-chain**. The chain is used only for top-ups and batched payouts.
-- Our own latency: **benchmark pending (PR #7)**. No speed comparison until it is measured.
+- Local benchmark (mock rails, one laptop, PR #7): **p50 1.8 ms**, p95 3.5 ms per paid call, vs about 4 s ledger wait for plain x402.
+- That is a local, mock number. It is not a production latency, so we do not claim wraps is faster in production.
 
 ---
 
@@ -184,7 +192,7 @@ We're building the privacy layer before the money arrives.
 
 ## Roadmap
 
-- **In progress:** SDK through the relay (PR #5), relay in Confidential Space (PR #16), on-chain merchant payouts (ISS-06), latency benchmark and realistic privacy model (PR #7)
+- **In progress:** SDK through the relay (PR #5), relay in Confidential Space (PR #16), on-chain merchant payouts (ISS-06), benchmark and privacy simulation (PR #7, open)
 - **Roadmap:** Mastercard AP4M top-up
 - **Roadmap:** two-hop network on two chip vendors
 - **Roadmap:** Anonymous Credit Tokens: partial spending and anonymous change ([IETF draft](https://datatracker.ietf.org/doc/html/draft-schlesinger-cfrg-act-01))
@@ -200,7 +208,7 @@ We're building the privacy layer before the money arrives.
 - Relay IP hiding does not work end to end yet.
 - Merchant payouts are mocked. AP4M top-up is not implemented.
 - Blind tokens hide the issuance-to-redemption link only. Not metadata, timing or IPs.
-- Timing can link top-ups to spending when few people use it.
+- Timing can link top-ups to spending when few people use it. With hourly payouts and 5 agents, the simulated watcher still attributes 69% of spend.
 - We trust Google's attestation service and AMD SEV.
 - The image build isn't reproducible yet.
 

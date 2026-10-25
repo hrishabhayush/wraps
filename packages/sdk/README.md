@@ -51,3 +51,15 @@ Relay mode requires a pre-top-up before the first merchant request because the r
 Relay batches count against the daily cap and leave the balance before dispatch. They are never refunded, because the relay may settle a token before a failure is visible. Merchant tokens follow the SEC-02 reservation rules: a refusal restores the unspent ones, and an unknown outcome keeps them reserved. A retry or `resolvePending()` re-sends the same merchant tokens and pays a fresh relay batch. If that batch would pass the daily cap or the balance is too low, the attempt fails and the payment stays pending. Set `relayTokensPerTunnel` between 1 and 100 to use a larger batch; the full batch is charged even when fewer metering blocks are settled.
 
 The issuer bootstrap and top-up requests are tunneled through the relay without meter tokens. This exception is restricted to the exact HTTPS issuer origin configured in `createPinnedRelayTransport`; the issuer's first TLS peer key is checked against its attestation, then pinned for later calls. The relay server must permit unauthenticated CONNECT only to that issuer host and port. Merchant CONNECT requests still require meter tokens in `Proxy-Authorization`; the merchant's `Authorization` header remains end-to-end inside TLS. Without `relayTransport`, `transport` and all direct behavior stay unchanged.
+
+# WireGuard client flow
+
+The SDK verifies a nonce-bound relay receipt before it releases the relay TLS key for registration. The resulting client profile is for Linux `wg-quick`; peer private keys must be generated and retained on the client device.
+
+```ts
+const receipt = await fetchVerifiedWireGuardReceipt('http://RELAY_IP:8080/wireguard-attestation', verifier);
+await client.registerWireGuardPeer(receipt, clientPrivateKey);
+const profile = createWireGuardClientProfile(receipt, clientPrivateKey, '10.77.0.2/32');
+```
+
+Registration pins the relay HTTPS certificate's SPKI to the verified receipt. Each token settled enables one 10,000,000-byte quota block. The control endpoint terminates on the relay and does not traverse the forwarding quota. The Linux profile routes IPv4 through the tunnel and blocks IPv6 egress while active. Other operating systems need a native WireGuard client with its block-untunneled-traffic option enabled.

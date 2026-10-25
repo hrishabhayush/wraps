@@ -1,0 +1,25 @@
+{
+  "name": "@agent-pay/spybot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reads plain x402 payments on XRPL mainnet: who paid which service, and who funded them.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "spy": "tsx src/cli.ts",
+    "sim": "tsx src/sim-cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

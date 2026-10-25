@@ -51,9 +51,11 @@ export async function createWireGuardQuotaController(
       const listing = await run('nft', ['list', 'quotas', 'table', 'inet', TABLE]);
       const result = new Map<string, number>();
       for (const [publicKey, name] of names) {
-        const match = new RegExp(`quota\\s+${name}\\s+\\{[^}]*?used\\s+(\\d+)\\s+bytes`, 's').exec(listing);
-        if (!match) throw new Error('WireGuard quota counter is unavailable');
-        result.set(publicKey, Number(match[1]));
+        const block = new RegExp(`quota\\s+${name}\\s+\\{([^}]*)\\}`, 's').exec(listing);
+        if (!block) throw new Error('WireGuard quota counter is unavailable');
+        // nft omits "used N bytes" while the counter is still zero.
+        const used = /used\s+(\d+)\s+bytes/.exec(block[1]);
+        result.set(publicKey, used ? Number(used[1]) : 0);
       }
       return result;
     },

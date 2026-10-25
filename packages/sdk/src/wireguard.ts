@@ -53,6 +53,8 @@ export async function fetchVerifiedWireGuardReceipt(
       peers?: Array<{ publicKey?: string; allowedAddress?: string }>;
       clientAllowedIPs?: string;
       ipv6Forwarding?: boolean;
+      bytesPerToken?: number;
+      metering?: string;
     };
     attestation?: string;
   };
@@ -66,7 +68,8 @@ export async function fetchVerifiedWireGuardReceipt(
   const networkPolicy = receipt.networkPolicy;
   if (!networkPolicy || networkPolicy.endpoint !== receipt.endpoint || networkPolicy.listenPort !== receipt.listenPort ||
       networkPolicy.interfaceAddress !== receipt.interfaceAddress || networkPolicy.clientAllowedIPs !== '0.0.0.0/0' ||
-      networkPolicy.ipv6Forwarding !== false || !networkPolicy.egressInterface || !Array.isArray(networkPolicy.peers)) {
+      networkPolicy.ipv6Forwarding !== false || networkPolicy.bytesPerToken !== 10_000_000 ||
+      networkPolicy.metering !== 'bidirectional-inner-ipv4' || !networkPolicy.egressInterface || !Array.isArray(networkPolicy.peers)) {
     throw new TypeError('malformed WireGuard network policy');
   }
   const peers = networkPolicy.peers.map((peer) => {
@@ -81,6 +84,8 @@ export async function fetchVerifiedWireGuardReceipt(
     peers,
     clientAllowedIPs: '0.0.0.0/0',
     ipv6Forwarding: false,
+    bytesPerToken: 10_000_000,
+    metering: 'bidirectional-inner-ipv4',
   })).digest('hex');
   if (policyHash !== policy) throw new Error('WireGuard policy is not bound to the attested policy hash');
   const verified = await verifier.verify(receipt.attestation, {

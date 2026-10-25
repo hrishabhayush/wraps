@@ -80,8 +80,6 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     listenPort: options.listenPort,
     interfaceAddress: options.interfaceAddress,
     egressInterface: options.egressInterface,
-    peers: [...options.peers].sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
-    egressInterface: options.egressInterface,
     peers: [...options.peers].map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
     ipv6Forwarding: false,
@@ -112,13 +110,14 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     throw new Error('WireGuard IPv4 forwarding must be enabled by the VM deployment');
   }
   let active = false;
-  const quotas = await createWireGuardQuotaController(run);
+  let quotas: WireGuardQuotaController | undefined;
   try {
+    quotas = await createWireGuardQuotaController(run);
     await run('wg-quick', ['up', configPath]);
     active = true;
   } catch {
     try { await run('wg-quick', ['down', configPath]); } catch { /* clean partial setup best-effort */ }
-    await quotas.close();
+    if (quotas) await quotas.close();
     await rm(privateDirectory, { recursive: true, force: true });
     throw new Error('Could not start WireGuard; verify kernel WireGuard support, CAP_NET_ADMIN, and the host firewall tools');
   }
@@ -129,19 +128,21 @@ export async function startWireGuardGateway(options: WireGuardGatewayOptions): P
     endpoint: options.endpoint,
     listenPort: options.listenPort,
     interfaceAddress: options.interfaceAddress,
+    egressInterface: options.egressInterface,
+    peers: options.peers.map(({ publicKey: key, allowedAddress }) => ({ publicKey: key, allowedAddress })).sort((a, b) => a.publicKey.localeCompare(b.publicKey)),
     clientAllowedIPs: '0.0.0.0/0',
   };
 
   return {
     identity,
-    quotas,
+    quotas: quotas!,
     async stop() {
       if (!active) return;
       active = false;
       try {
         await run('wg-quick', ['down', configPath]);
       } finally {
-        await quotas.close();
+        await quotas!.close();
         // The private key exists on disk only in the workload's tmpfs while the
         // interface is up. The VM/workload must still be treated as secret memory.
         await rm(privateDirectory, { recursive: true, force: true });

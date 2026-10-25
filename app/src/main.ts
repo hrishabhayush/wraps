@@ -316,7 +316,7 @@ const actions: Record<string, (arg: string) => unknown> = {
       s.wallet = { ...(await api.topUp(s.amount, { asset: wc.asset, tx })) };
       toast(`Minted ${tokensFor(s.amount).toLocaleString()} tokens`);
     } catch (e) {
-      toast((e as Error).message.slice(0, 60));
+      toast((e as Error).message.slice(0, 90));
     } finally {
       s.stage = '';
       refreshBalance();
@@ -326,14 +326,14 @@ const actions: Record<string, (arg: string) => unknown> = {
     try {
       await wc.connect(async uri => { s.uri = uri; s.qr = await QRCode.toString(uri, { type: 'svg', margin: 0, color: { dark: '#0a0a0a', light: '#ffffff' } }); render(); });
     } catch (e) {
-      if (s.qr) toast((e as Error).message.slice(0, 60));
+      if (s.qr) toast((e as Error).message.slice(0, 90));
     }
     s.qr = s.uri = '';
     refreshBalance();
   },
   connectBrowser: async () => {
     s.stage = 'linking'; render();
-    try { await wc.connectBrowser(); } catch (e) { toast((e as Error).message.slice(0, 60)); }
+    try { await wc.connectBrowser(); } catch (e) { toast((e as Error).message.slice(0, 90)); }
     s.stage = '';
     refreshBalance();
   },

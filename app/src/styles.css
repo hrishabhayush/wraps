@@ -146,5 +146,5 @@ footer button.ghost:hover, .ncard:hover { background: #fff; }
 .start .dot { width: 38px; height: 38px; border-radius: 50%; background: #000; color: #fff; display: grid; place-items: center; }
 .chev { flex: none; }
 
-.toast { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); background: #1e1e24; color: #fff; font-size: 12px; padding: 8px 14px; border-radius: 999px; white-space: nowrap; }
+.toast { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); background: #1e1e24; color: #fff; font-size: 12px; padding: 8px 14px; border-radius: 14px; width: calc(100% - 28px); text-align: center; line-height: 1.35; }
 .qrlink { align-self: center; margin-top: -2px; }

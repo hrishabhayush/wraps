@@ -35,15 +35,18 @@ async function ensureChain(eth, net) {
   }
 }
 
+// Tag errors with the wallet call that failed, so problems are easy to place.
+const step = (name, f) => f().catch(e => { const m = (e && (e.message || e.toString())) || 'failed'; throw new Error(`${name}: ${m}`); });
+
 async function run(req) {
   const eth = window.ethereum;
   if (!eth) throw new Error('No browser wallet found. Open this page in a browser with MetaMask, Rabby or Brave Wallet.');
-  const [account] = await eth.request({ method: 'eth_requestAccounts' });
+  const [account] = await step('connect', () => eth.request({ method: 'eth_requestAccounts' }));
   if (req.kind === 'connect') return { account };
   if (account.toLowerCase() !== req.tx.from.toLowerCase()) throw new Error(`Switch your wallet to ${req.tx.from} and try again`);
-  await ensureChain(eth, req.net);
+  await step('switch network', () => ensureChain(eth, req.net));
   say('Confirm in your wallet', 'Approve the top-up in the wallet pop-up.');
-  return { hash: await eth.request({ method: 'eth_sendTransaction', params: [req.tx] }) };
+  return { hash: await step('send', () => eth.request({ method: 'eth_sendTransaction', params: [req.tx] })) };
 }
 
 (async () => {
@@ -60,6 +63,7 @@ async function run(req) {
       say('Done', 'You can close this tab and go back to Wraps.', 'ok');
       setTimeout(() => window.close(), 1200);
     } catch (e) {
+      console.error(e);
       await post({ id: req.id, ok: false, error: e.message || String(e) });
       say('Didn’t go through', e.message || String(e), 'bad');
     }

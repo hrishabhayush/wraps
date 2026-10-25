@@ -152,7 +152,7 @@ const hexQty = (n: bigint | number) => '0x' + n.toString(16);
  */
 export class XrplEvmPayoutRail implements PayoutRail {
   readonly name = 'xrpl-evm';
-  private readonly opts?: XrplEvmPayoutRailOptions;
+  private readonly opts?: Omit<XrplEvmPayoutRailOptions, 'privateKey'>;
   private readonly registry?: MerchantRegistry;
   /** Addresses as registered when the rail was made. A later change is refused. */
   private readonly pinned = new Map<string, string>();
@@ -173,8 +173,10 @@ export class XrplEvmPayoutRail implements PayoutRail {
         this.account = privateKeyToAccount(opts.privateKey as Hex);
       }
       this.decimals = opts.decimals;
+      // Keep only the account. The key string is not stored on the rail.
+      const { privateKey: _key, ...rest } = opts;
+      this.opts = rest;
     }
-    this.opts = opts;
   }
 
   /** The issuer's payout address (sender), when a key is set. */
@@ -331,10 +333,11 @@ export class XrplEvmPayoutRail implements PayoutRail {
   }
 
   /** Checks transfers left from earlier batches. Confirmed ones are returned; dropped ones are forgotten. */
-  private async settleInFlight(): Promise<{ done: PayoutResult[]; touched: Set<string> }> {
+  private async settleInFlight(): Promise<{ done: PayoutResult[]; touched: Set<string>; rebroadcast: InFlight[] }> {
     const done: PayoutResult[] = [];
     const touched = new Set<string>();
-    if (this.inFlight.size === 0) return { done, touched };
+    const rebroadcast: InFlight[] = [];
+    if (this.inFlight.size === 0) return { done, touched, rebroadcast };
     let latest: number | undefined;
     for (const f of [...this.inFlight.values()]) {
       touched.add(f.merchantId);
@@ -360,10 +363,11 @@ export class XrplEvmPayoutRail implements PayoutRail {
       try {
         await this.rpc('eth_sendRawTransaction', [f.raw]);
       } catch {
-        /* "already known" or a flaky RPC: either way, try again next batch */
+        /* "already known" or a flaky RPC: either way, its receipt is checked below and next batch */
       }
+      rebroadcast.push(f);
     }
-    return { done, touched };
+    return { done, touched, rebroadcast };
   }
 
   private async payoutSigned(lines: PayoutLine[]): Promise<PayoutResult[]> {
@@ -371,7 +375,7 @@ export class XrplEvmPayoutRail implements PayoutRail {
     const results: PayoutResult[] = [];
 
     // 1. Transfers from earlier batches come first. Their merchants get no new transfer this batch.
-    const { done, touched } = await this.settleInFlight();
+    const { done, touched, rebroadcast } = await this.settleInFlight();
     results.push(...done);
 
     // 2. Plan the new lines: registered, unchanged addresses only.
@@ -387,13 +391,10 @@ export class XrplEvmPayoutRail implements PayoutRail {
       }
       planned.push({ line: l, tx: this.buildTx(l.merchantId, payTo, l.amountRlusd), payTo });
     }
-    if (planned.length === 0) {
-      if (refused.length && results.length === 0) throw new Error(refused.join('; '));
-      return results;
-    }
+    if (planned.length === 0 && refused.length && results.length === 0 && rebroadcast.length === 0) throw new Error(refused.join('; '));
 
     // 3. Gas: hard caps per transfer, on price, and per batch.
-    const gasPrice = await this.gasPrice();
+    const gasPrice = planned.length ? await this.gasPrice() : 0n;
     const maxGas = this.opts!.maxGasPerTransfer ?? 100_000n;
     const maxBatchFee = this.opts!.maxBatchFeeWei ?? 5n * 10n ** 17n;
     const from = this.account!.address;
@@ -421,8 +422,8 @@ export class XrplEvmPayoutRail implements PayoutRail {
     }
 
     // 4. Sign with consecutive nonces and send in order. Record each tx as in flight before sending.
-    let nonce = await this.nonce('pending');
-    const sent: InFlight[] = [];
+    let nonce = ready.length ? await this.nonce('pending') : 0;
+    const sent: InFlight[] = [...rebroadcast];
     for (const r of ready) {
       const raw = await this.account!.signTransaction({
         type: 'legacy',

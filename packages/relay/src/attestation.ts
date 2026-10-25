@@ -201,7 +201,8 @@ export function createRelayAttestationServer(options: RelayAttestationListenOpti
   const server = createServer({ maxHeaderSize: 16 * 1024 }, (req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://relay.invalid');
-      if (url.pathname !== '/attestation') {
+      const wireGuardRequest = url.pathname === '/wireguard-attestation';
+      if (url.pathname !== '/attestation' && !wireGuardRequest) {
         sendJson(res, 404, { error: 'not found' });
         return;
       }
@@ -230,7 +231,11 @@ export function createRelayAttestationServer(options: RelayAttestationListenOpti
       }
 
       inFlightAttestations++;
-      const operation = createRelayAttestationResponse(Buffer.from(nonces[0], 'hex'), options).then(
+      const nonce = Buffer.from(nonces[0], 'hex');
+      const receipt = wireGuardRequest
+        ? createWireGuardAttestationResponse(nonce, options)
+        : createRelayAttestationResponse(nonce, options);
+      const operation = receipt.then(
         (receipt) => ({ kind: 'receipt' as const, receipt }),
         () => ({ kind: 'failure' as const }),
       );

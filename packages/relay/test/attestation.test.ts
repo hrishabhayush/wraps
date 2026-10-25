@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { request as httpsRequest } from 'node:https';
-import { X509Certificate } from 'node:crypto';
+import { createHash, X509Certificate } from 'node:crypto';
 import { createConnection, createServer as createTcpServer, type Server as NetServer } from 'node:net';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { hashPublicKeys, type AttestationProvider } from '@wraps/attestation';
@@ -94,6 +94,67 @@ describe('relay attestation', () => {
       const badNonce = await fetch(`http://127.0.0.1:${address.port}/attestation?nonce=abc`);
       expect(badNonce.status).toBe(400);
       expect(provider.attest).toHaveBeenCalledTimes(1);
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
+  it('serves the nonce-bound WireGuard receipt from the separate listener', async () => {
+    const { certificate: tlsCertificate } = await selfSignedCertificate();
+    const publicKey = Buffer.alloc(32, 11).toString('base64');
+    const peers = [{ publicKey: Buffer.alloc(32, 12).toString('base64'), allowedAddress: '10.77.0.2/32' }];
+    const policy = {
+      endpoint: 'relay.example.com',
+      listenPort: 51820,
+      interfaceAddress: '10.77.0.1/24',
+      egressInterface: 'ens4',
+      peers,
+      clientAllowedIPs: '0.0.0.0/0' as const,
+      ipv6Forwarding: false as const,
+      bytesPerToken: 10_000_000,
+      metering: 'bidirectional-inner-ipv4' as const,
+    };
+    const policyHash = createHash('sha256').update(JSON.stringify(policy)).digest('hex');
+    const attest = vi.fn(async (_nonce: Uint8Array, _publicKeysHash: Uint8Array) => 'wireguard-receipt');
+    const provider: AttestationProvider = { format: 'test-format', attest };
+    const server = createRelayAttestationServer({
+      tlsCertificate,
+      provider,
+      wireGuard: { ...policy, publicKey, policyHash },
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server has no TCP address');
+      const nonce = Buffer.alloc(32, 13).toString('hex');
+      const res = await fetch(`http://127.0.0.1:${address.port}/wireguard-attestation?nonce=${nonce}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      const receipt = await res.json();
+      const tunnelKey = new X509Certificate(tlsCertificate).publicKey.export({ type: 'spki', format: 'der' });
+      expect(receipt).toMatchObject({
+        format: 'test-format',
+        publicKeys: {
+          tunnel: Buffer.from(tunnelKey).toString('base64url'),
+          wireguard: publicKey,
+          policy: policyHash,
+        },
+        endpoint: policy.endpoint,
+        listenPort: policy.listenPort,
+        interfaceAddress: policy.interfaceAddress,
+        clientAllowedIPs: '0.0.0.0/0',
+        networkPolicy: { ...policy, peers },
+        attestation: 'wireguard-receipt',
+      });
+      expect(attest).toHaveBeenCalledTimes(1);
+      expect(Buffer.from(attest.mock.calls[0][0])).toEqual(Buffer.from(nonce, 'hex'));
+      expect(Buffer.from(attest.mock.calls[0][1])).toEqual(Buffer.from(hashPublicKeys({
+        tunnel: new Uint8Array(tunnelKey),
+        wireguard: new Uint8Array(Buffer.from(publicKey, 'base64')),
+        policy: new Uint8Array(Buffer.from(policyHash, 'hex')),
+      })));
     } finally {
       server.close();
       await once(server, 'close');

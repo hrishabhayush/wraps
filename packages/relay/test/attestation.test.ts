@@ -197,4 +197,100 @@ describe('relay attestation', () => {
       await new Promise<void>((resolve, reject) => upstreamServer!.close((err) => err ? reject(err) : resolve()));
     }
   });
+
+  it('allows tokenless CONNECT only to the configured issuer authority', async () => {
+    const { certificate, privateKey } = await selfSignedCertificate();
+    const issuer: RelayIssuer = { verify: vi.fn(async () => true), settle: vi.fn(async () => {}) };
+    const upstream = createTcpServer((socket) => socket.on('data', (chunk) => socket.write(chunk)));
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const upstreamAddress = upstream.address();
+    if (!upstreamAddress || typeof upstreamAddress === 'string') throw new Error('upstream did not bind');
+    const server = createSecureRelayServer({ tlsCertificate: certificate, tlsPrivateKey: privateKey, issuer }, {
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+      connect: () => createConnection({ host: '127.0.0.1', port: upstreamAddress.port }),
+    }, 'https://ISSUER.example/v1');
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const relayAddress = server.address();
+      if (!relayAddress || typeof relayAddress === 'string') throw new Error('relay did not bind');
+      expect(await secureConnectStatus(relayAddress.port, 'issuer.example:443')).toBe(200);
+      expect(issuer.verify).not.toHaveBeenCalled();
+      expect(await secureConnectStatus(relayAddress.port, 'other.example:443')).toBe(407);
+      expect(await secureConnectStatus(relayAddress.port, 'issuer.example:443', '')).toBe(407);
+      expect(await secureConnectStatus(relayAddress.port, 'issuer.example:443', proxyAuthorization)).toBe(200);
+      expect(issuer.verify).toHaveBeenCalledTimes(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      await new Promise<void>((resolve, reject) => upstream.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it('rate limits unauthenticated issuer bootstrap per client', async () => {
+    const { certificate, privateKey } = await selfSignedCertificate();
+    const upstream = createTcpServer((socket) => socket.on('data', (chunk) => socket.write(chunk)));
+    upstream.listen(0, '127.0.0.1');
+    await once(upstream, 'listening');
+    const upstreamAddress = upstream.address();
+    if (!upstreamAddress || typeof upstreamAddress === 'string') throw new Error('upstream did not bind');
+    const issuer: RelayIssuer = { verify: vi.fn(async () => true), settle: vi.fn(async () => {}) };
+    const server = createSecureRelayServer({ tlsCertificate: certificate, tlsPrivateKey: privateKey, issuer }, {
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+      connect: () => createConnection({ host: '127.0.0.1', port: upstreamAddress.port }),
+    }, 'https://issuer.example');
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const relayAddress = server.address();
+      if (!relayAddress || typeof relayAddress === 'string') throw new Error('relay did not bind');
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        expect(await secureConnectStatus(relayAddress.port, 'issuer.example:443')).toBe(200);
+      }
+      expect(await secureConnectStatus(relayAddress.port, 'issuer.example:443')).toBe(429);
+      expect(issuer.verify).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+      await new Promise<void>((resolve, reject) => upstream.close((err) => err ? reject(err) : resolve()));
+    }
+  });
+
+  it('still rejects a private issuer address during unauthenticated bootstrap', async () => {
+    const { certificate, privateKey } = await selfSignedCertificate();
+    const issuer: RelayIssuer = { verify: vi.fn(async () => true), settle: vi.fn(async () => {}) };
+    const server = createSecureRelayServer({ tlsCertificate: certificate, tlsPrivateKey: privateKey, issuer }, {}, 'https://127.0.0.1');
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const relayAddress = server.address();
+      if (!relayAddress || typeof relayAddress === 'string') throw new Error('relay did not bind');
+      expect(await secureConnectStatus(relayAddress.port, '127.0.0.1:443')).toBe(403);
+      expect(issuer.verify).not.toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    }
+  });
 });
+
+function secureConnectStatus(proxyPort: number, authority: string, authorization?: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const headers = authorization !== undefined ? { 'proxy-authorization': authorization } : undefined;
+    const req = httpsRequest({
+      host: '127.0.0.1', port: proxyPort, method: 'CONNECT', path: authority,
+      headers, rejectUnauthorized: false,
+    });
+    req.on('connect', (res, socket) => {
+      socket.destroy();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on('response', (res) => {
+      res.resume();
+      resolve(res.statusCode ?? 0);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}

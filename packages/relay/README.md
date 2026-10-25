@@ -15,7 +15,7 @@ const server = startRelayServer({
 }); // listens on 127.0.0.1 by default
 ```
 
-Each CONNECT request must carry a bounded batch of RFC 9578 blind tokens in its
+Each metered CONNECT request must carry a bounded batch of RFC 9578 blind tokens in its
 `Proxy-Authorization` header. The relay verifies the batch with the issuer,
 then settles one token for each 10,000,000 bytes sent or received. A partial
 final block costs one token. If the batch runs out, the relay forwards only the
@@ -48,6 +48,14 @@ both listeners; set the SDK's `attestationUrl` explicitly, for example
 listener, such as `https://relay.example:443`. The endpoint disables caching
 and limits each client IP to 60 requests per minute by default. The Cloud
 firewall must allow the selected attestation port from the demo agent.
+
+For SDK issuer bootstrap only, `startConfidentialRelay()` permits a tokenless
+CONNECT when its authority matches the configured `issuerUrl` hostname on port
+443. The destination still must resolve exclusively to publicly routable IPs.
+Each client may open up to 10 such tunnels per minute, and each tunnel is capped
+at 1 MiB in both directions combined. Other tokenless destinations receive 407;
+CONNECT requests with tokens, including to the issuer, use the normal metered
+flow.
 
 ```ts
 import { startConfidentialRelay } from '@wraps/relay';

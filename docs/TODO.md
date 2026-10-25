@@ -82,7 +82,7 @@ Folder: `infra/`
 ## Lane 4: Relay / VPN (folder `packages/relay`)
 
 - [x] **RLY-01** HTTPS CONNECT proxy. HTTPS only; loopback by default, public destination IPs only, raw TCP tunnel.
-- [ ] **RLY-02** Charges tokens per 10 MB and redeems them with the issuer.
+- [x] **RLY-02** Charges one blind token per 10,000,000 tunnel bytes, settled through the issuer. Partial blocks are charged; tunnels close at quota. (Codex)
 - [ ] **RLY-03** Wire into the relay enclave (INF-10 to INF-14).
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)

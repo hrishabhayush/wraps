@@ -2,13 +2,23 @@ import type { LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, createConnection, type Socket } from 'node:net';
-import type { Duplex } from 'node:stream';
+import { Transform, type Duplex } from 'node:stream';
+import { parseAuthorization, serializeToken, tokenId } from '@wraps/tokens';
+import { BandwidthMeter, HttpRelayIssuer, MAX_TOKENS_PER_TUNNEL, type RelayIssuer } from './meter.js';
+export type { RelayIssuer } from './meter.js';
 
 const MAX_HEADER_SIZE = 16 * 1024;
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 
 export interface RelayServerOptions {
   connectTimeoutMs?: number;
+  /** Required to open a valid tunnel. The relay otherwise fails closed with 503. */
+  issuerUrl?: string;
+  /** Test or embedded issuer adapter; takes precedence over issuerUrl. */
+  issuer?: RelayIssuer;
+  /** The relay's fixed merchant account at the issuer. Defaults to `relay`. */
+  merchantId?: string;
+  issuerFetch?: typeof fetch;
 }
 
 /** Network seams let tests exercise the tunnel without relying on public DNS. */
@@ -33,6 +43,7 @@ export function createRelayServer(
   options: RelayServerOptions = {},
   dependencies: Partial<RelayDependencies> = {},
 ): Server {
+  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
   const server = createServer({ maxHeaderSize: MAX_HEADER_SIZE }, rejectHttpRequest);
   server.headersTimeout = 10_000;
   server.requestTimeout = 10_000;
@@ -40,7 +51,16 @@ export function createRelayServer(
   const connect = dependencies.connect ?? ((host, family, port) => createConnection({ host, family, port }));
 
   server.on('connect', (req, client, head) => {
-    void handleConnect(req, client, head, options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS, resolve, connect);
+    void handleConnect(
+      req,
+      client,
+      head,
+      options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
+      resolve,
+      connect,
+      issuer,
+      options.merchantId ?? 'relay',
+    );
   });
 
   return server;
@@ -94,12 +114,41 @@ async function handleConnect(
   timeoutMs: number,
   resolve: RelayDependencies['resolve'],
   connect: RelayDependencies['connect'],
+  issuer: RelayIssuer | undefined,
+  merchantId: string,
 ): Promise<void> {
   client.pause();
   const authority = parseAuthority(req.url);
   if (!authority) {
     respondAndClose(client, 400, 'Invalid CONNECT authority; HTTPS on port 443 only');
     return;
+  }
+
+  let tokens: ReturnType<typeof parseAuthorization> = [];
+  let serializedTokens: string[] = [];
+  if (issuer) {
+    const authorization = req.headers['proxy-authorization'];
+    tokens = parseAuthorization(typeof authorization === 'string' ? authorization : undefined);
+    if (tokens.length === 0 || tokens.length > MAX_TOKENS_PER_TUNNEL) {
+      respondAndClose(client, 407, 'A bounded batch of blind tokens is required');
+      return;
+    }
+    const ids = tokens.map(tokenId);
+    if (new Set(ids).size !== ids.length) {
+      respondAndClose(client, 407, 'Duplicate tokens are not accepted');
+      return;
+    }
+
+    serializedTokens = tokens.map(serializeToken);
+    try {
+      if (!(await issuer.verify(serializedTokens))) {
+        respondAndClose(client, 407, 'Blind tokens are invalid or already spent');
+        return;
+      }
+    } catch {
+      respondAndClose(client, 502, 'Issuer verification failed');
+      return;
+    }
   }
 
   let addresses: LookupAddress[];
@@ -115,9 +164,14 @@ async function handleConnect(
     respondAndClose(client, 403, 'Destination is not publicly routable');
     return;
   }
+  if (!issuer) {
+    respondAndClose(client, 503, 'Relay metering is not configured');
+    return;
+  }
 
   // Connect to the exact address that passed validation; do not resolve the hostname again.
   const destination = addresses[0];
+  const meter = new BandwidthMeter(merchantId, serializedTokens, issuer);
   const upstream = connect(destination.address, destination.family as 4 | 6, authority.port);
   let established = false;
   const timer = setTimeout(() => upstream.destroy(new Error('connect timeout')), timeoutMs);
@@ -140,11 +194,30 @@ async function handleConnect(
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     void readTLSClientHello(client, head, timeoutMs)
       .then((prefix) => {
-        client.unshift(prefix);
-        client.pipe(upstream);
-        upstream.pipe(client);
+        const clientToUpstream = meteredTransform(meter, closeBoth);
+        const upstreamToClient = meteredTransform(meter, closeBoth);
+        clientToUpstream.once('error', closeBoth);
+        upstreamToClient.once('error', closeBoth);
+        clientToUpstream.pipe(upstream);
+        upstreamToClient.pipe(client);
+        if (prefix.length > 0) clientToUpstream.write(prefix);
+        client.pipe(clientToUpstream);
+        upstream.pipe(upstreamToClient);
       })
       .catch(closeBoth);
+  });
+}
+
+function meteredTransform(meter: BandwidthMeter, closeTunnel: () => void): Transform {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      const stream = this;
+      void meter.forward(Buffer.from(chunk)).then(({ bytes, exhausted }) => {
+        if (bytes.length > 0) stream.push(bytes);
+        callback();
+        if (exhausted) setImmediate(closeTunnel);
+      }, () => callback(new Error('bandwidth settlement failed')));
+    },
   });
 }
 
@@ -203,7 +276,12 @@ function isTLSClientHello(prefix: Buffer): boolean {
 
 function respondAndClose(socket: Duplex, status: number, message: string): void {
   if (socket.destroyed) return;
-  socket.end(`HTTP/1.1 ${status} ${status === 400 ? 'Bad Request' : status === 403 ? 'Forbidden' : 'Bad Gateway'}\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`);
+  const reason = status === 400 ? 'Bad Request'
+    : status === 403 ? 'Forbidden'
+      : status === 407 ? 'Proxy Authentication Required'
+        : status === 503 ? 'Service Unavailable'
+          : 'Bad Gateway';
+  socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`);
 }
 
 function isPublicAddress(address: string, family: number): boolean {
@@ -215,8 +293,8 @@ function isPublicAddress(address: string, family: number): boolean {
       a === 0 || a === 10 || a === 127 || a >= 224 ||
       (a === 100 && b >= 64 && b <= 127) ||
       (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && (b === 168 || b === 0 || (b === 88 && c === 99))) ||
-      (a === 198 && (b === 18 || b === 19 || b === 51)) ||
+      (a === 192 && (b === 168 || (b === 0 && c === 0) || (b === 0 && c === 2) || (b === 88 && c === 99))) ||
+      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
       (a === 203 && b === 0 && c === 113)
     );
   }
@@ -225,8 +303,11 @@ function isPublicAddress(address: string, family: number): boolean {
   if (family !== 6 || isIP(address) !== 6 || address.includes('.')) return false;
   const value = ipv6ToBigInt(address);
   if (value === null) return false;
-  // Global unicast is 2000::/3. Exclude documentation and IPv4-mapped addresses.
-  return (value >> 125n) === 1n && (value >> 32n) !== 0x20010db8n && (value >> 32n) !== 0x0000000000000000n;
+  // Global unicast is 2000::/3. Exclude special-use, documentation, and
+  // 6to4 ranges because their embedded IPv4 addresses can target private hosts.
+  const in2001SpecialUse = (value >> 105n) === 0x100080n; // 2001::/23
+  const is6to4 = (value >> 112n) === 0x2002n; // 2002::/16
+  return (value >> 125n) === 1n && !in2001SpecialUse && !is6to4 && (value >> 32n) !== 0x20010db8n;
 }
 
 function ipv6ToBigInt(address: string): bigint | null {

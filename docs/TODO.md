@@ -31,8 +31,8 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **INF-14** TLS: the workload makes its own key and a self-signed certificate. The SDK pins the key from the attestation.
 
 ### Relay networking
-- [~] **INF-27** Configure WireGuard in the Confidential Space relay runtime (PR #33 merged; depends on RLY-04 in #32 and #38). The live relay currently exits during startup; confirm kernel support, capabilities, nftables and peer traffic.
-- [~] **INF-28** Pin the relay image and deploy WireGuard with corrected Confidential Space metadata (draft PR #40; depends on merged RLY-04 #38). The live startup currently exits; diagnose the failure and validate authorized-peer traffic.
+- [~] **INF-27** Configure WireGuard in the Confidential Space relay runtime (PR #33 merged; depends on RLY-04 in #32 and #38). The new image reaches ready state and `/attestation` returns 200; `/wireguard-attestation` returns 404 (tracked in RLY-05), and authorized-peer traffic is unvalidated.
+- [~] **INF-28** Pin the relay image and deploy WireGuard with corrected Confidential Space metadata (PR #40 merged; depends on merged RLY-04 #38). The image reaches ready state and `/attestation` returns 200; `/wireguard-attestation` returns 404 (tracked in RLY-05), and authorized-peer traffic is unvalidated.
 
 ### Keys and secrets
 - [ ] **INF-15** Wallets (three different ones): agent wallet, funding wallet, issuer payout address. Private keys in a local `.env` that is never committed, or Google Secret Manager.
@@ -76,7 +76,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **RLY-01** HTTPS CONNECT proxy. HTTPS only; loopback by default, public destination IPs only, raw TCP tunnel.
 - [x] **RLY-02** Charges one blind token per 10,000,000 tunnel bytes, settled through the issuer. Partial blocks are charged; tunnels close at quota. (Codex)
 - [x] **RLY-03** Wire into the relay enclave (INF-10 to INF-14). (Codex)
-- [~] **RLY-04** Add an attested WireGuard gateway with prepaid, metered peer quotas (PRs #32 and #38 merged). Live Confidential Space startup and authorized-peer traffic validation are still needed; tracked in INF-27 and INF-28.
+- [~] **RLY-04** Add an attested WireGuard gateway with prepaid, metered peer quotas (PRs #32 and #38 merged). The live image reaches ready state and `/attestation` returns 200; `/wireguard-attestation` returns 404 (RLY-05), and authorized-peer traffic is unvalidated.
 - [ ] **RLY-05** Serve and test the nonce-bound WireGuard attestation receipt at `/wireguard-attestation`.
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
@@ -121,5 +121,5 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 1. Complete **INF-17, INF-18** (Mastercard activation and AP4M SDK access), plus **INF-15, INF-16** (wallet setup and testnet gas).
 2. Implement and verify **PAY-03**; then finish the real top-up path in **SDK-03** and RLUSD payouts in **ISS-06**.
-3. For the WireGuard path, the **RLY-04** implementation (#32, #38), **INF-27** runtime (#33) and **SDK-06** profile (#37) are merged. Finish **INF-28** (#40), diagnose the relay startup failure, and validate an authorized peer before completing the live path and **SDK-07** (#39).
+3. For the WireGuard path, the **RLY-04** implementation (#32, #38), **INF-27** runtime (#33), **INF-28** deployment (#40) and **SDK-06** profile (#37) are merged. Add and test the missing receipt route in **RLY-05**, then validate an authorized peer before completing the live path and **SDK-07** (#39).
 4. Address **SEC-01** and finish **SPY-01 to SPY-03**, **DEM-03**, **DEM-04** and **DEM-06** before the live demo.

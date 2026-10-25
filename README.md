@@ -134,7 +134,7 @@ npm run test:conformance
 
 ## Known limitations
 
-Wraps is a testnet prototype. We trust Google's attestation service and AMD SEV, not SEV-SNP, and image builds are not yet reproducible, so a rebuild can change the digest. Blind tokens hide only the link from top-up to payment. Timing, amounts and merchant data can still link them when few people use the system: in our simulation, hourly payouts still let a watcher pin 69% of spend with 5 agents and 6% with 100. The core demo uses mock top-up and payout rails. RLUSD top-ups and payouts run on XRPL EVM testnet in the app and issuer. AP4M runs as a separate x402 demo, not yet as the issuer's top-up rail. The app screens above are design concepts, not captures. Production would need a licensed partner. Every claim and its proof is in [docs/HIGHLIGHTS.md](docs/HIGHLIGHTS.md).
+Wraps is a testnet prototype. We trust Google's attestation service and AMD SEV, not SEV-SNP, and image builds are not yet reproducible, so a rebuild can change the digest. Blind tokens hide only the link from top-up to payment. The app screens above are design concepts, not captures. Production would need a licensed partner. Every claim and its proof is in [docs/HIGHLIGHTS.md](docs/HIGHLIGHTS.md).
 
 ## Docs
 

@@ -4,15 +4,17 @@ import '@fontsource/geist-mono/500.css';
 import './styles.css';
 import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
-import { MockBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
+import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
 import * as tk from './tokens.ts';
 import { tick, tokensFor, clock, USD_PER_TOKEN, type Meter } from './meter.ts';
 import * as wc from './wallet.ts';
 import { short } from './chain.ts';
 import QRCode from 'qrcode';
 
-const api = new MockBackend();
 const inTauri = '__TAURI_INTERNALS__' in window;
+// In the desktop app the VPN is real: the relay meters bandwidth and is paid by the connect helper.
+const api = inTauri ? new TauriBackend() : new MockBackend();
+const realVpn = inTauri;
 
 type Screen = 'onboarding' | 'home' | 'nodes' | 'wallet';
 type Verified = Extract<Attestation, { ok: true }>;
@@ -271,7 +273,7 @@ function toast(msg: string) {
 
 // ---------- actions ----------
 async function connect(id: string) {
-  if (tk.count() === 0) { s.screen = 'wallet'; return toast('Top up to connect'); }
+  if (!realVpn && tk.count() === 0) { s.screen = 'wallet'; return toast('Top up to connect'); }
   s.nodeId = id;
   localStorage.setItem('wraps.node', id);
   s.screen = 'home';
@@ -280,9 +282,14 @@ async function connect(id: string) {
   const att = await api.attest(id);
   s.trust[id] = att.ok ? 'ok' : 'bad';
   if (!att.ok) { s.conn = { kind: 'refused', reason: att.reason }; return render(); }
-  // Pay for the first chunk up front with one real token.
-  try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
-  await api.connect(id);
+  if (realVpn) {
+    // One click: pay the relay with blind tokens and bring WireGuard up (macOS asks for the admin password).
+    try { await api.connect(id); } catch (e) { s.conn = { kind: 'off' }; return toast(String(e).slice(0, 90)); }
+  } else {
+    // Pay for the first chunk up front with one real token.
+    try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
+    await api.connect(id);
+  }
   s.conn = { kind: 'connected', since: Date.now(), meter: { mb: 0, cost: 0 }, att, up: 30, down: 40, spent: 1, spending: false };
   render();
 }
@@ -362,13 +369,13 @@ setInterval(async () => {
   // Prepaid (spent tokens not yet used up) plus what's left in the wallet.
   const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
   c.meter = r.meter;
-  if (c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
+  if (!realVpn && c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
     c.spending = true;
     tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
   }
   c.up = 28 + Math.round(Math.random() * 6);
   c.down = 36 + Math.round(Math.random() * 8);
-  if (r.exhausted) return disconnect('Out of tokens, so you were disconnected');
+  if (!realVpn && r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   if (Date.now() - c.att.checkedAt > 60_000 && !s.rechecking) {
     s.rechecking = true;
     const att = await api.attest(s.nodeId);
@@ -384,6 +391,8 @@ setInterval(async () => {
 // ---------- boot ----------
 (async () => {
   s.nodes = await api.listNodes();
+  // The saved node may not exist in this node list (e.g. a mock node in the real app).
+  if (!s.nodes.some(n => n.id === s.nodeId)) s.nodeId = s.nodes[0].id;
   // Dev preview without Tauri: ?state=onboarding|home|verifying|connected|refused|nodes|wallet
   const p = import.meta.env.DEV ? new URLSearchParams(location.search).get('state') : null;
   if (p) {

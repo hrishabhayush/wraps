@@ -1,4 +1,5 @@
 mod bridge;
+mod vpn;
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -21,7 +22,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_positioner::init())
         .manage(bridge::Pending::default())
-        .invoke_handler(tauri::generate_handler![quit, bridge::browser_wallet])
+        .invoke_handler(tauri::generate_handler![quit, bridge::browser_wallet, vpn::vpn_attest, vpn::vpn_connect, vpn::vpn_disconnect])
         .manage(LastHide(Mutex::new(Instant::now() - Duration::from_secs(1))))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {

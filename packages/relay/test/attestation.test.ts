@@ -120,6 +120,67 @@ describe('relay attestation', () => {
     }
   });
 
+  it('enforces an aggregate receipt limit in addition to the per-IP limit', async () => {
+    const { certificate: tlsCertificate } = await selfSignedCertificate();
+    const provider: AttestationProvider = { format: 'test', attest: vi.fn(async () => 'receipt') };
+    const server = createRelayAttestationServer({
+      tlsCertificate,
+      provider,
+      requestsPerMinute: 10,
+      globalRequestsPerMinute: 1,
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server has no TCP address');
+      const nonce = Buffer.alloc(32, 5).toString('hex');
+      const url = `http://127.0.0.1:${address.port}/attestation?nonce=${nonce}`;
+      expect((await fetch(url)).status).toBe(200);
+      expect((await fetch(url)).status).toBe(429);
+      expect(provider.attest).toHaveBeenCalledTimes(1);
+    } finally {
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
+  it('times out provider waits without releasing a stuck provider concurrency slot', async () => {
+    const { certificate: tlsCertificate } = await selfSignedCertificate();
+    let releaseProvider!: (receipt: string) => void;
+    const stuck = new Promise<string>((resolve) => { releaseProvider = resolve; });
+    const provider: AttestationProvider = {
+      format: 'test',
+      attest: vi.fn().mockImplementationOnce(() => stuck).mockResolvedValue('receipt'),
+    };
+    const server = createRelayAttestationServer({
+      tlsCertificate,
+      provider,
+      maxConcurrentAttestations: 1,
+      providerTimeoutMs: 20,
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('test server has no TCP address');
+      const nonce = Buffer.alloc(32, 6).toString('hex');
+      const url = `http://127.0.0.1:${address.port}/attestation?nonce=${nonce}`;
+      expect((await fetch(url)).status).toBe(503);
+      expect((await fetch(url)).status).toBe(503);
+      expect(provider.attest).toHaveBeenCalledTimes(1);
+
+      releaseProvider('late-receipt');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect((await fetch(url)).status).toBe(200);
+      expect(provider.attest).toHaveBeenCalledTimes(2);
+    } finally {
+      releaseProvider('late-receipt');
+      server.close();
+      await once(server, 'close');
+    }
+  });
+
   it('serves the CONNECT proxy over TLS', async () => {
     const { certificate, privateKey } = await selfSignedCertificate();
     const server = createSecureRelayServer({ tlsCertificate: certificate, tlsPrivateKey: privateKey });

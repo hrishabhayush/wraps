@@ -23,7 +23,17 @@ export interface RelayAttestationListenOptions extends RelayAttestationOptions {
   port?: number;
   /** Maximum receipts per client IP in one minute. Defaults to 60. */
   requestsPerMinute?: number;
+  /** Maximum receipts across all clients in one minute. Defaults to 120. */
+  globalRequestsPerMinute?: number;
+  /** Maximum provider calls in flight. Defaults to 4. Timed-out calls keep their slot until settled. */
+  maxConcurrentAttestations?: number;
+  /** Maximum time to wait for the provider before returning 503. Defaults to 5 seconds. */
+  providerTimeoutMs?: number;
 }
+
+const DEFAULT_GLOBAL_REQUESTS_PER_MINUTE = 120;
+const DEFAULT_MAX_CONCURRENT_ATTESTATIONS = 4;
+const DEFAULT_PROVIDER_TIMEOUT_MS = 5_000;
 
 /**
  * Create the SDK's nonce-bound relay receipt from the TLS listener certificate.
@@ -87,19 +97,74 @@ export async function serveRelayAttestation(
 }
 
 /** Create the separate HTTP listener used for nonce-bound receipts. */
-export function createRelayAttestationServer(options: RelayAttestationOptions & { requestsPerMinute?: number }): Server {
+export function createRelayAttestationServer(options: RelayAttestationListenOptions): Server {
   const limits = new Map<string, { count: number; startedAt: number }>();
-  const max = options.requestsPerMinute ?? 60;
-  if (!Number.isSafeInteger(max) || max < 1) throw new RangeError('requestsPerMinute must be a positive integer');
+  const maxPerIp = options.requestsPerMinute ?? 60;
+  const maxGlobal = options.globalRequestsPerMinute ?? DEFAULT_GLOBAL_REQUESTS_PER_MINUTE;
+  const maxConcurrent = options.maxConcurrentAttestations ?? DEFAULT_MAX_CONCURRENT_ATTESTATIONS;
+  const providerTimeoutMs = options.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS;
+  for (const [name, value] of Object.entries({
+    requestsPerMinute: maxPerIp,
+    globalRequestsPerMinute: maxGlobal,
+    maxConcurrentAttestations: maxConcurrent,
+    providerTimeoutMs,
+  })) {
+    if (!Number.isSafeInteger(value) || value < 1) throw new RangeError(`${name} must be a positive integer`);
+  }
+  let globalWindow = { count: 0, startedAt: Date.now() };
+  let inFlightAttestations = 0;
   const server = createServer({ maxHeaderSize: 16 * 1024 }, (req, res) => {
     void (async () => {
+      const url = new URL(req.url ?? '/', 'http://relay.invalid');
+      if (url.pathname !== '/attestation') {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      if (req.method !== 'GET') {
+        sendJson(res, 405, { error: 'GET required' });
+        return;
+      }
+      const nonces = url.searchParams.getAll('nonce');
+      if (nonces.length !== 1 || !/^[0-9a-fA-F]{64}$/.test(nonces[0])) {
+        sendJson(res, 400, { error: 'nonce must be 32 bytes encoded as hex' });
+        return;
+      }
+
       const address = req.socket.remoteAddress ?? 'unknown';
-      if (isRateLimited(address, limits, max)) {
+      if (isRateLimited(address, limits, maxPerIp)) {
         sendJson(res, 429, { error: 'attestation rate limit exceeded' });
         return;
       }
-      if (!(await serveRelayAttestation(req, res, options))) {
-        sendJson(res, 404, { error: 'not found' });
+      if (isGlobalRateLimited(globalWindow, maxGlobal)) {
+        sendJson(res, 429, { error: 'global attestation rate limit exceeded' });
+        return;
+      }
+      if (inFlightAttestations >= maxConcurrent) {
+        sendJson(res, 503, { error: 'attestation capacity reached' });
+        return;
+      }
+
+      inFlightAttestations++;
+      const operation = createRelayAttestationResponse(Buffer.from(nonces[0], 'hex'), options).then(
+        (receipt) => ({ kind: 'receipt' as const, receipt }),
+        () => ({ kind: 'failure' as const }),
+      );
+      // Keep timed-out work counted until its provider promise actually settles.
+      // This prevents a slow provider from escaping the concurrency bound.
+      void operation.then(() => { inFlightAttestations--; });
+
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<{ kind: 'timeout' }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: 'timeout' }), providerTimeoutMs);
+      });
+      const result = await Promise.race([operation, deadline]);
+      if (timeout) clearTimeout(timeout);
+      if (result.kind === 'timeout') {
+        sendJson(res, 503, { error: 'attestation provider timed out' });
+      } else if (result.kind === 'failure') {
+        sendJson(res, 503, { error: 'attestation unavailable' });
+      } else if (!res.destroyed) {
+        sendJson(res, 200, result.receipt);
       }
     })().catch(() => {
       if (!res.headersSent) sendJson(res, 503, { error: 'attestation unavailable' });
@@ -132,6 +197,16 @@ function isRateLimited(
     if (limits.size >= 4096 && !window) return true;
     window = { count: 0, startedAt: now };
     limits.set(address, window);
+  }
+  window.count++;
+  return window.count > max;
+}
+
+function isGlobalRateLimited(window: { count: number; startedAt: number }, max: number): boolean {
+  const now = Date.now();
+  if (now - window.startedAt >= 60_000) {
+    window.count = 0;
+    window.startedAt = now;
   }
   window.count++;
   return window.count > max;

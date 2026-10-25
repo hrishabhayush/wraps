@@ -1,0 +1,14 @@
+{
+  "name": "@wraps/demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@wraps/agent": "*",
+    "@wraps/attestation": "*",
+    "@wraps/issuer": "*",
+    "@wraps/merchant": "*",
+    "@wraps/sdk": "*",
+    "@agent-pay/spybot": "*"
+  }
+}

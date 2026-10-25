@@ -73,13 +73,13 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       const url = new URL(req.url ?? '/', 'http://issuer');
       const route = `${req.method} ${url.pathname}`;
 
-      if (route === 'GET /health') return sendJson(res, 200, { ok: true, issuer: core.name, merchantAuth });
+      if (route === 'GET /health') return sendJson(res, 200, { ok: true, issuer: core.name, merchantAuth, statePersistence: core.statePersistenceMode });
 
       if (route === 'GET /attestation') {
         if (!limiter.allow(req.socket.remoteAddress ?? '?')) throw new HttpError(429, 'too many attestation requests');
         const nonceHex = url.searchParams.get('nonce') ?? '';
         if (!/^[0-9a-fA-F]+$/.test(nonceHex) || nonceHex.length % 2) throw new HttpError(400, 'nonce must be hex');
-        return sendJson(res, 200, { ...await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))), merchantAuth });
+        return sendJson(res, 200, { ...await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))), merchantAuth, statePersistence: core.statePersistenceMode });
       }
 
       if (route === 'POST /quote') {

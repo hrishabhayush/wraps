@@ -40,7 +40,7 @@ export interface StartIssuerOptions {
   minTokenLifetimeMs?: number;
   /** Clock, for tests. */
   now?: () => number;
-  /** State storage. Omit for in-memory state (the current Confidential Space image default). */
+  /** State storage. Omit for in-memory state in local/test runs. */
   stateStore?: IssuerStateStore;
   /** Merchant credentials and local-only development mode. Omit for explicit legacy-open compatibility mode. */
   merchantAuth?: MerchantAuthConfig;

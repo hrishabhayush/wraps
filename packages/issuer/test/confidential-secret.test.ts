@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readConfidentialSecret } from '../src/confidential-secret';
+import { createConfidentialSpaceAccessTokenProvider, readConfidentialSecret } from '../src/confidential-secret';
 
 describe('Confidential Space Secret Manager access', () => {
   const version = 'projects/wraps-hack/secrets/relay-auth/versions/1';
@@ -45,7 +45,32 @@ describe('Confidential Space Secret Manager access', () => {
     const fetchImpl = (async () => new Response('contains-sensitive-provider-detail', { status: 403 })) as typeof fetch;
     await expect(readConfidentialSecret(version, provider, {
       fetchImpl,
-      getAttestationToken: async () => 'attested-workload-token',
-    })).rejects.toThrow('could not exchange the Confidential Space token for Secret Manager access');
+      getAccessToken: async () => 'short-lived-access-token',
+    })).rejects.toThrow('could not read the configured Secret Manager version');
+  });
+
+  it('caches and shares direct WIF access tokens until shortly before expiry', async () => {
+    let now = 10_000;
+    let tokenRequests = 0;
+    let attestationRequests = 0;
+    const fetchImpl = (async () => {
+      tokenRequests++;
+      return new Response(JSON.stringify({ access_token: `access-${tokenRequests}`, expires_in: 3600 }), { status: 200 });
+    }) as typeof fetch;
+    const getAccessToken = createConfidentialSpaceAccessTokenProvider(provider, {
+      fetchImpl,
+      now: () => now,
+      getAttestationToken: async () => `attestation-${++attestationRequests}`,
+    });
+
+    await expect(Promise.all([getAccessToken(), getAccessToken()])).resolves.toEqual(['access-1', 'access-1']);
+    await expect(getAccessToken()).resolves.toBe('access-1');
+    expect(tokenRequests).toBe(1);
+    expect(attestationRequests).toBe(1);
+
+    now += 3_565_001;
+    await expect(getAccessToken()).resolves.toBe('access-2');
+    expect(tokenRequests).toBe(2);
+    expect(attestationRequests).toBe(2);
   });
 });

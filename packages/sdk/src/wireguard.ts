@@ -7,6 +7,7 @@ import { hashPublicKeys } from '@wraps/attestation';
 import { encodeAuthorization, type Token } from '@wraps/tokens';
 
 const verifiedReceiptBrand: unique symbol = Symbol('verified WireGuard receipt');
+const verifiedReceipts = new WeakSet<object>();
 
 export interface VerifiedWireGuardReceipt {
   readonly endpoint: string;
@@ -21,7 +22,7 @@ export interface VerifiedWireGuardReceipt {
 }
 
 export function isVerifiedWireGuardReceipt(value: unknown): value is VerifiedWireGuardReceipt {
-  return typeof value === 'object' && value !== null && Reflect.get(value, verifiedReceiptBrand) === true &&
+  return typeof value === 'object' && value !== null && verifiedReceipts.has(value) && Reflect.get(value, verifiedReceiptBrand) === true &&
     Object.isFrozen(value) && Array.isArray(Reflect.get(value, 'peers')) && Object.isFrozen(Reflect.get(value, 'peers')) &&
     (Reflect.get(value, 'peers') as unknown[]).every(Object.isFrozen);
 }
@@ -131,7 +132,7 @@ export async function fetchVerifiedWireGuardReceipt(
     throw new TypeError('unsupported WireGuard routing policy');
   }
   const frozenPeers = Object.freeze(peers.map((peer) => Object.freeze({ ...peer })));
-  return Object.freeze({
+  const frozen = Object.freeze({
     endpoint: receipt.endpoint,
     listenPort: receipt.listenPort!,
     interfaceAddress: receipt.interfaceAddress,
@@ -141,6 +142,8 @@ export async function fetchVerifiedWireGuardReceipt(
     peers: frozenPeers,
     [verifiedReceiptBrand]: true as const,
   });
+  verifiedReceipts.add(frozen);
+  return frozen;
 }
 
 /**

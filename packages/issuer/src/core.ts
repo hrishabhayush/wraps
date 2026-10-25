@@ -1,5 +1,5 @@
 // Issuer logic without HTTP. State lives in memory (SPEC §12: don't restart the enclave).
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { AttestationProvider, Ed25519KeyPair, b64u, fromB64u, generateEd25519, hashPublicKeys } from '@wraps/attestation';
 import {
   DEFAULT_ISSUER_NAME,
@@ -20,6 +20,7 @@ import {
   SignedClaim,
   SignedPayoutRecord,
   SignedReserves,
+  SettleStatus,
   SignedTokenKeys,
   TokenKeyEpoch,
   VerifyResult,
@@ -83,6 +84,21 @@ interface Quote {
   used: boolean;
 }
 
+/**
+ * One settle call made with a quote (SEC-03). Kept so a repeat of the same call returns the same
+ * claim, and so the merchant can later ask whether its own settle landed.
+ */
+interface Settlement {
+  merchantId: string;
+  quoteId: string;
+  /** SHA-256 over the sorted canonical token encodings. Equal only for the exact same tokens. */
+  fingerprint: string;
+  result: SignedClaim;
+}
+
+/** Merchant quote IDs: opaque, short, URL-safe. */
+const SETTLE_QUOTE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
 export interface PayoutLine {
   merchantId: string;
   amountTokens: number;
@@ -108,6 +124,8 @@ export class IssuerCore {
   private current!: KeyEpoch;
   private readonly now: () => number;
   private readonly spent = new Set<string>();
+  /** SEC-03: settlements made with a quote, by merchantId + quoteId. */
+  private readonly settlements = new Map<string, Settlement>();
   private readonly tabs = new Map<string, Tab>();
   private readonly quotes = new Map<string, Quote>();
   private readonly payouts = new Map<string, SignedPayoutRecord[]>();
@@ -371,12 +389,33 @@ export class IssuerCore {
     return { valid: results.every((r) => r.ok), results, tokens };
   }
 
-  /** Marks tokens spent (across all merchants), adds them to the merchant's tab, returns a signed claim. */
-  async settle(merchantId: string, serialized: string[]): Promise<SignedClaim> {
+  /**
+   * Marks tokens spent (across all merchants), adds them to the merchant's tab, returns a signed claim.
+   *
+   * SEC-03: with a quoteId, settle is idempotent per (merchantId, quoteId). The issuer records the
+   * settlement. A repeat with the same tokens returns the original claim, even after the tokens
+   * expire. A repeat with other tokens is refused. Without a quoteId (relay, app), the old
+   * behaviour stays: a repeat is refused as "already spent".
+   */
+  async settle(merchantId: string, serialized: string[], quoteId?: string): Promise<SignedClaim> {
     if (typeof merchantId !== 'string' || !merchantId) throw new IssuerError(400, 'merchantId required');
+    if (quoteId !== undefined && (typeof quoteId !== 'string' || !SETTLE_QUOTE_ID.test(quoteId))) {
+      throw new IssuerError(400, 'malformed quoteId');
+    }
+    const key = quoteId === undefined ? undefined : settlementKey(merchantId, quoteId);
+    const fingerprint = fingerprintTokens(serialized);
+    if (key) {
+      const replay = this.replay(key, fingerprint);
+      if (replay) return replay;
+    }
     const checked = await this.verify(serialized);
     // SR7: verification is redone here, never trusted from an earlier /verify.
     // From here to the end there is no await, so the check and the mark are atomic.
+    if (key) {
+      // A concurrent call with the same (merchantId, quoteId) may have settled during the await.
+      const replay = this.replay(key, fingerprint);
+      if (replay) return replay;
+    }
     const ids = checked.tokens.map((t) => (t ? tokenId(t) : ''));
     if (!checked.valid || ids.some((id) => this.spent.has(id))) {
       const reason = checked.results.find((r) => !r.ok)?.reason ?? 'already spent';
@@ -388,7 +427,7 @@ export class IssuerCore {
     tab.earned += ids.length;
     tab.seq += 1;
     this.tabs.set(merchantId, tab);
-    return signClaim(this.claimKeys.privateKey, {
+    const result = signClaim(this.claimKeys.privateKey, {
       v: 1,
       issuer: this.name,
       merchantId,
@@ -397,6 +436,55 @@ export class IssuerCore {
       seq: tab.seq,
       at: this.now(),
     });
+    if (key && quoteId && fingerprint) this.settlements.set(key, { merchantId, quoteId, fingerprint, result });
+    return result;
+  }
+
+  /** The original claim for a repeat settle, undefined if the quote is not settled yet. Throws for other tokens. */
+  private replay(key: string, fingerprint: string | undefined): SignedClaim | undefined {
+    const s = this.settlements.get(key);
+    if (!s) return undefined;
+    if (s.fingerprint !== fingerprint) throw new IssuerError(409, 'quote already settled with other tokens');
+    return s.result;
+  }
+
+  /**
+   * SEC-03: merchant-scoped settlement lookup, read-only. After an ambiguous /settle, the merchant
+   * asks whether its own settle for this quote landed. The answer is one of:
+   *   settled-by-you    this merchant settled exactly these tokens for this quote
+   *   settled-by-other  at least one token is spent, but not by this (merchant, quote) settle
+   *   expired           not spent, and too old to settle
+   *   unspent           not spent and still valid
+   * Spent is checked before expired, so a settled token that later expires still reports settled.
+   * It never names the other merchant, its quote or any payer data.
+   */
+  async settleStatus(merchantId: string, quoteId: string, serialized: string[]): Promise<SettleStatus> {
+    if (typeof merchantId !== 'string' || !merchantId) throw new IssuerError(400, 'merchantId required');
+    if (typeof quoteId !== 'string' || !SETTLE_QUOTE_ID.test(quoteId)) throw new IssuerError(400, 'quoteId required');
+    if (!Array.isArray(serialized) || serialized.length === 0) throw new IssuerError(400, 'tokens must be a non-empty array');
+    if (serialized.length > (this.opts.maxBatch ?? 200)) throw new IssuerError(400, 'too many tokens in one request');
+    const key = settlementKey(merchantId, quoteId);
+    const fingerprint = fingerprintTokens(serialized);
+    const mine = () => this.settlements.get(key)?.fingerprint === fingerprint;
+    if (mine()) return 'settled-by-you';
+
+    const checked = await this.verify(serialized);
+    // No await from here: classify against one snapshot of the settlements and the spent list.
+    if (mine()) return 'settled-by-you';
+    let spent = false;
+    let expired = false;
+    for (let i = 0; i < serialized.length; i++) {
+      const t = checked.tokens[i];
+      const reason = checked.results[i].reason;
+      if (!t || reason === 'malformed') throw new IssuerError(400, 'tokens rejected: malformed');
+      if (reason === 'bad signature') throw new IssuerError(409, 'tokens rejected: bad signature');
+      if (reason === 'duplicate in request') throw new IssuerError(400, 'tokens rejected: duplicate in request');
+      // verify() reports "expired" before it looks at the spent list, so look here first.
+      if (this.spent.has(tokenId(t))) spent = true;
+      else if (reason === 'expired') expired = true;
+    }
+    if (spent) return 'settled-by-other';
+    return expired ? 'expired' : 'unspent';
   }
 
   // --- reserves and payouts ----------------------------------------------
@@ -474,4 +562,14 @@ export class IssuerCore {
   payoutHistory(merchantId: string): SignedPayoutRecord[] {
     return [...(this.payouts.get(merchantId) ?? [])];
   }
+}
+
+function settlementKey(merchantId: string, quoteId: string): string {
+  return `${merchantId}\0${quoteId}`;
+}
+
+/** Order-independent fingerprint of a token set. Undefined for input that is not a string array. */
+function fingerprintTokens(serialized: unknown): string | undefined {
+  if (!Array.isArray(serialized) || !serialized.every((s) => typeof s === 'string')) return undefined;
+  return createHash('sha256').update([...serialized].sort().join('\n')).digest('hex');
 }

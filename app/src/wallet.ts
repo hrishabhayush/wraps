@@ -3,14 +3,13 @@
 //  - WalletConnect: QR / link for phone or desktop wallets
 // Pays native XRP unless VITE_RLUSD_ADDRESS is set, then RLUSD (ERC-20).
 import { EthereumProvider } from '@walletconnect/ethereum-provider';
-import { XRPL_EVM_TESTNET as NET, erc20Transfer, erc20BalanceOf, ERC20_DECIMALS, toUnits, fromUnits } from './chain.ts';
+import { XRPL_EVM_TESTNET as NET, quoteTransfer, erc20BalanceOf, ERC20_DECIMALS, toUnits, fromUnits } from './chain.ts';
 
 const env = import.meta.env;
 export const cfg = {
   projectId: (env.VITE_REOWN_PROJECT_ID as string) || '',
   payout: (env.VITE_ISSUER_PAYOUT as string) || '',
   token: (env.VITE_RLUSD_ADDRESS as string) || '',
-  xrpUsd: Number(env.VITE_XRP_USD) || 2.4,
 };
 export const asset = cfg.token ? 'RLUSD' : 'XRP';
 
@@ -94,9 +93,6 @@ export async function balance(addr: string) {
   return fromUnits(BigInt(await rpc('eth_call', [{ to: cfg.token, data: erc20BalanceOf(addr) }, 'latest'])), await tokenDecimals());
 }
 
-// How much of the pay asset a USD top-up costs.
-export const priceIn = (usd: number) => (cfg.token ? usd : usd / cfg.xrpUsd);
-
 async function ensureChain() {
   try {
     await p!.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: NET.hex }] });
@@ -111,25 +107,24 @@ async function ensureChain() {
 
 export type PayStage = 'approve' | 'confirming';
 
-// Sends the top-up and waits for it to land. Returns the tx hash; throws if it reverts.
-export async function pay(usd: number, onStage: (s: PayStage) => void) {
+// Pays an issuer quote (RLUSD on XRPL EVM, quoteId appended) and waits for it to land.
+// Returns the tx hash; throws if it reverts.
+export async function payQuote(q: { amountRlusd: string; payTo: string; quoteId: string }, onStage: (s: PayStage) => void) {
   const from = account();
   if (!from) throw new Error('Connect a wallet first');
-  if (!cfg.payout) throw new Error('Set VITE_ISSUER_PAYOUT in app/.env');
+  if (!cfg.token) throw new Error('Set VITE_RLUSD_ADDRESS in app/.env');
+  // Guard against a misconfigured issuer sending money somewhere unexpected.
+  if (cfg.payout && q.payTo.toLowerCase() !== cfg.payout.toLowerCase()) throw new Error(`Issuer asked to pay ${q.payTo}, not VITE_ISSUER_PAYOUT`);
   const have = await balance(from);
-  if (have < priceIn(usd)) throw new Error(`Not enough ${asset}: you have ${have.toFixed(2)}, need ${priceIn(usd).toFixed(2)}`);
-  const amount = toUnits(priceIn(usd).toFixed(6), cfg.token ? await tokenDecimals() : NET.native.decimals);
-  const tx = cfg.token
-    ? { from, to: cfg.token, data: erc20Transfer(cfg.payout, amount) }
-    : { from, to: cfg.payout, value: '0x' + amount.toString(16) };
+  if (have < Number(q.amountRlusd)) throw new Error(`Not enough RLUSD: you have ${have.toFixed(2)}, need ${q.amountRlusd}`);
+  const tx = { from, to: cfg.token, data: quoteTransfer(q.payTo, toUnits(q.amountRlusd, await tokenDecimals()), q.quoteId) };
   onStage('approve');
   let hash: string;
   if (p?.session) {
     await ensureChain();
     hash = (await p.request({ method: 'eth_sendTransaction', params: [tx] })) as string;
   } else {
-    const label = cfg.token ? `Send $${usd} RLUSD to the Wraps issuer` : `Send ${priceIn(usd).toFixed(2)} XRP to the Wraps issuer`;
-    hash = (await bridge({ kind: 'send', tx, net: NET, label })).hash!;
+    hash = (await bridge({ kind: 'send', tx, net: NET, label: `Send ${q.amountRlusd} RLUSD to the Wraps issuer` })).hash!;
   }
   onStage('confirming');
   for (let i = 0; i < 80; i++) {

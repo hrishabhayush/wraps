@@ -23,6 +23,6 @@ test('empty balance charges nothing', () => {
 });
 
 test('tokens and clock formatting', () => {
-  assert.equal(tokensFor(12.4), 1240);
+  assert.equal(tokensFor(12.4), 124);
   assert.equal(clock(2511), '00:41:51');
 });

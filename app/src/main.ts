@@ -4,8 +4,9 @@ import '@fontsource/geist-mono/500.css';
 import './styles.css';
 import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
-import { MockBackend, type Attestation, type Flag, type VpnNode, type Wallet } from './backend.ts';
-import { tick, tokensFor, clock, type Meter } from './meter.ts';
+import { MockBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
+import * as tk from './tokens.ts';
+import { tick, tokensFor, clock, USD_PER_TOKEN, type Meter } from './meter.ts';
 import * as wc from './wallet.ts';
 import { short } from './chain.ts';
 import QRCode from 'qrcode';
@@ -18,7 +19,7 @@ type Verified = Extract<Attestation, { ok: true }>;
 type Conn =
   | { kind: 'off' }
   | { kind: 'verifying' }
-  | { kind: 'connected'; since: number; meter: Meter; att: Verified; up: number; down: number }
+  | { kind: 'connected'; since: number; meter: Meter; att: Verified; up: number; down: number; spent: number; spending: boolean }
   | { kind: 'refused'; reason: string };
 
 const s = {
@@ -29,8 +30,7 @@ const s = {
   nodeId: localStorage.getItem('wraps.node') ?? 'zrh',
   pick: '', // selection on the nodes screen
   sort: 'price' as 'price' | 'latency',
-  wallet: { usd: 0, history: [] } as Wallet,
-  amount: 10,
+  amount: 5,
   busy: false,
   acct: undefined as string | undefined, // connected wallet address
   bal: undefined as number | undefined, // its balance in the pay asset
@@ -123,7 +123,7 @@ function home() {
   return `<div class="panel">
     <header class="row between">
       <div class="row brand">${mark(20)}<span>wraps</span></div>
-      <button class="chip" data-act="go" data-arg="wallet">${usd(s.wallet.usd)}</button>
+      <button class="chip" data-act="go" data-arg="wallet">${usd(tk.usd())}</button>
     </header>
     <section class="card status row between">
       <div class="col">
@@ -181,25 +181,25 @@ function nodes() {
 }
 
 function wallet() {
-  const w = s.wallet;
-  const hrs = w.usd / (0.08 * 3600 * node().pricePerMB);
+  const bal = tk.usd();
+  const hrs = bal / (0.08 * 3600 * node().pricePerMB);
   return `<div class="panel">
     <header class="row gap8"><button class="back" data-act="go" data-arg="home">${ic('left', 16)}</button><h2>Wallet</h2></header>
     <section class="balance">
       <small>Private balance</small>
-      <div class="big">${usd(w.usd)}</div>
-      <small>≈ ${(w.usd / node().pricePerMB / 1000).toFixed(1)} GB, or about ${Math.floor(hrs)}h ${Math.round((hrs % 1) * 60)}m in ${esc(node().country)}</small>
-      <div class="row gap8"><span class="tchip mono">${tokensFor(w.usd).toLocaleString()} tokens</span><span class="tchip green mono">${ic('shield', 12, 2.2)}unlinkable</span></div>
+      <div class="big">${usd(bal)}</div>
+      <small>≈ ${(bal / node().pricePerMB / 1000).toFixed(1)} GB, or about ${Math.floor(hrs)}h ${Math.round((hrs % 1) * 60)}m in ${esc(node().country)}</small>
+      <div class="row gap8"><span class="tchip mono">${tk.count().toLocaleString()} tokens</span><span class="tchip green mono">${ic('shield', 12, 2.2)}unlinkable</span></div>
     </section>
     <div class="col gap8">
       <b class="label">Top up</b>
-      <div class="row gap6">${[5, 10, 25, 50]
+      <div class="row gap6">${[1, 5, 10, 20]
         .map(a => `<button class="amt mono ${a === s.amount ? 'on' : ''}" data-act="amount" data-arg="${a}">$${a}</button>`)
         .join('')}</div>
       ${payFrom()}
       ${topupCta()}
     </div>
-    <section class="activity">${w.history
+    <section class="activity">${tk.history()
       .slice(0, 3)
       .map(a => `<div class="row gap10 act"><span class="circ grey">${ic(a.usd > 0 ? 'plus' : 'globe', 14)}</span>
         <div class="col grow"><b>${esc(a.title)}</b><span class="mono muted">${esc(a.detail)}</span></div>
@@ -231,16 +231,15 @@ function payFrom() {
 }
 
 function topupCta() {
-  const cost = wc.priceIn(s.amount);
   const label =
     s.stage === 'approve' ? (wc.via() === 'browser' ? 'Approve in your browser…' : 'Approve in your wallet…')
     : s.stage === 'linking' ? 'Connecting…'
     : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
     : s.stage === 'minting' ? 'Minting tokens…'
     : !s.acct ? 'Connect a wallet to top up'
-    : !wc.cfg.payout ? 'Set VITE_ISSUER_PAYOUT in app/.env'
-    : `Pay ${wc.asset === 'XRP' ? `${cost.toFixed(2)} XRP` : `$${s.amount} RLUSD`} → mint ${tokensFor(s.amount).toLocaleString()} tokens`;
-  const off = !!s.stage || !s.acct || !wc.cfg.payout;
+    : !wc.cfg.token ? 'Set VITE_RLUSD_ADDRESS in app/.env'
+    : `Pay $${s.amount} RLUSD → ${tokensFor(s.amount).toLocaleString()} blind tokens`;
+  const off = !!s.stage || !s.acct || !wc.cfg.token;
   return `<button class="cta" data-act="topup" ${off ? 'disabled' : ''}>${label}</button>`;
 }
 
@@ -272,7 +271,7 @@ function toast(msg: string) {
 
 // ---------- actions ----------
 async function connect(id: string) {
-  if (s.wallet.usd <= 0) { s.screen = 'wallet'; return toast('Top up to connect'); }
+  if (tk.count() === 0) { s.screen = 'wallet'; return toast('Top up to connect'); }
   s.nodeId = id;
   localStorage.setItem('wraps.node', id);
   s.screen = 'home';
@@ -281,8 +280,10 @@ async function connect(id: string) {
   const att = await api.attest(id);
   s.trust[id] = att.ok ? 'ok' : 'bad';
   if (!att.ok) { s.conn = { kind: 'refused', reason: att.reason }; return render(); }
+  // Pay for the first chunk up front with one real token.
+  try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
   await api.connect(id);
-  s.conn = { kind: 'connected', since: Date.now(), meter: { mb: 0, cost: 0 }, att, up: 30, down: 40 };
+  s.conn = { kind: 'connected', since: Date.now(), meter: { mb: 0, cost: 0 }, att, up: 30, down: 40, spent: 1, spending: false };
   render();
 }
 
@@ -292,7 +293,7 @@ async function disconnect(reason?: string) {
   s.conn = { kind: 'off' };
   await api.disconnect();
   const mins = Math.max(1, Math.round((Date.now() - c.since) / 60000));
-  s.wallet = await api.record({ title: `Session · ${node().country}`, detail: `${c.meter.mb.toFixed(0)} MB · ${mins} min`, usd: -c.meter.cost, at: Date.now() });
+  tk.record({ title: `Session · ${node().country}`, detail: `${c.meter.mb.toFixed(0)} MB · ${mins} min · ${c.spent} token${c.spent === 1 ? '' : 's'}`, usd: -c.spent * USD_PER_TOKEN, at: Date.now() });
   reason ? toast(reason) : render();
 }
 
@@ -311,10 +312,13 @@ const actions: Record<string, (arg: string) => unknown> = {
   amount: arg => { s.amount = Number(arg); render(); },
   topup: async () => {
     try {
-      const tx = await wc.pay(s.amount, st => { s.stage = st; render(); });
-      s.stage = 'minting'; render();
-      s.wallet = { ...(await api.topUp(s.amount, { asset: wc.asset, tx })) };
-      toast(`Minted ${tokensFor(s.amount).toLocaleString()} tokens`);
+      const n = tokensFor(s.amount);
+      await tk.buy(n, async q => {
+        const tx = await wc.payQuote(q, st => { s.stage = st; render(); });
+        s.stage = 'minting'; render();
+        return tx;
+      });
+      toast(`Minted ${n} blind tokens`);
     } catch (e) {
       toast((e as Error).message.slice(0, 90));
     } finally {
@@ -355,12 +359,16 @@ root.addEventListener('click', e => {
 setInterval(async () => {
   const c = s.conn;
   if (c.kind !== 'connected') return;
-  const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, s.wallet.usd);
+  // Prepaid (spent tokens not yet used up) plus what's left in the wallet.
+  const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
   c.meter = r.meter;
-  s.wallet = { ...api.charge(r.charge) };
+  if (c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
+    c.spending = true;
+    tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
+  }
   c.up = 28 + Math.round(Math.random() * 6);
   c.down = 36 + Math.round(Math.random() * 8);
-  if (r.exhausted) return disconnect('Balance ran out, so you were disconnected');
+  if (r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   if (Date.now() - c.att.checkedAt > 60_000 && !s.rechecking) {
     s.rechecking = true;
     const att = await api.attest(s.nodeId);
@@ -376,7 +384,6 @@ setInterval(async () => {
 // ---------- boot ----------
 (async () => {
   s.nodes = await api.listNodes();
-  s.wallet = { ...(await api.wallet()) };
   // Dev preview without Tauri: ?state=onboarding|home|verifying|connected|refused|nodes|wallet
   const p = import.meta.env.DEV ? new URLSearchParams(location.search).get('state') : null;
   if (p) {
@@ -389,7 +396,7 @@ setInterval(async () => {
     if (p === 'refused') { s.nodeId = 'tyo'; s.trust.tyo = 'bad'; s.conn = { kind: 'refused', reason: 'Enclave build doesn’t match the audited code' }; }
     if (p === 'connected') s.trust.zrh = 'ok';
     if (p === 'connected')
-      s.conn = { kind: 'connected', since: Date.now() - 2511e3, meter: { mb: 214, cost: 0.43 }, att: { ok: true, tee: 'tdx', build: 'a41f…9c', checkedAt: Date.now() - 2000 }, up: 30, down: 40 };
+      s.conn = { kind: 'connected', since: Date.now() - 2511e3, meter: { mb: 214, cost: 0.43 }, att: { ok: true, tee: 'tdx', build: 'a41f…9c', checkedAt: Date.now() - 2000 }, up: 30, down: 40, spent: 5, spending: false };
   }
   if (!p) wc.init(refreshBalance).then(refreshBalance).catch(e => console.error('wallet init', e));
   render();

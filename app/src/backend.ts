@@ -1,5 +1,5 @@
-// The one seam between the UI and the network. Everything here is mocked for v1:
-// swap MockBackend for a real implementation (attestation, tunnel, payments) later.
+// Seam between the UI and the VPN network (nodes, attestation, tunnel). Still mocked: swap
+// MockBackend for the real thing later. Money and tokens are real and live in tokens.ts.
 
 export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
 
@@ -18,18 +18,12 @@ export type Attestation =
   | { ok: false; reason: string; checkedAt: number };
 
 export type Activity = { title: string; detail: string; usd: number; at: number };
-export type Wallet = { usd: number; history: Activity[] };
 
 export interface Backend {
   listNodes(): Promise<VpnNode[]>;
   attest(nodeId: string): Promise<Attestation>;
   connect(nodeId: string): Promise<void>;
   disconnect(): Promise<void>;
-  wallet(): Promise<Wallet>;
-  // Mint tokens for a confirmed on-chain payment. Real impl: issuer POST /issue (packages/issuer TopUpRail).
-  topUp(usd: number, paid: { asset: string; tx: string }): Promise<Wallet>;
-  charge(usd: number): Wallet; // sync: called every second by the meter
-  record(a: Activity): Promise<Wallet>;
 }
 
 const NODES: VpnNode[] = [
@@ -44,24 +38,9 @@ const NODES: VpnNode[] = [
 // Mock: Tokyo's enclave reports a build that doesn't match the audited one, to show refusal.
 const TAMPERED = new Set(['tyo']);
 
-// Early builds seeded a fake balance and fake top-ups. Keep only on-chain top-ups (they carry a
-// tx hash) and the sessions paid for after the first one, and recompute the balance from them.
-function onlyReal(w: Wallet): Wallet {
-  const real = (a: Activity) => a.usd > 0 && a.detail.includes('· 0x');
-  if (!w.history.some(a => a.usd > 0 && !real(a))) return w; // already clean
-  const first = Math.min(...w.history.filter(real).map(a => a.at));
-  const history = w.history.filter(a => real(a) || (a.usd < 0 && a.at >= first));
-  const usd = Math.max(0, history.reduce((sum, a) => sum + a.usd, 0));
-  return { usd: Math.round(usd * 1e6) / 1e6, history };
-}
-
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const KEY = 'wraps.wallet';
 
 export class MockBackend implements Backend {
-  private w: Wallet = onlyReal(JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { usd: 0, history: [] });
-  private save() { localStorage.setItem(KEY, JSON.stringify(this.w)); return this.w; }
-
   async listNodes() { return NODES; }
   async attest(nodeId: string): Promise<Attestation> {
     await sleep(1400);
@@ -71,13 +50,4 @@ export class MockBackend implements Backend {
   }
   async connect(_nodeId: string) { await sleep(500); }
   async disconnect() {}
-  async wallet() { return this.w; }
-  async topUp(usd: number, paid: { asset: string; tx: string }) {
-    await sleep(600);
-    this.w.usd += usd;
-    this.w.history.unshift({ title: `Top up · ${paid.asset}`, detail: `${Math.round(usd * 100).toLocaleString()} tokens · ${paid.tx.slice(0, 8)}…`, usd, at: Date.now() });
-    return this.save();
-  }
-  charge(usd: number) { this.w.usd = Math.max(0, this.w.usd - usd); return this.save(); }
-  async record(a: Activity) { this.w.history.unshift(a); this.w.history.length = Math.min(this.w.history.length, 20); return this.save(); }
 }

@@ -1,6 +1,6 @@
 // Pay-only-while-connected billing. Pure so it can be tested without the UI.
 
-export const USD_PER_TOKEN = 0.01;
+export const USD_PER_TOKEN = 0.1; // matches the issuer: 1 token = 0.10 RLUSD
 
 export type Meter = { mb: number; cost: number };
 

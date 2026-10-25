@@ -18,6 +18,13 @@ export function erc20Transfer(to: string, amount: bigint) {
   return '0xa9059cbb' + word(to) + word(amount.toString(16));
 }
 
+// Transfer calldata with the issuer's 16-byte quoteId appended. ERC-20 contracts ignore trailing
+// bytes; the issuer reads them to make sure this payment was made for its quote (see rail-xrpl-evm.ts).
+export function quoteTransfer(to: string, amount: bigint, quoteId: string) {
+  if (!/^[0-9a-fA-F]{32}$/.test(quoteId)) throw new Error('quoteId must be 16 bytes hex');
+  return erc20Transfer(to, amount) + quoteId.toLowerCase();
+}
+
 // calldata for ERC-20 balanceOf(address)
 export const erc20BalanceOf = (owner: string) => '0x70a08231' + word(owner);
 export const ERC20_DECIMALS = '0x313ce567';

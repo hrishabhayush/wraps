@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { erc20Transfer, erc20BalanceOf, toUnits, fromUnits, short } from './chain.ts';
+import { erc20Transfer, erc20BalanceOf, quoteTransfer, toUnits, fromUnits, short } from './chain.ts';
 
 const TO = '0x00000000000000000000000000000000000000Aa';
 
@@ -25,4 +25,10 @@ test('converts decimal amounts exactly', () => {
   assert.equal(toUnits('0.5', 6), 500000n);
   assert.equal(fromUnits(1_500_000n, 6), 1.5);
   assert.equal(short('0x1234567890abcdef1234567890abcdef12345678'), '0x1234…5678');
+});
+
+test('appends the quote id after the transfer', () => {
+  const q = '0123456789ABCDEF0123456789abcdef';
+  assert.equal(quoteTransfer(TO, 5n, q), erc20Transfer(TO, 5n) + q.toLowerCase());
+  assert.throws(() => quoteTransfer(TO, 5n, 'abc'));
 });

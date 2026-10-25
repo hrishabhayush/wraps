@@ -138,8 +138,8 @@ function home() {
       </div>
       <div class="meter row between">
         <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? 'Metered · this session' : `Billed only while connected`}</span>
-          <span class="mono">${m.mb.toFixed(0)} MB × $${n.pricePerMB}</span></div>
-        <span class="cost mono">${usd(m.cost)}</span>
+          <span class="mono">${m.mb.toFixed(1)} MB × $${n.pricePerMB}</span></div>
+        <span class="cost mono">$${m.cost.toFixed(m.cost < 1 ? 3 : 2)}</span>
       </div>
     </section>
     <footer class="row gap6">

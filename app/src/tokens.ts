@@ -24,7 +24,18 @@ const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).
 const KEY = 'wraps.tokens.v1';
 type Store = { tokens: string[]; history: Activity[] };
 const store: Store = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { tokens: [], history: [] };
-const save = () => localStorage.setItem(KEY, JSON.stringify(store));
+const save = () => { if (!previewTokens) localStorage.setItem(KEY, JSON.stringify(store)); };
+
+// Dev-only screenshots: ?tokens=N shows a sample balance and history without touching the real store.
+const previewTokens = import.meta.env.DEV ? Number(new URLSearchParams(location.search).get('tokens')) : 0;
+if (previewTokens > 0) {
+  store.tokens = Array(previewTokens).fill('preview');
+  store.history = [
+    { title: 'Session · Switzerland', detail: '214 MB · 41 min · 5 tokens', usd: -0.5, at: Date.now() - 3600e3 },
+    { title: 'Top up · RLUSD', detail: '100 tokens · 0xd65a73…', usd: 10, at: Date.now() - 7200e3 },
+    { title: 'Session · Iceland', detail: '38 MB · 12 min · 1 token', usd: -0.1, at: Date.now() - 86400e3 },
+  ];
+}
 
 export const count = () => store.tokens.length;
 export const usd = () => count() * USD_PER_TOKEN;

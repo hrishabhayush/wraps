@@ -100,7 +100,7 @@ mock attestation. Use it to rehearse without a VM.
   (`tee.launch_policy.log_redirect=debugonly`) allows redirect only there.
 - The image fixes its own env (`ATTESTATION`, `ISSUER_TLS`, `ISSUER_PORT`). It has no
   `allow_env_override` label, so the operator cannot change them.
-- Every VM stops itself after 12 hours (`MAX_RUN_DURATION` overrides this).
+- Every VM stops itself after a fixed 12 hours; the machine type and runtime cap cannot be overridden.
 - A stopped and restarted VM gets a new external IP and new keys. Run `status.sh` for the IP.
 
 ## Cost

@@ -42,6 +42,7 @@
       .btn:hover { border-color: #526273; }
       .btn.primary { background: var(--green); color: #07140f; border-color: var(--green); font-weight: 750; }
       .btn.tamper { color: var(--amber); border-color: #725c32; background: #201b12; }
+      .btn.fallback { color: var(--amber); border-color: #725c32; background: #201b12; }
       .btn:disabled { opacity: .5; cursor: wait; }
       .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 4px 0 22px; }
       h1 { font-size: clamp(23px, 3vw, 34px); line-height: 1.15; letter-spacing: -.035em; margin: 0; }
@@ -94,6 +95,7 @@
           <div class="live-state"><span id="dot" class="dot"></span><span id="state">Connecting to event stream</span></div>
           <button id="stop" class="btn" disabled>Stop</button>
           <button id="tamper" class="btn tamper">Tamper test</button>
+          <button id="fallback" class="btn fallback" hidden>Run local mock</button>
           <button id="start" class="btn primary">Start live demo</button>
         </div>
       </header>
@@ -101,9 +103,9 @@
       <section class="intro">
         <div>
           <h1>One agent pays in public.<br />One agent pays privately.</h1>
-          <p>Watch the XRPL spy bot observe ordinary x402 payments while our local agent buys research with blind tokens. The two feeds are independent.</p>
+          <p>Watch the XRPL spy bot observe real mainnet x402 payments while our agent buys research with blind tokens. In live mode, both issuer and relay attestations are verified before the purchase.</p>
         </div>
-        <div class="legend">Live XRPL mainnet observer · local mock issuer and merchant</div>
+        <div id="legend" class="legend">Live XRPL mainnet observer · service mode loads on connect</div>
       </section>
 
       <section class="columns" aria-label="Live demo events">
@@ -118,14 +120,14 @@
 
         <article class="panel right">
           <div class="panel-head">
-            <div class="panel-title"><div class="panel-icon">◈</div><div><h2>Blind-token research agent</h2><div class="panel-kicker">Mock attestation · local issuer · local merchant</div></div></div>
+            <div class="panel-title"><div class="panel-icon">◈</div><div><h2>Blind-token research agent</h2><div id="agent-kicker" class="panel-kicker">Checking demo mode…</div></div></div>
             <span class="tag">Private flow</span>
           </div>
           <div class="panel-caption">The issuer sees a top-up. The merchant settles tokens without learning which agent bought the call.</div>
           <div id="agent-feed" class="feed"><div class="empty">The local agent is idle.</div></div>
         </article>
       </section>
-      <div class="system">This page uses mock attestation and a mock top-up rail. The left feed reads public XRPL data when network access is available.</div>
+      <div id="disclaimer" class="system">Left feed reads public XRPL mainnet data. The right pane reports whether it is using live or mock services.</div>
     </main>
     <script>
       const $ = (selector) => document.querySelector(selector);
@@ -143,6 +145,7 @@
           $('#start').disabled = Boolean(event.data.running);
           $('#tamper').disabled = Boolean(event.data.running);
           $('#stop').disabled = !event.data.running;
+          applyMode(event.data);
           return;
         }
         if (event.panel !== 'spy' && event.panel !== 'agent') return;
@@ -157,6 +160,8 @@
         type.className = 'event-type';
         type.textContent = event.type.replaceAll(':', ' · ');
         if (event.type.startsWith('tamper')) type.style.color = 'var(--amber)';
+        if (event.type === 'attestation-verification') type.style.color = event.data?.passed ? 'var(--green)' : 'var(--red)';
+        if (event.type === 'live-unavailable' || event.type === 'live-refused') type.style.color = 'var(--red)';
         const time = document.createElement('span');
         time.className = 'event-time';
         time.textContent = new Date(event.at).toLocaleTimeString();
@@ -175,13 +180,35 @@
           const match = d.match?.entry?.service ?? d.match?.merchantLabel ?? 'unmatched service';
           return `${p.payer} → ${p.merchant}\n${p.amount} ${p.currency} · ${match} · ledger ${p.ledger}`;
         }
-        if (event.type === 'reasoning' || event.type === 'warning' || event.type === 'error' || event.type === 'status' || event.type === 'issuer' || event.type === 'merchant' || event.type === 'retry') {
+        if (event.type === 'attestation-verification') {
+          return `${d.title}\n${(d.checks ?? []).map((check) => `${check.passed ? '✓' : '✗'} ${check.name}: ${check.value}${check.expected ? ` (expected ${check.expected})` : ''}`).join('\n')}`;
+        }
+        if (event.type === 'merchant-ip') {
+          const match = d.matchesRelayIp === null ? 'relay IP comparison unavailable' : d.matchesRelayIp ? 'matches relay IP' : `does not match relay IP ${d.relayIp}`;
+          return `${d.message}\n${d.address} via ${d.source} · ${match}`;
+        }
+        if (event.type === 'reasoning' || event.type === 'warning' || event.type === 'error' || event.type === 'status' || event.type === 'issuer' || event.type === 'merchant' || event.type === 'retry' || event.type === 'step' || event.type === 'live-unavailable' || event.type === 'live-refused') {
           return d?.message ?? JSON.stringify(d);
         }
         if (event.type === 'tamper') return `${d.message}\nExpected PCR0 ${d.expectedPcr0.slice(0, 20)}… · running PCR0 ${d.actualPcr0.slice(0, 20)}…`;
         if (event.type === 'tamper-refused') return d.message;
         if (event.type === 'funder') return `${d.account} funded ${d.funder ?? 'unknown'}${d.likelyExchange ? ' · likely exchange' : ''}`;
         return d == null ? 'Event received.' : JSON.stringify(d);
+      }
+      function applyMode(status) {
+        const live = Boolean(status.liveMode);
+        $('#start').textContent = live ? 'Start live demo' : 'Start local mock';
+        $('#agent-kicker').textContent = live
+          ? 'Live issuer · attested relay · local merchant'
+          : 'Mock attestation · local issuer · local merchant';
+        $('#legend').textContent = live
+          ? 'Live XRPL mainnet observer · GCP services verified at run time'
+          : 'Live XRPL mainnet observer · local mock payment flow';
+        $('#disclaimer').textContent = live
+          ? 'The right pane labels every verification result. AP4M is skipped; the mock rail is used. A local mock run is labeled separately.'
+          : 'The left feed reads public XRPL mainnet data. The right pane uses mock attestation, a local issuer, a local merchant and a mock payment rail.';
+        $('#fallback').hidden = !status.fallbackAvailable;
+        $('#fallback').disabled = Boolean(status.fallbackRunning);
       }
       // When DEMO_HOST is not loopback, the server prints a URL with #token=... for Start and Stop.
       const controlToken = new URLSearchParams(location.hash.slice(1)).get('token');
@@ -201,13 +228,19 @@
         const res = await control(tamper ? '/api/start?tamper=1' : '/api/start');
         const status = await fetch('/api/status').then((r) => r.json());
         $('#dot').classList.toggle('on', status.running);
-        if (res.status !== 403) $('#state').textContent = status.mode === 'tamper' ? 'Tamper test running' : status.running ? 'Live demo running' : 'Ready';
+        applyMode(status);
+        if (res.status !== 403) $('#state').textContent = status.mode === 'tamper' ? 'Tamper test running' : status.mode === 'mock' ? 'Local mock run running' : status.running ? 'Demo running' : 'Ready';
         $('#stop').disabled = !status.running;
         $('#start').disabled = status.running;
         $('#tamper').disabled = status.running;
       }
       $('#start').addEventListener('click', () => void beginRun(false));
       $('#tamper').addEventListener('click', () => void beginRun(true));
+      $('#fallback').addEventListener('click', async () => {
+        $('#fallback').disabled = true;
+        const res = await control('/api/start?mock=1');
+        if (!res.ok) $('#fallback').disabled = false;
+      });
       $('#stop').addEventListener('click', async () => {
         $('#stop').disabled = true;
         const res = await control('/api/stop');
@@ -216,6 +249,7 @@
       fetch('/api/status').then((r) => r.json()).then((s) => {
         $('#dot').classList.toggle('on', s.running);
         $('#state').textContent = s.mode === 'tamper' ? 'Tamper test running' : s.running ? 'Live demo running' : 'Ready to start';
+        applyMode(s);
         $('#start').disabled = s.running;
         $('#tamper').disabled = s.running;
         $('#stop').disabled = !s.running;

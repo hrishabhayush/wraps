@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { SpyBot } from '@agent-pay/spybot';
 import { runPrivateAgent } from './agent-run';
+import { runLivePrivateAgent } from './live-agent-run';
 import type { PrivateCacheDir } from './cache';
 import { checkControl, type ControlPolicy } from './control';
 import { loadSpyInputs } from './spy-inputs';
@@ -22,7 +23,7 @@ export interface DemoEvent {
 export type PublishFn = (panel: DemoEvent['panel'], type: string, data?: unknown) => void;
 
 /** Starts and stops the two feeds. Tests replace it with a fake. */
-export type DemoMode = 'normal' | 'tamper';
+export type DemoMode = 'normal' | 'tamper' | 'mock';
 
 export interface DemoController {
   readonly running: boolean;
@@ -34,11 +35,16 @@ export interface DemoController {
 export interface LiveControllerOptions {
   cache: PrivateCacheDir;
   quicknodeUrl?: string;
+  liveMode?: boolean;
+  runLive?: typeof runLivePrivateAgent;
+  runMock?: typeof runPrivateAgent;
+  startSpy?: () => Promise<unknown>;
 }
 
 export class LiveDemoController implements DemoController {
   running = false;
   mode: DemoMode | null = null;
+  fallbackAvailable = false;
   private spy?: SpyBot;
   private spyRun?: Promise<unknown>;
   private agentRun?: Promise<void>;
@@ -46,18 +52,58 @@ export class LiveDemoController implements DemoController {
   constructor(private publish: PublishFn, private opts: LiveControllerOptions) {}
 
   start(mode: DemoMode = 'normal'): boolean {
-    if (this.running) return false;
-    this.running = true;
+    const fallbackRun = this.running && this.opts.liveMode && this.fallbackAvailable && mode === 'mock';
+    if (this.running && !fallbackRun) return false;
+    if (!this.running) {
+      this.running = true;
+      this.spyRun = (this.opts.startSpy?.() ?? this.runSpy()).catch((err: unknown) => {
+        this.publish('spy', 'error', { message: err instanceof Error ? err.message : String(err) });
+      });
+    }
     this.mode = mode;
-    this.publish('system', 'status', { running: true, mode, message: mode === 'tamper' ? 'Tamper test started.' : 'Live demo started.' });
-    this.spyRun = this.runSpy().catch((err: unknown) => {
-      this.publish('spy', 'error', { message: err instanceof Error ? err.message : String(err) });
+    this.fallbackAvailable = false;
+    const message = mode === 'tamper'
+      ? (this.opts.liveMode ? 'Live issuer tamper test started.' : 'Local tamper test started.')
+      : mode === 'mock'
+        ? 'Local mock run started. Mock attestation and local services are in use.'
+        : this.opts.liveMode ? 'Live demo started. Verifying the issuer and relay.' : 'Local mock demo started.';
+    this.publish('system', 'status', { running: true, mode, liveMode: this.opts.liveMode ?? false, fallbackAvailable: false, message });
+    const agentPublish = (type: string, data: unknown = null) => this.publish('agent', type, data);
+    const liveRunner = this.opts.runLive ?? runLivePrivateAgent;
+    const mockRunner = this.opts.runMock ?? runPrivateAgent;
+    const agentRun = this.opts.liveMode && mode !== 'mock'
+      ? liveRunner(agentPublish, { tamper: mode === 'tamper' })
+      : mockRunner(agentPublish, { tamper: mode === 'tamper' });
+    const trackedRun = Promise.resolve(agentRun).then((outcome) => {
+      if (outcome && outcome.fallbackAvailable && this.running) {
+        this.fallbackAvailable = true;
+        this.mode = 'normal';
+        this.publish('system', 'status', {
+          running: true,
+          mode: this.mode,
+          liveMode: true,
+          fallbackAvailable: true,
+          message: 'Live services unavailable. Local mock run is available.',
+        });
+      }
+    }).catch((err: unknown) => {
+      this.publish('agent', 'error', { message: err instanceof Error ? err.message : String(err) });
     });
-    const agentRun = runPrivateAgent((type, data = null) => this.publish('agent', type, data), { tamper: mode === 'tamper' });
-    this.agentRun = agentRun;
-    void agentRun.finally(() => {
-      if (this.agentRun === agentRun) this.agentRun = undefined;
-      if (this.running) this.publish('agent', 'status', { message: 'The private-payment run has ended. The spy bot is still watching.' });
+    this.agentRun = trackedRun;
+    void trackedRun.finally(() => {
+      if (this.agentRun === trackedRun) this.agentRun = undefined;
+      if (this.running) {
+        this.publish('agent', 'status', { message: 'The right-pane run has ended. The spy bot is still watching.' });
+        if (!this.fallbackAvailable) {
+          this.publish('system', 'status', {
+            running: true,
+            mode: this.mode,
+            liveMode: this.opts.liveMode ?? false,
+            fallbackAvailable: false,
+            message: 'Right-pane run ended. The spy bot is still watching; stop the demo to run again.',
+          });
+        }
+      }
     });
     return true;
   }
@@ -100,7 +146,8 @@ export class LiveDemoController implements DemoController {
     this.spyRun = undefined;
     this.agentRun = undefined;
     this.mode = null;
-    this.publish('system', 'status', { running: false, mode: null, message: 'Live demo stopped.' });
+    this.fallbackAvailable = false;
+    this.publish('system', 'status', { running: false, mode: null, liveMode: this.opts.liveMode ?? false, fallbackAvailable: false, message: 'Live demo stopped.' });
   }
 }
 
@@ -116,6 +163,7 @@ export interface DemoApp {
 export interface DemoAppOptions {
   policy: ControlPolicy;
   controller: (publish: PublishFn) => DemoController;
+  liveMode?: boolean;
 }
 
 function json(res: ServerResponse, status: number, value: unknown) {
@@ -161,7 +209,13 @@ export function createDemoApp(opts: DemoAppOptions): DemoApp {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/api/status') {
-      json(res, 200, { running: controller.running, mode: controller.mode, tokenRequired: opts.policy.token !== undefined });
+      json(res, 200, {
+        running: controller.running,
+        mode: controller.mode,
+        liveMode: opts.liveMode ?? false,
+        fallbackAvailable: 'fallbackAvailable' in controller ? Boolean(controller.fallbackAvailable) : false,
+        tokenRequired: opts.policy.token !== undefined,
+      });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/events') {
@@ -185,11 +239,12 @@ export function createDemoApp(opts: DemoAppOptions): DemoApp {
     if (req.method === 'POST' && url.pathname === '/api/start') {
       if (!allowControl(req, res, opts.policy)) return;
       const tamper = url.searchParams.get('tamper') === '1';
-      const started = controller.start(tamper ? 'tamper' : 'normal');
+      const mock = url.searchParams.get('mock') === '1';
+      const started = controller.start(tamper ? 'tamper' : mock ? 'mock' : 'normal');
       json(res, started ? 202 : 409, {
         running: controller.running,
         mode: controller.mode,
-        message: started ? (tamper ? 'Tamper test started.' : 'Live demo started.') : 'A demo run is already active.',
+        message: started ? (tamper ? 'Tamper test started.' : mock ? 'Local mock run started.' : 'Demo run started.') : 'A demo run is already active.',
       });
       return;
     }

@@ -117,6 +117,12 @@ describe('control endpoints, non-loopback host', () => {
   it('keeps the page and status readable without the token', async () => {
     const base = await serve(controlPolicy('0.0.0.0'));
     expect((await fetch(`${base}/`)).status).toBe(200);
-    expect(await (await fetch(`${base}/api/status`)).json()).toEqual({ running: false, mode: null, tokenRequired: true });
+    expect(await (await fetch(`${base}/api/status`)).json()).toEqual({
+      running: false,
+      mode: null,
+      liveMode: false,
+      fallbackAvailable: false,
+      tokenRequired: true,
+    });
   });
 });

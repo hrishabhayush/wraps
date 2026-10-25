@@ -37,7 +37,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ### Keys and secrets
 - [ ] **INF-15** Wallets (three different ones): agent wallet, funding wallet, issuer payout address. Private keys in a local `.env` that is never committed, or Google Secret Manager.
-- [ ] **INF-16** XRP for gas on XRPL EVM testnet (faucet) for the agent wallet and the issuer.
+- [~] **INF-16** XRP for gas on XRPL EVM testnet (faucet) for the agent wallet and the issuer. Faucet options documented; live balances and funding remain to verify.
 - [ ] **INF-17** Mastercard: fill their form, get activated at the booth, get testnet RLUSD. On the AP4M portal "My setup": add the agent wallet and the issuer payout address, fund the budget. Copy the PaymentLedger contract address from "Network config" into `infra/gcp/README.md`.
 - [ ] **INF-18** Download the AP4M starter files (`ap4m-hackathon-sdk.js`, `ap4m-x402.mjs`, `AGENTS.md`) into `vendor/ap4m/`. Read `/docs/api-reference.md` while logged in. Answer the booth questions in SPEC §19.
 

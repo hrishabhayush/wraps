@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, rm, statfs, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { basename, join } from 'node:path';
-import { createWireGuardQuotaController, WIREGUARD_BYTES_PER_TOKEN, type WireGuardQuotaController } from './wireguard-quota.js';
+import {
+  createWireGuardQuotaController,
+  WIREGUARD_BLOCKED_IPV4_DESTINATIONS,
+  WIREGUARD_BYTES_PER_TOKEN,
+  type WireGuardQuotaController,
+} from './wireguard-quota.js';
 
 const TMPFS_MAGIC = 0x01021994;
 const DEFAULT_RUNTIME_DIRECTORY = '/dev/shm';
@@ -193,9 +198,8 @@ function validateOptions(options: WireGuardGatewayOptions): void {
 
 function buildFirewallPolicy(iface: string, egress: string, cidr: string): { up: string[]; down: string[] } {
   const chain = 'WRAPS_WG0_FORWARD';
-  const reject = ['0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24', '192.168.0.0/16', '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4'];
   const up = [`iptables -N ${chain}`];
-  for (const destination of reject) up.push(`iptables -A ${chain} -i ${iface} -d ${destination} -j REJECT`);
+  for (const destination of WIREGUARD_BLOCKED_IPV4_DESTINATIONS) up.push(`iptables -A ${chain} -i ${iface} -d ${destination} -j REJECT`);
   up.push(
     `iptables -A ${chain} -i ${iface} ! -s ${cidr} -j DROP`,
     `iptables -A ${chain} -i ${iface} -o ${egress} -s ${cidr} -j ACCEPT`,

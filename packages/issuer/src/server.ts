@@ -85,7 +85,10 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       }
 
       if (route === 'GET /reserves') return sendJson(res, 200, core.reserves());
-      if (route === 'GET /keys') return sendJson(res, 200, core.tokenKeys());
+      if (route === 'GET /keys') {
+        await core.refreshTokenKey();
+        return sendJson(res, 200, core.tokenKeys());
+      }
 
       throw new HttpError(404, 'not found');
     } catch (e) {

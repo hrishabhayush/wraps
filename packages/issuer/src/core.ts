@@ -146,11 +146,30 @@ export class IssuerCore {
     return this.epochView(this.current);
   }
 
-  /** Rotates first if the current key has too little life left to give new tokens. */
-  private async signingEpoch(): Promise<KeyEpoch> {
+  /**
+   * Starts a new epoch if the current key has too little life left to give new tokens.
+   * Called where clients learn the key (attestation, /keys), because a blinded request is
+   * bound to one key: rotating between blinding and signing would strand the request.
+   */
+  async refreshTokenKey(): Promise<void> {
     const minLife = this.opts.minTokenLifetimeMs ?? this.lifetimeMs / 2;
     if (this.current.notAfter - this.now() < minLife) await this.rotateTokenKey();
-    return this.current;
+  }
+
+  /**
+   * Blinded requests must be for the current, unexpired key. Checked before any payment is
+   * redeemed, so a stale client loses nothing. RFC 9578 TokenRequest for type 0x0002 is
+   * token_type (2 bytes) || truncated_token_key_id (1 byte) || blinded_msg.
+   */
+  private checkSigningKey(requests: string[]) {
+    if (this.now() > this.current.notAfter) throw new IssuerError(409, 'token key expired; fetch /attestation and blind again');
+    const truncated = tokenKeyId(this.current.keys.publicKeyBytes)[31];
+    for (const r of requests) {
+      const bytes = typeof r === 'string' ? fromB64u(r) : new Uint8Array();
+      if (bytes.length < 3 || bytes[2] !== truncated) {
+        throw new IssuerError(409, 'token request is not for the current token key; fetch /attestation and blind again');
+      }
+    }
   }
 
   private epochView(e: KeyEpoch): TokenKeyEpoch {
@@ -177,6 +196,7 @@ export class IssuerCore {
 
   async attestation(nonce: Uint8Array): Promise<AttestationResponse> {
     if (nonce.length < 16 || nonce.length > 64) throw new IssuerError(400, 'nonce must be 16 to 64 bytes');
+    await this.refreshTokenKey();
     const keys = { ...this.publicKeys };
     const attestation = await this.opts.provider.attest(nonce, hashPublicKeys(keys));
     return {
@@ -220,6 +240,7 @@ export class IssuerCore {
   /** /issue with a payment attached. Redeems the payment, then signs. */
   async issuePaid(requests: string[], paymentHeader: string): Promise<string[]> {
     this.checkBatch(requests);
+    this.checkSigningKey(requests);
     let quoteId: string | undefined;
     try {
       quoteId = JSON.parse(Buffer.from(paymentHeader, 'base64url').toString('utf8')).quoteId;
@@ -248,14 +269,14 @@ export class IssuerCore {
   /** Signs blinded requests. Refuses if it would push outstanding above funds held. */
   async signBlinded(requests: string[]): Promise<string[]> {
     this.checkBatch(requests);
+    this.checkSigningKey(requests);
     if (this.outstanding() + requests.length > this.fundsHeld) {
       throw new IssuerError(402, `refusing to issue beyond funds held (outstanding ${this.outstanding()}, funds ${this.fundsHeld}, asked ${requests.length})`);
     }
     // Reserve before the await so concurrent calls can't both pass the check.
     this.unspentIssued += requests.length;
     try {
-      const epoch = await this.signingEpoch();
-      const out = await epoch.issuer.issue(requests.map(fromB64u));
+      const out = await this.current.issuer.issue(requests.map(fromB64u));
       return out.map(b64u);
     } catch (e) {
       this.unspentIssued -= requests.length;

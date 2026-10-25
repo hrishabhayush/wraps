@@ -31,6 +31,8 @@ export interface MerchantOptions {
   quoteTtlMs?: number;
   /** Clock, for tests. */
   now?: () => number;
+  /** How often to re-check the issuer's attestation, so 402s follow token key rotation (SR3). Default 10 min. */
+  issuerRefreshMs?: number;
 }
 
 /** M5: paid responses must never be stored by a browser, proxy or CDN. */
@@ -62,6 +64,7 @@ export class Merchant {
   private readonly quotes = new Map<string, MerchantQuote>();
   /** Token ids claimed by a paid request that is still settling at the issuer. */
   private readonly inflight = new Set<string>();
+  private refreshTimer?: NodeJS.Timeout;
   server?: Server;
 
   constructor(private readonly opts: MerchantOptions) {
@@ -86,12 +89,25 @@ export class Merchant {
     this.issuerCall = issuerTransport(this.issuer, this.transport);
     const pinned = this.issuer.tlsKey ? ', TLS key pinned' : '';
     this.log(`issuer attestation verified (${this.issuer.attestation.format}, ${this.issuer.attestation.measurement.slice(0, 19)}…${pinned})`);
+    this.refreshTimer = setInterval(() => void this.refreshIssuer(), this.opts.issuerRefreshMs ?? 10 * 60_000);
+    this.refreshTimer.unref();
     this.server = createServer((req, res) => void this.handle(req, res));
     await new Promise<void>((r) => this.server!.listen(port, '127.0.0.1', r));
     return listenUrl(this.server);
   }
 
+  /** Re-verifies the issuer's attestation. On failure, keeps the last verified issuer. */
+  async refreshIssuer(): Promise<void> {
+    try {
+      this.issuer = await fetchAttestedIssuer(this.opts.issuerUrl, this.opts.verifier, this.transport);
+      this.issuerCall = issuerTransport(this.issuer, this.transport);
+    } catch (e) {
+      this.log(`issuer attestation refresh failed: ${(e as Error).message}`);
+    }
+  }
+
   close(): Promise<void> {
+    clearInterval(this.refreshTimer);
     return new Promise((r) => {
       if (!this.server) return r();
       this.server.closeAllConnections?.();

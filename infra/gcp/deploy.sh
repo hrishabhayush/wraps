@@ -149,7 +149,18 @@ if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
   CREATE_ARGS+=(--can-ip-forward)
 fi
 
+EXISTING=0
+if gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null 2>&1; then
+  EXISTING=1
+  [ "${REPLACE}" = 1 ] || die "${NAME} already exists; preserve it or pass --replace to delete it explicitly"
+fi
+
 if [ "${DRY_RUN}" = 1 ]; then
+  if [ "${EXISTING}" = 1 ]; then
+    printf 'DRY RUN (replace):'
+    printf ' %q' gcloud --project="${GCP_PROJECT}" compute instances delete "${NAME}" --zone "${GCP_ZONE}" --quiet
+    printf '\n'
+  fi
   printf 'DRY RUN:'
   printf ' %q' gcloud --project="${GCP_PROJECT}" "${CREATE_ARGS[@]}"
   printf '\n'
@@ -166,8 +177,7 @@ if [ "${DRY_RUN}" = 1 ]; then
   exit 0
 fi
 
-if gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null 2>&1; then
-  [ "${REPLACE}" = 1 ] || die "${NAME} already exists; preserve it or pass --replace to delete it explicitly"
+if [ "${EXISTING}" = 1 ]; then
   echo "Deleting existing ${NAME} as requested..."
   gc compute instances delete "${NAME}" --zone "${GCP_ZONE}" --quiet
 fi

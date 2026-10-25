@@ -22,12 +22,24 @@ FROM node:22.11.0-bookworm-slim@sha256:f035ba7ffee18f67200e2eb8018e0f13c954ec163
 COPY --from=build /out/issuer.mjs /app/issuer.mjs
 
 # Fixed in the image, so the operator cannot change them: no allow_env_override label.
+# Money: the issuer makes its own XRPL EVM wallet in memory at boot (ISSUER_WALLET=enclave) and names
+# it in the attestation. Users top up by paying it RLUSD (or on the mock rail for the agent demo); every
+# 2 minutes it pays merchants' earned tabs in RLUSD from it. The key dies with the VM, so before a
+# planned restart call POST /sweep: it sends everything to ISSUER_SWEEP_TO and nowhere else.
 ENV NODE_ENV=production \
     TZ=UTC \
     ATTESTATION=confidential-space \
     ISSUER_TLS=1 \
     ISSUER_HOST=0.0.0.0 \
-    ISSUER_PORT=443
+    ISSUER_PORT=443 \
+    ISSUER_RAIL=mock,xrpl-evm \
+    ISSUER_WALLET=enclave \
+    ISSUER_SWEEP_TO=0x34A7142038CDd6946ecc8a231e49c45E62A7F562 \
+    RLUSD_ADDRESS=0x27b57a9D0b8d24EB97259c4E2279e45255e016f3 \
+    XRPL_EVM_RPC=https://rpc.testnet.xrplevm.org/ \
+    PAYOUT_RAIL=xrpl-evm \
+    MERCHANT_PAYOUT_ADDRESSES=relay=0x7AAcF9A05880866ebEb3c7EF7E55C36e53D535df,merchant-research-data=0x7AAcF9A05880866ebEb3c7EF7E55C36e53D535df \
+    PAYOUT_INTERVAL_MS=120000
 
 # Confidential Space blocks inbound ports unless the image exposes them.
 EXPOSE 443/tcp

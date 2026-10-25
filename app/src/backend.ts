@@ -1,6 +1,8 @@
 // Seam between the UI and the VPN network (nodes, attestation, tunnel). TauriBackend is the
 // real one-click VPN (attested relay + WireGuard, see src-tauri/src/vpn.rs); MockBackend is
 // for the browser dev preview. Wallet top-ups live in tokens.ts.
+import type { Quote } from './tokens.ts';
+
 
 export type Flag = { bg?: string; h?: string[]; nordic?: [string, string?]; cross?: string; dot?: string };
 
@@ -18,12 +20,11 @@ export type Attestation =
   | { ok: true; tee: 'tdx' | 'sev' | 'sev-snp'; build: string; checkedAt: number }
   | { ok: false; reason: string; checkedAt: number };
 
-export type Activity = { title: string; detail: string; usd: number; at: number };
+export type Activity = { title: string; detail: string; usd: number; at: number; tx?: string };
 
 export interface Backend {
   listNodes(): Promise<VpnNode[]>;
   attest(nodeId: string): Promise<Attestation>;
-  connect(nodeId: string): Promise<void>;
   disconnect(): Promise<void>;
 }
 
@@ -75,7 +76,15 @@ export class TauriBackend implements Backend {
       return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
     }
   }
-  /** Buys and pays 10 tokens (100 MB), registers a fresh key, turns the tunnel on. */
-  async connect(_nodeId: string) { await this.call('vpn_connect', { tokens: 10 }); }
+  /** Pays the relay with these kept tokens (10 MB each), registers a fresh key, turns the tunnel on. */
+  async connectWith(tokens: string[]) { return this.call<{ tokens: number; megabytes: number }>('vpn_connect', { tokens }); }
+  /** Mock rail top-up from the live issuer. Returns the tokens for the wallet to keep. */
+  async topUpMock(n: number) { return (await this.call<{ tokens: string[] }>('topup_mock', { tokens: n })).tokens; }
+  /** RLUSD top-up, step 1: the attested issuer's quote for `n` tokens. */
+  async topUpQuote(n: number) { return this.call<Quote>('topup_quote', { tokens: n }); }
+  /** RLUSD top-up, step 2: the quote is paid in `txHash`. Returns the tokens for the wallet to keep. */
+  async topUpPaid(txHash: string) { return (await this.call<{ tokens: string[] }>('topup_paid', { txHash })).tokens; }
+  async topUpCancel() { await this.call('topup_cancel'); }
+  async openTx(txHash: string) { await this.call('open_tx', { txHash }); }
   async disconnect() { await this.call('vpn_disconnect'); }
 }

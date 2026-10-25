@@ -206,3 +206,39 @@ describe('errors are typed', () => {
     expect(new PaymentRefusedError('DAILY_CAP', 'x').code).toBe('DAILY_CAP');
   });
 });
+
+describe('kept tokens', () => {
+  it('exports tokens and spends them from a new client', async () => {
+    const buyer = client();
+    await buyer.connect();
+    await buyer.topUp(5);
+    const kept = buyer.exportTokens();
+    expect(kept).toHaveLength(5);
+
+    const later = client();
+    await later.connect();
+    expect(await later.importTokens(kept)).toBe(5);
+    expect((await later.fetch(`${urlA}/analytics?asset=XRP`)).status).toBe(200);
+    expect(later.balance).toBeLessThan(5);
+
+    // The buyer still holds copies of the spent tokens; the issuer says which are gone.
+    const spent = 5 - later.balance;
+    expect(await buyer.dropSpentTokens()).toBe(spent);
+    expect(buyer.balance).toBe(5 - spent);
+  });
+
+  it('refuses kept tokens from another issuer key', async () => {
+    const other = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
+    try {
+      const buyer = client({ issuerUrl: other.url });
+      await buyer.connect();
+      await buyer.topUp(1);
+      const c = client();
+      await c.connect();
+      await expect(c.importTokens(buyer.exportTokens())).rejects.toThrow('does not verify');
+      expect(c.balance).toBe(0);
+    } finally {
+      await other.close();
+    }
+  });
+});

@@ -8,7 +8,7 @@ Status: `[ ]` open · `[~]` in progress · `[x]` done. Put your name after a tas
 
 ## Lane 1: Infra (owner: Adarsha)
 
-Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), project `wraps-hack`, region `us-central1`. Not AWS Nitro: the AWS account is on the Free plan, which blocks the 4-vCPU instances Nitro needs. Folder: `infra/gcp/`.
+Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), project `wraps-hack`, region `us-central1`. Folder: `infra/gcp/`.
 
 ### Account and project (done)
 - [x] **INF-01** Google Cloud account with the $300 trial. Project `wraps-hack`, billing linked.
@@ -17,18 +17,21 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **INF-04** Probe: an `n2d-standard-2` with SEV-SNP on AMD Milan launched on the trial, then deleted. N2D CPU quota is 16.
 - [x] **INF-05** Artifact Registry repo `us-central1-docker.pkg.dev/wraps-hack/wraps`.
 - [x] **INF-06** Service account `wraps-workload` with Confidential Computing workload user, log writer and registry reader roles.
-- [x] **INF-07** Firewall rule `wraps-allow-443` for VMs tagged `wraps`.
+- [~] **INF-07** Firewall rule `wraps-allow-443` for VMs tagged `wraps`, including TCP 8080 for issuer nonce attestation. The live rule is applied; the reproducible update script and docs are in draft PR #25.
 
-### Images and deploy (agent working on this)
+### Images and deploy
 - [x] **INF-08** Dockerfiles for issuer and relay. Pin base images by digest, use lockfiles.
-- [~] **INF-09** Build with Cloud Build, push to the registry, print the image digest. Write digests to `infra/gcp/expected.json`, which the SDK reads.
-- [~] **INF-10** `deploy.sh <issuer|relay> [--debug]`: Confidential Space VM, `tee-image-reference` pinned by digest, service account, tag `wraps`, 12-hour max run time that stops the VM, label `project=wraps`. Plus `stop.sh` and `status.sh`.
-- [~] **INF-11** First deploy with the debug image to read logs, then the production image for the demo.
+- [x] **INF-09** Build with Cloud Build, push to the registry, print the image digest. Write digests to `infra/gcp/expected.json`, which the SDK reads.
+- [x] **INF-10** `deploy.sh <issuer|relay> [--debug]`: Confidential Space VM, `tee-image-reference` pinned by digest, service account, tag `wraps`, 12-hour max run time that stops the VM, label `project=wraps`. Plus `stop.sh` and `status.sh`.
+- [x] **INF-11** First deploy with the debug image to read logs, then the production image for the demo. Issuer and relay were deployed and verified; the VMs are stopped after the smoke run.
 
-### Attestation (agent working on this)
-- [~] **INF-12** In the workload, request a Confidential Space attestation token whose nonces bind the client's nonce and the hash of the workload's public keys. Expose `GET /attestation?nonce=`.
-- [~] **INF-13** SDK verifier: JWT signed by Google's attestation service, AMD SEV hardware, production image, debug disabled, expected image digest, nonce and key hash match.
-- [~] **INF-14** TLS: the workload makes its own key and a self-signed certificate. The SDK pins the key from the attestation.
+### Attestation
+- [x] **INF-12** In the workload, request a Confidential Space attestation token whose nonces bind the client's nonce and the hash of the workload's public keys. Expose `GET /attestation?nonce=`.
+- [x] **INF-13** SDK verifier: JWT signed by Google's attestation service, AMD SEV hardware, production image, debug disabled, expected image digest, nonce and key hash match.
+- [x] **INF-14** TLS: the workload makes its own key and a self-signed certificate. The SDK pins the key from the attestation.
+
+### Relay networking
+- [~] **INF-27** Configure WireGuard in the Confidential Space relay runtime (draft PR #33; depends on RLY-04 in #32). A live VM check for kernel support, capabilities and nftables is still needed.
 
 ### Keys and secrets
 - [ ] **INF-15** Wallets (three different ones): agent wallet, funding wallet, issuer payout address. Private keys in a local `.env` that is never committed, or Google Secret Manager.
@@ -49,9 +52,6 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [ ] **INF-24** Persist keys safely across restarts (for example Cloud KMS released only to the attested workload).
 - [ ] **INF-25** Stop and delete the VMs, images and project resources. Check the credit balance.
 
-### Not used
-- AWS Nitro Enclaves (PR #1). Kept for reference. Could return later as a second chip vendor.
-
 ---
 
 ## Lane 2: Tokens and issuer (folder `packages/tokens`, `packages/issuer`)
@@ -61,8 +61,8 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **ISS-03** `POST /verify` (read-only: signature and not spent) and `POST /settle` (mark spent, add to the merchant's tab). (core agent)
 - [x] **ISS-04** Signed running-total claim for merchants, signed with a key that is in the attestation. (core agent)
 - [x] **ISS-05** Solvency: refuse to issue beyond funds held. Attest "outstanding ≤ funds held." (core agent)
-- [~] **ISS-06** Batched payouts at fixed times (mock first, RLUSD transfers on XRPL EVM later). (core agent) Mock payout job done; RLUSD transfers open.
-- [ ] **ISS-07** Run the issuer in Confidential Space (INF-08 to INF-14).
+- [~] **ISS-06** Batched payouts at fixed times (mock first, RLUSD transfers on XRPL EVM later). Mock payout job done; RLUSD transfers open.
+- [x] **ISS-07** Run the issuer in Confidential Space (INF-08 to INF-14).
 
 ## Lane 3: Payments / AP4M (folder `packages/ap4m`)
 
@@ -75,12 +75,14 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **RLY-01** HTTPS CONNECT proxy. HTTPS only; loopback by default, public destination IPs only, raw TCP tunnel.
 - [x] **RLY-02** Charges one blind token per 10,000,000 tunnel bytes, settled through the issuer. Partial blocks are charged; tunnels close at quota. (Codex)
 - [x] **RLY-03** Wire into the relay enclave (INF-10 to INF-14). (Codex)
+- [~] **RLY-04** Add an attested WireGuard gateway with prepaid, metered peer quotas (draft PR #32). Needs a live Confidential Space check with an authorized peer.
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
 
-- [~] **SDK-01** Verify issuer and relay attestations (mock verifier first, then the Confidential Space verifier against `infra/gcp/expected.json`). Reject debug images, wrong image digests, wrong keys, reused nonces. Mock verifier done; Confidential Space verifier in progress.
+- [x] **SDK-01** Verify issuer and relay attestations (mock verifier first, then the Confidential Space verifier against `infra/gcp/expected.json`). Reject debug images, wrong image digests, wrong keys, reused nonces. Live GCP smoke passed.
 - [x] **SDK-02** Tunnel through the relay, pinned to its attested key.
 - [~] **SDK-03** Top-up: hit the issuer's 402, sign the AP4M voucher, receive and unblind tokens. (core agent) Mock wallet done; the real AP4M voucher is PAY-03.
+- [~] **SDK-06** Verify attested WireGuard settings, register prepaid quota and build the client profile (draft PR #34; depends on #33 and #32).
 - [x] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment. (core agent)
 - [x] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning. (core agent)
 
@@ -98,18 +100,24 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ## Lane 8: Demo and pitch (folder `apps/demo`, `docs/`)
 
+- [x] **DOC-01** Reconcile this checklist with merged GCP work, active PRs and verified remaining gaps.
 - [x] **DEM-01** Split-screen page: spy bot left, our agent right, live events. (Codex)
 - [x] **DEM-02** Tamper test starts a modified issuer build and shows the SDK refusing its changed PCR0 before top-up or purchase. (Codex)
 - [ ] **DEM-03** Benchmarks: payment speed (p50/p95), spy bot accuracy vs number of agents.
 - [ ] **DEM-04** Tests from SPEC §21 passing.
 - [x] **DEM-05** Update the explainer page to v4 (Confidential Space issuer, relay status, top-up; AP4M marked not implemented). (Codex)
 - [ ] **DEM-06** Pick the name. Rehearse the live run three times. Mastercard needs it live, no recording.
+- [~] **DEM-07** Merge and maintain the project website (open PR #31; deployed from its `gh-pages` branch).
+
+## Lane 9: Security and dependency health
+
+- [ ] **SEC-01** Resolve or document the production dependency audit findings. `npm audit --omit=dev` currently reports 5 findings (1 moderate, 4 high): `ws` through `viem` has a reported npm fix; `sjcl` through the Cloudflare PrivatePass dependency chain has no fix reported.
 
 ---
 
 ## Order that unblocks the most
 
-1. **INF-17, INF-18** (Mastercard activation, AP4M files): everything AP4M waits on this.
-2. **INF-08 to INF-11** (images and deploy on Google Cloud) in parallel with **ISS-01, MER-01, SPY-01 to SPY-03** (no infra needed).
-3. **INF-12 to INF-14** (attestation), then **ISS-07, RLY-03**.
-4. **PAY-03, SDK-03**, then the full demo.
+1. Complete **INF-17, INF-18** (Mastercard activation and AP4M SDK access), plus **INF-15, INF-16** (wallet setup and testnet gas).
+2. Implement and verify **PAY-03**; then finish the real top-up path in **SDK-03** and RLUSD payouts in **ISS-06**.
+3. Merge and validate **SDK-02** (#5). For the WireGuard path, complete **RLY-04** (#32), then **INF-27** (#33), then **SDK-06** (#34); the chain still needs a live runtime check.
+4. Address **SEC-01** and finish **SPY-01 to SPY-03**, **DEM-03**, **DEM-04** and **DEM-06** before the live demo.

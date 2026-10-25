@@ -1,0 +1,6 @@
+{
+  "audience": "https://wraps.invalid/issuer",
+  "hwModels": ["GCP_AMD_SEV"],
+  "requiredSupportAttribute": "STABLE",
+  "roles": {}
+}

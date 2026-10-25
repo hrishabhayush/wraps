@@ -37,6 +37,8 @@ It is signed with the attested claim key. Check it with `verifyPayoutRecord()`.
 
 ### Environment variables
 
+For a secret-free testnet setup template, start with [`funder.env.example`](./funder.env.example).
+
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PAYOUT_RAIL` | `mock` | `mock` or `xrpl-evm`. |

@@ -49,6 +49,7 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
 | `expected.json` | Image digest per role, plus the policy. The SDK reads it. Commit it after each build. |
 | `.state/` | Last known VM IPs. Not committed. |
+| `demo-day-runbook.md` | Readiness sequence for starting the live VMs and rehearsing without losing in-memory issuer state. |
 
 The relay listens for HTTPS CONNECT on port 443 and nonce-bound HTTP attestation on port 8080.
 The SDK uses the attested relay key for TLS, then reaches the issuer through a restricted,

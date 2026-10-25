@@ -8,6 +8,8 @@ import { encodeAuthorization, type Token } from '@wraps/tokens';
 
 const verifiedReceiptBrand: unique symbol = Symbol('verified WireGuard receipt');
 const verifiedReceipts = new WeakSet<object>();
+const WIREGUARD_ATTESTATION_TIMEOUT_MS = 10_000;
+const MAX_WIREGUARD_ATTESTATION_RESPONSE_BYTES = 64 * 1024;
 
 export interface VerifiedWireGuardReceipt {
   readonly endpoint: string;
@@ -53,6 +55,14 @@ function validateEndpoint(value: string): void {
   }
 }
 
+function isCanonicalSpki(value: string): boolean {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return false;
+  const der = Buffer.from(value, 'base64url');
+  // SPKI is DER, not a raw 32-byte key. Keep this bounded while allowing
+  // standard TLS public-key encodings such as the relay's P-256 key.
+  return der.length > 0 && der.length <= 1024 && der.toString('base64url') === value;
+}
+
 /** Fetch and verify a fresh WireGuard identity receipt before creating a client profile. */
 export async function fetchVerifiedWireGuardReceipt(
   attestationUrl: string,
@@ -66,9 +76,7 @@ export async function fetchVerifiedWireGuardReceipt(
   }
   const nonce = randomBytes(32);
   url.searchParams.set('nonce', nonce.toString('hex'));
-  const response = await transport(url);
-  if (!response.ok) throw new Error(`WireGuard attestation failed (${response.status})`);
-  const receipt = await response.json() as {
+  const receipt = await fetchWireGuardReceiptJson(url, transport) as {
     format?: string;
     publicKeys?: { tunnel?: string; wireguard?: string; policy?: string };
     endpoint?: string;
@@ -92,7 +100,7 @@ export async function fetchVerifiedWireGuardReceipt(
   if (receipt.format !== verifier.format || !tunnel || !wireguard || !policy || !receipt.attestation) {
     throw new TypeError('malformed WireGuard attestation receipt');
   }
-  if (!/^[A-Za-z0-9_-]{43}$/.test(tunnel) || !/^[A-Za-z0-9+/]{43}=$/.test(wireguard) || !/^[0-9a-f]{64}$/.test(policy)) {
+  if (!isCanonicalSpki(tunnel) || !/^[A-Za-z0-9+/]{43}=$/.test(wireguard) || !/^[0-9a-f]{64}$/.test(policy)) {
     throw new TypeError('malformed WireGuard attestation keys');
   }
   const networkPolicy = receipt.networkPolicy;
@@ -146,6 +154,63 @@ export async function fetchVerifiedWireGuardReceipt(
   return frozen;
 }
 
+async function fetchWireGuardReceiptJson(url: URL, transport: typeof fetch): Promise<unknown> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error('WireGuard attestation request timed out'));
+      controller.abort();
+    }, WIREGUARD_ATTESTATION_TIMEOUT_MS);
+  });
+  try {
+    const response = await Promise.race([transport(url, { signal: controller.signal }), deadline]);
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
+      throw new Error(`WireGuard attestation failed (${response.status})`);
+    }
+    return await Promise.race([
+      readBoundedJson(response, MAX_WIREGUARD_ATTESTATION_RESPONSE_BYTES, controller.signal),
+      deadline,
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function readBoundedJson(response: Response, maxBytes: number, signal: AbortSignal): Promise<unknown> {
+  const declaredLength = response.headers.get('content-length');
+  if (declaredLength && /^\d+$/.test(declaredLength) && Number(declaredLength) > maxBytes) {
+    void response.body?.cancel().catch(() => {});
+    throw new Error('WireGuard attestation response is too large');
+  }
+  if (!response.body) throw new TypeError('WireGuard attestation response has no body');
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let complete = false;
+  const cancelOnAbort = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener('abort', cancelOnAbort, { once: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        complete = true;
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) throw new Error('WireGuard attestation response is too large');
+      chunks.push(value);
+    }
+  } finally {
+    signal.removeEventListener('abort', cancelOnAbort);
+    if (!complete) void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  return JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), total).toString('utf8')) as unknown;
+}
+
 /**
  * Format a Linux wg-quick profile with an output kill switch. Generate and retain
  * the private key on the client device. Other platforms must use their native
@@ -170,8 +235,11 @@ export function createWireGuardClientProfile(
       clientAddress.split('/')[0].split('.').some((part) => Number(part) > 255)) {
     throw new TypeError('clientAddress must be an IPv4 /32 assigned to this peer');
   }
-  const endpoint = new URL(`udp://${receipt.endpoint}:${receipt.listenPort}`);
-  if (endpoint.username || endpoint.password || endpoint.pathname !== '/') throw new TypeError('invalid WireGuard endpoint');
+  const endpointHost = isIP(receipt.endpoint) === 6 ? `[${receipt.endpoint}]` : receipt.endpoint;
+  const endpoint = new URL(`udp://${endpointHost}:${receipt.listenPort}`);
+  if (endpoint.username || endpoint.password || (endpoint.pathname !== '' && endpoint.pathname !== '/')) {
+    throw new TypeError('invalid WireGuard endpoint');
+  }
   if (!/^[0-9a-fA-F:.]+$/.test(dns)) throw new TypeError('DNS must be an IPv4 or IPv6 literal');
   return [
     '[Interface]',

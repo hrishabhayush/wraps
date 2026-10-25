@@ -14,14 +14,16 @@ export interface WireGuardQuotaController {
 export async function createWireGuardQuotaController(
   run: (command: string, args: string[], input?: string) => Promise<string>,
 ): Promise<WireGuardQuotaController> {
-  await run('nft', ['add', 'table', 'inet', TABLE]);
   try {
-    await run('nft', ['add', 'chain', 'inet', TABLE, 'forward', '{', 'type', 'filter', 'hook', 'forward', 'priority', '-10', ';', 'policy', 'accept', ';', '}']);
-    await run('nft', ['add', 'chain', 'inet', TABLE, 'peers']);
-    await run('nft', ['add', 'rule', 'inet', TABLE, 'forward', 'iifname', 'wg0', 'jump', 'peers']);
-    await run('nft', ['add', 'rule', 'inet', TABLE, 'forward', 'oifname', 'wg0', 'jump', 'peers']);
-    await run('nft', ['add', 'rule', 'inet', TABLE, 'peers', 'iifname', 'wg0', 'drop']);
-    await run('nft', ['add', 'rule', 'inet', TABLE, 'peers', 'oifname', 'wg0', 'drop']);
+    await run('nft', ['-f', '-'], [
+      `add table inet ${TABLE}`,
+      `add chain inet ${TABLE} forward { type filter hook forward priority -10; policy accept; }`,
+      `add chain inet ${TABLE} peers`,
+      `add rule inet ${TABLE} forward iifname "wg0" jump peers`,
+      `add rule inet ${TABLE} forward oifname "wg0" jump peers`,
+      `add rule inet ${TABLE} peers iifname "wg0" drop`,
+      `add rule inet ${TABLE} peers oifname "wg0" drop`,
+    ].join('\n'));
   } catch (error) {
     try { await run('nft', ['delete', 'table', 'inet', TABLE]); } catch { /* best-effort rollback */ }
     throw error;

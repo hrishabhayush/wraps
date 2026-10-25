@@ -50,26 +50,9 @@ The merchant still sees the request. It has to, to answer it.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A["Agent + SDK<br/>or Mac app<br/>(packages/agent, sdk, app/)"]
-    R["Relay<br/>Confidential VM<br/>(packages/relay)"]
-    I["Issuer<br/>Confidential VM<br/>(packages/issuer)"]
-    M["Merchant<br/>x402 API<br/>(packages/merchant)"]
-    G["Google Cloud<br/>Attestation"]
-    X[("XRPL EVM testnet<br/>RLUSD")]
-
-    A -- "RLUSD top-up transfer" --> X
-    A -- "WireGuard or TLS CONNECT tunnel,<br/>pinned to attested key" --> R
-    R -- "blinded token request, top-up proof" --> I
-    I -- "blind-signed tokens" --> R
-    R -- "paid HTTPS request + PrivateToken header" --> M
-    M -- "token to settle" --> I
-    I -- "signed claim" --> M
-    G -- "signed attestation token<br/>(image digest, key hash)" --> I
-    G -- "signed attestation token" --> R
-    I -- "reads top-up tx,<br/>sends batched RLUSD payouts" --> X
-```
+<p align="center">
+  <img src="docs/wraps-architecture.png" width="900" alt="Wraps architecture: the agent pays RLUSD to the attested issuer for blind tokens, spends them at an attested relay, and websites see only the relay's IP">
+</p>
 
 - `packages/tokens` wraps Cloudflare's `privacypass-ts` for RFC 9578 token type `0x0002`. The issuer, merchant, relay and SDK all import it.
 - `packages/attestation` verifies Confidential Space tokens: AMD SEV, debug off, image digest, nonce and TLS key hash.

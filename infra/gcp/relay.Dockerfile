@@ -26,7 +26,7 @@ RUN ./node_modules/.bin/esbuild infra/gcp/relay-entrypoint.ts \
 # Runtime: only the pinned Node image and bundled relay workload are shipped.
 FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 iptables procps \
+RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 iptables nftables procps \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/relay.mjs ./relay.mjs
 COPY infra/gcp/expected.json ./expected.json

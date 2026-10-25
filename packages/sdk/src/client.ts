@@ -18,7 +18,7 @@ import {
 } from '@wraps/issuer';
 import { Token, TokenVerifier, blindTokens, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
 import type { PinnedRelayTransport } from './relay';
-import { isVerifiedWireGuardReceipt, registerWireGuardPeer as registerPeer, type VerifiedWireGuardReceipt } from './wireguard.js';
+import { deriveWireGuardPublicKey, isVerifiedWireGuardReceipt, registerWireGuardPeer as registerPeer, WireGuardRegistrationError, type VerifiedWireGuardReceipt } from './wireguard.js';
 
 export interface Caps {
   /** Most tokens one call may cost. A 402 above this is refused. */
@@ -385,8 +385,9 @@ export class PrivatePayClient {
   }
 
   /** Spend blind tokens to activate this configured peer's metered WireGuard quota. */
-  async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, publicKey: string, tlsPort = 443): Promise<number> {
+  async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, clientPrivateKey: string, tlsPort = 443): Promise<number> {
     this.attested();
+    const publicKey = deriveWireGuardPublicKey(clientPrivateKey);
     if (!isVerifiedWireGuardReceipt(receipt) || !receipt.peers.some((peer) => peer.publicKey === publicKey)) {
       throw new TypeError('a verified receipt containing this peer is required');
     }
@@ -397,9 +398,18 @@ export class PrivatePayClient {
     if (this.tokens.length < tokenCount) throw new InsufficientTokensError(tokenCount, this.tokens.length);
     // Consume locally before network I/O: a lost response may follow a successful
     // relay settlement, so retrying the same tokens would create ambiguity.
+    const reservedDay = this.spent.day;
     const batch = this.tokens.splice(0, tokenCount);
     this.spent.tokens += tokenCount;
-    await registerPeer(receipt, publicKey, batch, tlsPort);
+    try {
+      await registerPeer(receipt, clientPrivateKey, batch, tlsPort);
+    } catch (error) {
+      if (error instanceof WireGuardRegistrationError && error.outcome === 'rejected') {
+        this.tokens.unshift(...batch);
+        if (this.spent.day === reservedDay) this.spent.tokens = Math.max(0, this.spent.tokens - tokenCount);
+      }
+      throw error;
+    }
     return tokenCount;
   }
 

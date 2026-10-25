@@ -1,5 +1,6 @@
-import { createHash, randomBytes, X509Certificate } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, diffieHellman, randomBytes, X509Certificate } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
+import { isIP } from 'node:net';
 import type { TLSSocket } from 'node:tls';
 import type { AttestationVerifier } from '@wraps/attestation';
 import { hashPublicKeys } from '@wraps/attestation';
@@ -8,19 +9,47 @@ import { encodeAuthorization, type Token } from '@wraps/tokens';
 const verifiedReceiptBrand: unique symbol = Symbol('verified WireGuard receipt');
 
 export interface VerifiedWireGuardReceipt {
-  endpoint: string;
-  listenPort: number;
-  interfaceAddress: string;
-  clientAllowedIPs: '0.0.0.0/0';
-  serverPublicKey: string;
+  readonly endpoint: string;
+  readonly listenPort: number;
+  readonly interfaceAddress: string;
+  readonly clientAllowedIPs: '0.0.0.0/0';
+  readonly serverPublicKey: string;
   /** DER SubjectPublicKeyInfo of the TLS key bound by the verified receipt. */
-  tunnelSpki: string;
-  peers: Array<{ publicKey: string; allowedAddress: string }>;
+  readonly tunnelSpki: string;
+  readonly peers: ReadonlyArray<Readonly<{ publicKey: string; allowedAddress: string }>>;
   readonly [verifiedReceiptBrand]: true;
 }
 
 export function isVerifiedWireGuardReceipt(value: unknown): value is VerifiedWireGuardReceipt {
-  return typeof value === 'object' && value !== null && Reflect.get(value, verifiedReceiptBrand) === true;
+  return typeof value === 'object' && value !== null && Reflect.get(value, verifiedReceiptBrand) === true &&
+    Object.isFrozen(value) && Array.isArray(Reflect.get(value, 'peers')) && Object.isFrozen(Reflect.get(value, 'peers')) &&
+    (Reflect.get(value, 'peers') as unknown[]).every(Object.isFrozen);
+}
+
+export class WireGuardRegistrationError extends Error {
+  constructor(readonly outcome: 'rejected' | 'unknown', message: string) {
+    super(message);
+    this.name = 'WireGuardRegistrationError';
+  }
+}
+
+const privateDerPrefix = Buffer.from('302e020100300506032b656e04220420', 'hex');
+const basePublicDer = Buffer.concat([Buffer.from('302a300506032b656e032100', 'hex'), Buffer.from([9, ...new Array(31).fill(0)])]);
+export function deriveWireGuardPublicKey(privateKey: string): string {
+  if (!/^[A-Za-z0-9+/]{43}=$/.test(privateKey)) throw new TypeError('WireGuard keys must be standard base64 32-byte keys');
+  const raw = Buffer.from(privateKey, 'base64');
+  if (raw.length !== 32 || raw.toString('base64') !== privateKey) throw new TypeError('invalid WireGuard private key');
+  const priv = createPrivateKey({ key: Buffer.concat([privateDerPrefix, raw]), format: 'der', type: 'pkcs8' });
+  const pub = createPublicKey({ key: basePublicDer, format: 'der', type: 'spki' });
+  return diffieHellman({ privateKey: priv, publicKey: pub }).toString('base64');
+}
+
+function validateEndpoint(value: string): void {
+  if (isIP(value)) return;
+  if (value.length > 253 || value.endsWith('.') || !value.split('.').every((label) =>
+    label.length > 0 && label.length <= 63 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label))) {
+    throw new TypeError('invalid WireGuard endpoint host');
+  }
 }
 
 /** Fetch and verify a fresh WireGuard identity receipt before creating a client profile. */
@@ -101,16 +130,17 @@ export async function fetchVerifiedWireGuardReceipt(
       receipt.listenPort! < 1 || receipt.listenPort! > 65535 || !receipt.endpoint || !receipt.interfaceAddress) {
     throw new TypeError('unsupported WireGuard routing policy');
   }
-  return {
+  const frozenPeers = Object.freeze(peers.map((peer) => Object.freeze({ ...peer })));
+  return Object.freeze({
     endpoint: receipt.endpoint,
     listenPort: receipt.listenPort!,
     interfaceAddress: receipt.interfaceAddress,
     clientAllowedIPs: '0.0.0.0/0',
     serverPublicKey: wireguard,
     tunnelSpki: tunnel,
-    peers,
-    [verifiedReceiptBrand]: true,
-  };
+    peers: frozenPeers,
+    [verifiedReceiptBrand]: true as const,
+  });
 }
 
 /**
@@ -121,14 +151,15 @@ export async function fetchVerifiedWireGuardReceipt(
 export function createWireGuardClientProfile(
   receipt: VerifiedWireGuardReceipt,
   clientPrivateKey: string,
-  clientPublicKey: string,
   clientAddress: string,
   dns = '1.1.1.1',
 ): string {
   if (!isVerifiedWireGuardReceipt(receipt)) throw new TypeError('a verified WireGuard attestation receipt is required');
+  validateEndpoint(receipt.endpoint);
   if (!/^[A-Za-z0-9+/]{43}=$/.test(clientPrivateKey) || !/^[A-Za-z0-9+/]{43}=$/.test(receipt.serverPublicKey)) {
     throw new TypeError('WireGuard keys must be standard base64 32-byte keys');
   }
+  const clientPublicKey = deriveWireGuardPublicKey(clientPrivateKey);
   if (!receipt.peers.some((peer) => peer.publicKey === clientPublicKey && peer.allowedAddress === clientAddress)) {
     throw new TypeError('peer key and address are not in the verified WireGuard policy');
   }
@@ -165,19 +196,27 @@ export function createWireGuardClientProfile(
 /** Register a configured peer over the relay's HTTPS control route using blind tokens. */
 export async function registerWireGuardPeer(
   receipt: VerifiedWireGuardReceipt,
-  publicKey: string,
+  clientPrivateKey: string,
   tokens: Token[],
   tlsPort = 443,
 ): Promise<void> {
   if (!isVerifiedWireGuardReceipt(receipt)) throw new TypeError('a verified WireGuard attestation receipt is required');
+  validateEndpoint(receipt.endpoint);
   if (!Number.isInteger(tlsPort) || tlsPort < 1 || tlsPort > 65535) throw new RangeError('invalid relay TLS port');
   const url = new URL(`https://${receipt.endpoint}:${tlsPort}/wireguard/register`);
   if (tokens.length !== 1) throw new RangeError('register exactly one blind token at a time');
-  if (!receipt.peers.some((peer) => peer.publicKey === publicKey)) throw new TypeError('peer key is not in the verified WireGuard policy');
+  const publicKey = deriveWireGuardPublicKey(clientPrivateKey);
+  if (!receipt.peers.some((peer) => peer.publicKey === publicKey)) throw new TypeError('client private key does not match a configured peer');
   const expectedSpki = Buffer.from(receipt.tunnelSpki, 'base64url');
   if (!expectedSpki.length) throw new TypeError('missing attested relay TLS key');
   const body = JSON.stringify({ publicKey, authorization: encodeAuthorization(tokens) });
   await new Promise<void>((resolve, reject) => {
+    let bodySent = false;
+    const timer = setTimeout(() => req.destroy(new Error('WireGuard registration timed out')), 10_000);
+    const fail = (error: Error) => {
+      clearTimeout(timer);
+      reject(new WireGuardRegistrationError(bodySent ? 'unknown' : 'rejected', error.message));
+    };
     const req = httpsRequest(url, {
       method: 'POST',
       agent: false,
@@ -192,8 +231,11 @@ export async function registerWireGuardPeer(
         else chunks.push(chunk);
       });
       res.on('end', () => {
-        if (res.statusCode !== 201) reject(new Error(`WireGuard peer registration failed (${res.statusCode ?? 'no status'})`));
-        else resolve();
+        clearTimeout(timer);
+        if (res.statusCode !== 201) {
+          const definitelyRejected = [400, 401, 404, 409, 413, 415, 429].includes(res.statusCode ?? 0);
+          reject(new WireGuardRegistrationError(definitelyRejected ? 'rejected' : 'unknown', `WireGuard peer registration failed (${res.statusCode ?? 'no status'})`));
+        } else resolve();
       });
     });
     req.once('socket', (socket) => {
@@ -204,12 +246,13 @@ export async function registerWireGuardPeer(
           if (!cert.raw) throw new Error('relay did not present a certificate');
           const actualSpki = new X509Certificate(cert.raw).publicKey.export({ type: 'spki', format: 'der' });
           if (!Buffer.from(actualSpki).equals(expectedSpki)) throw new Error('relay TLS key does not match verified attestation');
+          bodySent = true;
           req.end(body);
         } catch (error) {
           req.destroy(error as Error);
         }
       });
     });
-    req.once('error', reject);
+    req.once('error', fail);
   });
 }

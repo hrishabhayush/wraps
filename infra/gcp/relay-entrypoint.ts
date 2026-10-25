@@ -123,7 +123,7 @@ async function main(): Promise<void> {
         endpoint: required('WG_ENDPOINT'),
         listenPort: 51820,
         interfaceAddress: required('WG_INTERFACE_ADDRESS'),
-        egressInterface: process.env.WG_EGRESS_INTERFACE ?? 'ens4',
+        egressInterface: process.env.WG_EGRESS_INTERFACE ?? 'eth0',
         peers: JSON.parse(required('WG_PEERS_JSON')) as Array<{ publicKey: string; allowedAddress: string }>,
       },
     })

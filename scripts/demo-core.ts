@@ -62,7 +62,7 @@ let exitCode = 0;
 try {
   console.log(bold('\nAgent: checking the issuer enclave'));
   const attested = await sdk.connect();
-  console.log(green(`  Attestation verified. PCR0 ${attested.attestation.measurement.slice(0, 16)}… keys match, nonce fresh.`));
+  console.log(green(`  Attestation verified. PCR0 ${attested.attestation.measurement.slice(0, 16)}… keys match, nonce fresh. Merchant auth reported ${attested.merchantAuth}.`));
 
   await new ResearchAgent({
     sdk,

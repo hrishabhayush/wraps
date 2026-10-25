@@ -7,6 +7,8 @@ export const MERCHANT_AUTH_HEADERS = {
 } as const;
 
 export interface MerchantAuthConfig {
+  /** Explicit environment switch. When true, missing merchant credentials are refused. */
+  enforce?: boolean;
   /** merchantId -> base64url-encoded Ed25519 SPKI DER public key. */
   publicKeys?: Record<string, string | Uint8Array>;
   /** Maximum age/future skew for signed requests. Defaults to 60 seconds. */
@@ -15,6 +17,14 @@ export interface MerchantAuthConfig {
   developmentMode?: boolean;
   /** Temporary legacy relay credential. Relay ID is fixed and the key must be sent as a bearer token. */
   relay?: { merchantId: string; key: string };
+}
+
+export type MerchantAuthMode = 'legacy-open' | 'enforced';
+
+/** Direct callers infer enforcement from configured credentials; env parsing sets this explicitly. */
+export function getMerchantAuthMode(config?: MerchantAuthConfig): MerchantAuthMode {
+  if (config?.enforce !== undefined) return config.enforce ? 'enforced' : 'legacy-open';
+  return config?.relay || Object.keys(config?.publicKeys ?? {}).length > 0 ? 'enforced' : 'legacy-open';
 }
 
 export interface MerchantAuthHeaders {
@@ -40,9 +50,10 @@ export function merchantAuthConfigFromEnv(
 ): MerchantAuthConfig {
   let publicKeys: Record<string, string> = {};
   const rawKeys = env.ISSUER_MERCHANT_AUTH_KEYS;
-  if (rawKeys) {
+  const hasMerchantKeys = rawKeys !== undefined;
+  if (hasMerchantKeys) {
     let parsed: unknown;
-    try { parsed = JSON.parse(rawKeys); } catch { throw new Error('ISSUER_MERCHANT_AUTH_KEYS must be a JSON object of merchant ID to base64url SPKI public key'); }
+    try { parsed = JSON.parse(rawKeys!); } catch { throw new Error('ISSUER_MERCHANT_AUTH_KEYS must be a JSON object of merchant ID to base64url SPKI public key'); }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.values(parsed).some((v) => typeof v !== 'string')) {
       throw new Error('ISSUER_MERCHANT_AUTH_KEYS must be a JSON object of merchant ID to base64url SPKI public key');
     }
@@ -53,7 +64,9 @@ export function merchantAuthConfigFromEnv(
     throw new Error('ISSUER_DEV_MERCHANT_AUTH=1 is only allowed for a loopback, non-Confidential-Space local issuer');
   }
   const relayKey = env.ISSUER_RELAY_SETTLE_KEY;
+  if (relayKey === '') throw new Error('ISSUER_RELAY_SETTLE_KEY must not be empty when configured');
   return {
+    enforce: hasMerchantKeys || relayKey !== undefined,
     publicKeys,
     ...(developmentMode ? { developmentMode: true } : {}),
     ...(relayKey ? { relay: { merchantId: env.ISSUER_RELAY_MERCHANT_ID ?? 'relay', key: relayKey } } : {}),

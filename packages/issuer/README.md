@@ -56,12 +56,18 @@ mapping in the issuer's `ISSUER_MERCHANT_AUTH_KEYS`. Local `demo:core` and `demo
 register an ephemeral keypair automatically. `ISSUER_DEV_MERCHANT_AUTH=1` is a local-only bypass;
 the issuer accepts it only on a loopback, non-Confidential-Space listener.
 
-The relay's existing settle client cannot yet add request headers. The issuer offers a temporary
-fixed-ID credential mode with `ISSUER_RELAY_SETTLE_KEY` and optional
-`ISSUER_RELAY_MERCHANT_ID=relay`; the relay must send `Authorization: Bearer <key>` using its
-`issuerFetch`. Until that relay-side change lands, strict issuer authentication rejects the
-relay's unsigned settles. The local demo's loopback development mode keeps its embedded relay
-tests working.
+The relay HTTP client sends `Authorization: Bearer <ISSUER_RELAY_SETTLE_KEY>` and uses the fixed
+`ISSUER_RELAY_MERCHANT_ID` (default `relay`) on settle and settle-status requests when configured.
+The relay image must be rebuilt and redeployed with the matching key before the live issuer turns
+on authentication enforcement. The desktop app still settles as `node:<id>` without a credential;
+register its public key and update its caller before setting either auth environment variable in
+production.
+
+Enforcement is deliberately opt-in for compatibility. If either `ISSUER_MERCHANT_AUTH_KEYS` or
+`ISSUER_RELAY_SETTLE_KEY` is configured, merchant routes enforce credentials. If neither is set,
+the issuer reports `merchantAuth: "legacy-open"` on `/health` and `/attestation`, logs one loud
+startup warning, and accepts unsigned legacy settles. SDK consumers retain the mode and the live
+preflight displays it. This mode field is runtime-reported and not covered by the key attestation.
 
 Issuer state uses `MemoryIssuerStateStore` unless a store is passed to `startIssuer`. For local or
 non-enclave runs, set `ISSUER_STATE_FILE=./data/issuer-state.jsonl` to use an append-only,

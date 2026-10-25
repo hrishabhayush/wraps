@@ -4,6 +4,7 @@ export const MAX_TOKENS_PER_TUNNEL = 100;
 export interface RelayIssuer {
   verify(tokens: string[]): Promise<boolean>;
   settle(merchantId: string, token: string): Promise<void>;
+  settleStatus?(merchantId: string, quoteId: string, tokens: string[]): Promise<unknown>;
 }
 
 export interface ForwardedChunk {
@@ -86,13 +87,18 @@ export class BandwidthMeter {
 /** HTTP client for the issuer's atomic /settle endpoint. */
 export class HttpRelayIssuer implements RelayIssuer {
   private readonly baseUrl: URL;
+  private readonly settleKey?: string;
+  private readonly relayMerchantId: string;
 
   constructor(
     issuerUrl: string,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly timeoutMs = 10_000,
+    auth: { settleKey?: string | null; merchantId?: string } = {},
   ) {
     this.baseUrl = new URL(issuerUrl);
+    this.settleKey = auth.settleKey === null ? undefined : auth.settleKey ?? process.env.ISSUER_RELAY_SETTLE_KEY;
+    this.relayMerchantId = auth.merchantId ?? process.env.ISSUER_RELAY_MERCHANT_ID ?? 'relay';
     if (this.baseUrl.protocol !== 'https:' && this.baseUrl.hostname !== '127.0.0.1' && this.baseUrl.hostname !== 'localhost') {
       throw new Error('issuer URL must use HTTPS outside localhost');
     }
@@ -104,14 +110,26 @@ export class HttpRelayIssuer implements RelayIssuer {
   }
 
   async settle(merchantId: string, token: string): Promise<void> {
-    await this.post('/settle', { merchantId, tokens: [token] });
+    await this.post('/settle', { merchantId: this.settleKey ? this.relayMerchantId : merchantId, tokens: [token] });
+  }
+
+  async settleStatus(merchantId: string, quoteId: string, tokens: string[]): Promise<unknown> {
+    return this.post('/settle/status', {
+      merchantId: this.settleKey ? this.relayMerchantId : merchantId,
+      quoteId,
+      tokens,
+    });
   }
 
   private async post(path: string, payload: unknown): Promise<unknown> {
     const url = new URL(path, this.baseUrl);
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (this.settleKey && (path === '/settle' || path === '/settle/status')) {
+      headers.authorization = `Bearer ${this.settleKey}`;
+    }
     const res = await this.fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(this.timeoutMs),
     });

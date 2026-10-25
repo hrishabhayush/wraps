@@ -42,7 +42,7 @@ export interface StartIssuerOptions {
   now?: () => number;
   /** State storage. Omit for in-memory state (the current Confidential Space image default). */
   stateStore?: IssuerStateStore;
-  /** Merchant credentials and local-only development mode. Omit to deny merchant-specific routes. */
+  /** Merchant credentials and local-only development mode. Omit for explicit legacy-open compatibility mode. */
   merchantAuth?: MerchantAuthConfig;
 }
 
@@ -79,7 +79,7 @@ export async function startIssuer(opts: StartIssuerOptions = {}): Promise<Runnin
     stateStore: opts.stateStore,
   });
   const payouts = new PayoutScheduler(core, opts.payoutRail ?? new MockPayoutRail(log), opts.payoutIntervalMs ?? 30_000, opts.payoutCaps, log);
-  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins, payouts, adminToken: opts.adminToken, merchantAuth: opts.merchantAuth });
+  const server = createIssuerServer(core, { tls, corsOrigins: opts.corsOrigins, payouts, adminToken: opts.adminToken, merchantAuth: opts.merchantAuth, log });
   await new Promise<void>((r) => server.listen(opts.port ?? 0, opts.host ?? '127.0.0.1', r));
   payouts.start();
   return {

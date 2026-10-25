@@ -132,6 +132,7 @@ describe('issuer', () => {
 
   it('claims are running totals that verify against the attested claim key', async () => {
     const attested = await fetchAttestedIssuer(issuer.url, new MockAttestationVerifier({ expectedPcrs: mockPcrs('issuer') }));
+    expect(attested.merchantAuth).toBe('legacy-open');
     const tokens = await buyTokens(3);
     const c1 = (await post('/settle', { merchantId: 'm-claims', tokens: tokens.slice(0, 1) })).body;
     const c2 = (await post('/settle', { merchantId: 'm-claims', tokens: tokens.slice(1) })).body;

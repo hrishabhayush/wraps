@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { b64u, fromB64u, generateEd25519, MockAttestationProvider } from '@wraps/attestation';
 import { blindTokens, finalizeTokens, serializeToken } from '@wraps/tokens';
-import { MockTopUpWallet, signMerchantRequest, startIssuer } from '../src/index';
+import { getMerchantAuthMode, merchantAuthConfigFromEnv, MockTopUpWallet, signMerchantRequest, startIssuer } from '../src/index';
 
 const quiet = () => {};
 
@@ -21,6 +21,8 @@ describe('SEC-04 merchant request authentication', () => {
       },
     });
     try {
+      expect((await (await fetch(`${issuer.url}/health`)).json() as { merchantAuth: string }).merchantAuth).toBe('enforced');
+      expect((await (await fetch(`${issuer.url}/attestation?nonce=${'01'.repeat(16)}`)).json() as { merchantAuth: string }).merchantAuth).toBe('enforced');
       const pending = await blindTokens(issuer.core.publicKeys.token, 1, issuer.core.name);
       const response = await issuer.core.issuePaid(
         pending.map((p) => b64u(p.request)),
@@ -70,6 +72,32 @@ describe('SEC-04 merchant request authentication', () => {
       const unknownAuth = signMerchantRequest(keyA.privateKey, 'unregistered', 'POST', path, unknownRaw, now);
       expect((await fetch(`${issuer.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...unknownAuth }, body: unknownRaw })).status).toBe(401);
       expect((await issuer.core.verify(tokens)).valid).toBe(false); // the valid authenticated request settled exactly once
+    } finally {
+      await issuer.close();
+    }
+  });
+
+  it('SEC-04: defaults to warned legacy-open mode only when no auth env is configured', async () => {
+    expect(getMerchantAuthMode(merchantAuthConfigFromEnv({}))).toBe('legacy-open');
+    expect(getMerchantAuthMode(merchantAuthConfigFromEnv({ ISSUER_MERCHANT_AUTH_KEYS: '{}' }))).toBe('enforced');
+    expect(getMerchantAuthMode(merchantAuthConfigFromEnv({ ISSUER_RELAY_SETTLE_KEY: 'relay-secret' }))).toBe('enforced');
+
+    const warnings: string[] = [];
+    const issuer = await startIssuer({ log: (message) => warnings.push(message), payoutIntervalMs: 3_600_000 });
+    try {
+      expect(warnings.filter((message) => message.includes('SECURITY WARNING'))).toHaveLength(1);
+      expect((await (await fetch(`${issuer.url}/health`)).json() as { merchantAuth: string }).merchantAuth).toBe('legacy-open');
+      expect((await (await fetch(`${issuer.url}/attestation?nonce=${'02'.repeat(16)}`)).json() as { merchantAuth: string }).merchantAuth).toBe('legacy-open');
+
+      const pending = await blindTokens(issuer.core.publicKeys.token, 1, issuer.core.name);
+      const response = await issuer.core.issuePaid(
+        pending.map((p) => b64u(p.request)),
+        await new MockTopUpWallet().pay(issuer.core.quote(1)),
+      );
+      const token = serializeToken((await finalizeTokens(pending, response.map(fromB64u)))[0]);
+      const body = JSON.stringify({ merchantId: 'node:legacy-app', tokens: [token] });
+      const settle = await fetch(`${issuer.url}/settle`, { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      expect(settle.status).toBe(200);
     } finally {
       await issuer.close();
     }

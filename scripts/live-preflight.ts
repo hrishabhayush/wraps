@@ -68,6 +68,7 @@ export async function runLivePreflight(
   if (unavailable.issuer) {
     add('Issuer reachable', false, unavailable.issuer);
     add('Issuer attestation verifies', false, 'issuer address or VM is unavailable');
+    add('Issuer merchant authentication mode', false, 'issuer mode was unavailable');
     add('Issuer image digest matches expected.json', false, 'no issuer attestation was received');
     add('Issuer TLS key pinned', false, 'no issuer TLS peer was received');
   } else {
@@ -81,6 +82,8 @@ export async function runLivePreflight(
     try {
       issuer = await deps.verifyIssuer(config);
       add('Issuer attestation verifies', true, `${issuer.attestation.format}; nonce and public key hash verified`);
+      add('Issuer merchant authentication mode', issuer.merchantAuth === 'enforced',
+        `${issuer.merchantAuth}; runtime-reported and not covered by the key attestation`);
       const digestMatches = issuer.attestation.measurement === config.expected.issuerDigest;
       add('Issuer image digest matches expected.json', digestMatches,
         `expected ${config.expected.issuerDigest}; got ${issuer.attestation.measurement}`);
@@ -88,6 +91,7 @@ export async function runLivePreflight(
     } catch (error) {
       const reachableFromResponse = error instanceof AttestationError;
       add('Issuer attestation verifies', false, errorMessage(error));
+      add('Issuer merchant authentication mode', false, 'issuer mode was not verified');
       if (!checks.some((check) => check.name === 'Issuer reachable' && check.passed) && reachableFromResponse) {
         checks[checks.findIndex((check) => check.name === 'Issuer reachable')] = { name: 'Issuer reachable', passed: true, detail: 'issuer answered; attestation was refused' };
       }

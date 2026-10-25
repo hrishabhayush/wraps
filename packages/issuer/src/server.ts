@@ -21,7 +21,7 @@ import { IssuerCore, IssuerError } from './core';
 import { HttpError, RateLimiter, readJson, readJsonWithRaw, sendJson } from './http';
 import type { PayoutScheduler } from './payout';
 import { PAYMENT_HEADER, PaymentRequiredBody } from './protocol';
-import { MerchantAuthConfig, verifyMerchantRequest } from './merchant-auth';
+import { getMerchantAuthMode, MerchantAuthConfig, verifyMerchantRequest } from './merchant-auth';
 
 export interface IssuerServerOptions {
   /** Attestation requests per IP per minute. */
@@ -34,8 +34,10 @@ export interface IssuerServerOptions {
   payouts?: PayoutScheduler;
   /** Bearer token for admin routes. Without it, only loopback callers are allowed. */
   adminToken?: string;
-  /** Per-merchant settlement and payout-history authentication. Missing config denies all merchants. */
+  /** Per-merchant settlement and payout-history authentication. No configured credentials means legacy-open compatibility mode. */
   merchantAuth?: MerchantAuthConfig;
+  /** Logger used for the legacy-open startup warning. */
+  log?: (message: string) => void;
 }
 
 function isAdmin(req: IncomingMessage, token?: string): boolean {
@@ -52,6 +54,10 @@ const json = (v: unknown) => JSON.parse(JSON.stringify(v, (_k, x) => (typeof x =
 
 export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions = {}): Server {
   const limiter = new RateLimiter(opts.attestationRateLimit ?? 60, 60_000);
+  const merchantAuth = getMerchantAuthMode(opts.merchantAuth);
+  if (merchantAuth === 'legacy-open') {
+    (opts.log ?? console.warn)('!!! SECURITY WARNING: merchant authentication is LEGACY-OPEN because no issuer merchant or relay credential is configured. Set ISSUER_MERCHANT_AUTH_KEYS and/or ISSUER_RELAY_SETTLE_KEY before enforcing authentication in production.');
+  }
 
   const cors = new Set(opts.corsOrigins ?? []);
   const handler: Parameters<typeof createServer>[1] = async (req, res) => {
@@ -67,13 +73,13 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       const url = new URL(req.url ?? '/', 'http://issuer');
       const route = `${req.method} ${url.pathname}`;
 
-      if (route === 'GET /health') return sendJson(res, 200, { ok: true, issuer: core.name });
+      if (route === 'GET /health') return sendJson(res, 200, { ok: true, issuer: core.name, merchantAuth });
 
       if (route === 'GET /attestation') {
         if (!limiter.allow(req.socket.remoteAddress ?? '?')) throw new HttpError(429, 'too many attestation requests');
         const nonceHex = url.searchParams.get('nonce') ?? '';
         if (!/^[0-9a-fA-F]+$/.test(nonceHex) || nonceHex.length % 2) throw new HttpError(400, 'nonce must be hex');
-        return sendJson(res, 200, await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))));
+        return sendJson(res, 200, { ...await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))), merchantAuth });
       }
 
       if (route === 'POST /quote') {
@@ -162,6 +168,7 @@ async function authenticateMerchant(
   path: string,
   rawBody: Uint8Array,
 ): Promise<void> {
+  if (getMerchantAuthMode(config) === 'legacy-open') return;
   if (config?.developmentMode && isLoopback(req.socket.remoteAddress ?? '')) return;
   const result = verifyMerchantRequest(config, merchantId, req.method ?? 'GET', path, rawBody, req.headers, core.currentTime());
   if (!result.ok) throw new HttpError(result.status, result.message);

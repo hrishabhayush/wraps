@@ -6,6 +6,7 @@
   "dependencies": {
     "@peculiar/x509": "^1.14.3",
     "@wraps/attestation": "*",
+    "@wraps/issuer": "*",
     "@wraps/tokens": "*"
   },
   "scripts": {

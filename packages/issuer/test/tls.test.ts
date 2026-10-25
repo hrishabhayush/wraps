@@ -111,7 +111,7 @@ describe('issuer over https', () => {
 
   it('refuses an https issuer that names no TLS key', async () => {
     await expect(
-      Promise.resolve().then(() => issuerTransport({ url: 'https://127.0.0.1:1', issuerName: 'x', tokenKey: new Uint8Array(), claimKey: new Uint8Array(), attestation: {} as any })),
+      Promise.resolve().then(() => issuerTransport({ url: 'https://127.0.0.1:1', issuerName: 'x', tokenKey: new Uint8Array(), claimKey: new Uint8Array(), attestation: {} as any, merchantAuth: 'unknown' })),
     ).rejects.toBeInstanceOf(AttestationError);
   });
 

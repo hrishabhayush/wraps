@@ -16,6 +16,7 @@ function fakeIssuer(measurement = config.expected.issuerDigest): AttestedIssuer 
     tokenKey: new Uint8Array([1]),
     claimKey: new Uint8Array([2]),
     tlsKey: new Uint8Array([3]),
+    merchantAuth: 'enforced',
     attestation: {
       format: 'gcp-confidential-space-v1',
       moduleId: 'test',
@@ -73,6 +74,7 @@ describe('live demo preflight checklist', () => {
     const result = await runLivePreflight(config, deps(), (line) => lines.push(line));
     expect(result.passed).toBe(true);
     expect(result.checks.map((check) => check.name)).toContain('Issuer attestation verifies');
+    expect(result.checks.map((check) => check.name)).toContain('Issuer merchant authentication mode');
     expect(result.checks.map((check) => check.name)).toContain('Relay image digest matches expected.json');
     expect(lines.some((line) => line.startsWith('✓ PASS'))).toBe(true);
     expect(lines.at(-1)).toBe('All live demo checks passed.');

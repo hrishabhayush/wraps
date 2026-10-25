@@ -51,7 +51,7 @@ Last updated: Oct 24, 2026.
 
 ## 4. Passing the published x402 facilitator rules
 
-**Claim:** "A USENIX Security 2026 study tested 15 production x402 facilitators against 8 security rules. All 15 failed at least one. Ours passes all eight, and each has a test."
+**Claim:** "A USENIX Security 2026 study tested 15 production x402 facilitators against 8 security rules. All 15 failed at least one. We test each rule or its closest equivalent, with the differences documented."
 
 | Proof | Status |
 |---|---|
@@ -157,7 +157,7 @@ Cited: Dingledine and Mathewson, "Anonymity Loves Company" (2006): anonymity gro
 | Largest real category: crypto and DeFi data | Decipher Club |
 | Nobody has shipped a confidential payment layer for x402 on XRPL. Ripple is working on private agent payments | Searched, Oct 24 |
 
-**Safe "first" claim:** "the first working confidential payment layer for x402 agents on XRPL."
+**Current status:** "A confidential-payment prototype for x402 agents on XRPL. The issuer's attestation is live; end-to-end relay privacy is still in progress."
 
 ---
 

@@ -20,15 +20,14 @@ function positivePort(name: string, fallback: number): number {
   return port;
 }
 
-function validateDnsName(value: string): string {
-  if (isIP(value) || value.length > 253 || value.endsWith('.')) {
-    throw new Error('RELAY_HOSTNAME must be a DNS name matching the SDK proxy URL');
-  }
+function validateRelayHost(value: string): string {
+  if (isIP(value)) return value;
+  if (value.length > 253 || value.endsWith('.')) throw new Error('RELAY_HOSTNAME must be a DNS name or IP matching the SDK proxy URL');
   const labels = value.split('.');
   if (labels.length < 2 || labels.some((label) =>
     label.length === 0 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label),
   )) {
-    throw new Error('RELAY_HOSTNAME must be a DNS name matching the SDK proxy URL');
+    throw new Error('RELAY_HOSTNAME must be a DNS name or IP matching the SDK proxy URL');
   }
   return value.toLowerCase();
 }
@@ -52,7 +51,7 @@ async function main(): Promise<void> {
   const audience = required('ATTESTATION_AUDIENCE');
   const issuerUrl = new URL(required('ISSUER_URL'));
   if (issuerUrl.protocol !== 'https:') throw new Error('ISSUER_URL must use HTTPS');
-  const hostname = validateDnsName(required('RELAY_HOSTNAME'));
+  const hostname = validateRelayHost(required('RELAY_HOSTNAME'));
 
   // Both the TLS identity and its private key are created in the workload's
   // process memory. The relay attestation endpoint binds this cert's SPKI.

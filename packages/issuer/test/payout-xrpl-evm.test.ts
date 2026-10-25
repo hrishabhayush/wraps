@@ -351,7 +351,7 @@ describe('PAYOUT_RAIL config', () => {
     expect(() => payoutConfigFromEnv({ ...base, ISSUER_PAYOUT_PRIVATE_KEY: '' })).toThrow(/ISSUER_PAYOUT_PRIVATE_KEY/);
     expect(() => payoutConfigFromEnv({ ...base, RLUSD_ADDRESS: '' })).toThrow(/RLUSD_ADDRESS/);
     expect(() => payoutConfigFromEnv({ ...base, MERCHANT_PAYOUT_ADDRESSES: '' })).toThrow(/MERCHANT_PAYOUT_ADDRESSES/);
-    expect(() => payoutConfigFromEnv({ ...base, PAYOUT_RAIL: 'other' })).toThrow(/mock or xrpl-evm/);
+    expect(() => payoutConfigFromEnv({ ...base, PAYOUT_RAIL: 'other' })).toThrow(/mock, xrpl-evm or ap4m/);
   });
   it('the key must match ISSUER_PAYOUT, where top-ups arrive', () => {
     expect(payoutConfigFromEnv({ ...base, ISSUER_PAYOUT: addr }).address).toBe(addr);

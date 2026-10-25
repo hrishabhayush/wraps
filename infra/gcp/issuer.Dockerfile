@@ -6,7 +6,7 @@
 # changes the image (code, ENV, LABEL, EXPOSE) changes the digest.
 
 # ---- build: install from the lockfile, bundle the issuer into one file ----------
-FROM node:22.11.0-bookworm-slim@sha256:f035ba7ffee18f67200e2eb8018e0f13c954ec16338f264940f701997e3c12da AS build
+FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09 AS build
 WORKDIR /repo
 COPY package.json package-lock.json tsconfig.json ./
 COPY packages ./packages
@@ -18,14 +18,16 @@ RUN mkdir /out && npx esbuild packages/issuer/src/cli.ts \
       --outfile=/out/issuer.mjs
 
 # ---- runtime: node and one bundled file ------------------------------------------
-FROM node:22.11.0-bookworm-slim@sha256:f035ba7ffee18f67200e2eb8018e0f13c954ec16338f264940f701997e3c12da
+FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09
 COPY --from=build /out/issuer.mjs /app/issuer.mjs
 
 # Fixed in the image, so the operator cannot change them: no allow_env_override label.
 # Money: the issuer makes its own XRPL EVM wallet in memory at boot (ISSUER_WALLET=enclave) and names
 # it in the attestation. Users top up by paying it RLUSD (or on the mock rail for the agent demo); every
-# 2 minutes it pays merchants' earned tabs in RLUSD from it. The key dies with the VM, so before a
-# planned restart call POST /sweep: it sends everything to ISSUER_SWEEP_TO and nowhere else.
+# 2 minutes it pays merchants' earned tabs through its own Mastercard AP4M Channel (PAYOUT_RAIL=ap4m).
+# Register the wallet address for the team in the AP4M portal first; until then payouts wait.
+# The key dies with the VM, so before a planned restart call POST /sweep: it sends everything to
+# ISSUER_SWEEP_TO and nowhere else. The AP4M toolkit needs Node 22.13+ (node:sqlite).
 ENV NODE_ENV=production \
     TZ=UTC \
     ATTESTATION=confidential-space \
@@ -37,8 +39,8 @@ ENV NODE_ENV=production \
     ISSUER_SWEEP_TO=0x34A7142038CDd6946ecc8a231e49c45E62A7F562 \
     RLUSD_ADDRESS=0x27b57a9D0b8d24EB97259c4E2279e45255e016f3 \
     XRPL_EVM_RPC=https://rpc.testnet.xrplevm.org/ \
-    PAYOUT_RAIL=xrpl-evm \
-    MERCHANT_PAYOUT_ADDRESSES=relay=0x34A7142038CDd6946ecc8a231e49c45E62A7F562,merchant-research-data=0x34A7142038CDd6946ecc8a231e49c45E62A7F562 \
+    PAYOUT_RAIL=ap4m \
+    AP4M_TEAM_NAME=CBC \
     PAYOUT_INTERVAL_MS=120000
 
 # Confidential Space blocks inbound ports unless the image exposes them.

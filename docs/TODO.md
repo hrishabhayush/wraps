@@ -98,7 +98,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ## Lane 7: Spy bot (folder `packages/spybot`)
 
 - [ ] **SPY-01** Load the XRPL AI Hub directory (address → service, price) from `xrpl-ai.org`.
-- [ ] **SPY-02** Stream payments for a merchant from public XRPL nodes (rotate, back off on rate limits). Match price to service.
+- [x] **SPY-02** Stream payments for a merchant from public XRPL nodes (rotate, back off on rate limits). Match price to service.
 - [ ] **SPY-03** Group payer wallets by first funder. Stop at very large wallets (likely exchanges).
 - [x] **SPY-04** Left-screen agent: a normal agent paying plain x402 on XRPL testnet through t54, read live by the bot. (Codex)
 

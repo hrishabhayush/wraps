@@ -125,11 +125,13 @@ if (spend) {
   if (!Array.isArray(kept) || kept.length < 1 || kept.length > 20 || !kept.every((t) => typeof t === 'string')) {
     throw new Error('--spend needs 1 to 20 tokens as a JSON array on stdin');
   }
-  await sdk.importTokens(kept);
-  const dropped = await sdk.dropSpentTokens();
-  log(`✓ ${kept.length} kept tokens verify under the attested issuer key${dropped ? `; ${dropped} were already spent` : ''}`);
+  // Tokens from an earlier issuer key (it restarted) no longer verify: drop them, keep the rest.
+  let stale = 0;
+  for (const t of kept) await sdk.importTokens([t]).catch(() => stale++);
+  const dropped = stale + (await sdk.dropSpentTokens());
+  log(`✓ ${sdk.balance} of ${kept.length} kept tokens are valid${dropped ? `; dropped ${dropped} (spent, or from an earlier issuer key)` : ''}`);
   if (sdk.balance === 0) {
-    process.stdout.write(`${JSON.stringify({ error: 'every kept token was already spent', unspent: [] })}\n`);
+    process.stdout.write(`${JSON.stringify({ error: 'no valid tokens left: top up again', unspent: [] })}\n`);
     process.exit(1);
   }
 } else {

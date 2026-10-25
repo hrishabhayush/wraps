@@ -391,6 +391,8 @@ setInterval(async () => {
 // ---------- boot ----------
 (async () => {
   s.nodes = await api.listNodes();
+  // The saved node may not exist in this node list (e.g. a mock node in the real app).
+  if (!s.nodes.some(n => n.id === s.nodeId)) s.nodeId = s.nodes[0].id;
   // Dev preview without Tauri: ?state=onboarding|home|verifying|connected|refused|nodes|wallet
   const p = import.meta.env.DEV ? new URLSearchParams(location.search).get('state') : null;
   if (p) {

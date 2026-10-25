@@ -75,7 +75,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **RLY-01** HTTPS CONNECT proxy. HTTPS only; loopback by default, public destination IPs only, raw TCP tunnel.
 - [x] **RLY-02** Charges one blind token per 10,000,000 tunnel bytes, settled through the issuer. Partial blocks are charged; tunnels close at quota. (Codex)
 - [x] **RLY-03** Wire into the relay enclave (INF-10 to INF-14). (Codex)
-- [~] **RLY-04** Add an attested WireGuard gateway with prepaid, metered peer quotas (draft PR #32). Needs a live Confidential Space check with an authorized peer.
+- [~] **RLY-04** Add an attested WireGuard gateway with prepaid, metered peer quotas (draft PR #32). Refresh its base from the older infra branch against `main`; a live Confidential Space check with an authorized peer is still needed.
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
 
@@ -119,5 +119,5 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 1. Complete **INF-17, INF-18** (Mastercard activation and AP4M SDK access), plus **INF-15, INF-16** (wallet setup and testnet gas).
 2. Implement and verify **PAY-03**; then finish the real top-up path in **SDK-03** and RLUSD payouts in **ISS-06**.
-3. Merge and validate **SDK-02** (#5). For the WireGuard path, complete **RLY-04** (#32), then **INF-27** (#33), then **SDK-06** (#34); the chain still needs a live runtime check.
+3. For the WireGuard path, refresh and complete **RLY-04** (#32), then **INF-27** (#33), then **SDK-06** (#34); the chain still needs a live runtime check.
 4. Address **SEC-01** and finish **SPY-01 to SPY-03**, **DEM-03**, **DEM-04** and **DEM-06** before the live demo.

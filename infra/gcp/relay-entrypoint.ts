@@ -1,5 +1,4 @@
 import { isIP } from 'node:net';
-import { spawn } from 'node:child_process';
 import type { Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { AttestationProvider, AttestationVerifier } from '@wraps/attestation';
@@ -14,6 +13,9 @@ type IssuerRuntime = {
   fetchAttestedIssuer: (issuerUrl: string, verifier: AttestationVerifier) => Promise<unknown>;
   issuerTransport: (attestedIssuer: unknown) => unknown;
 };
+
+// Keep startup diagnostics useful without exposing URLs, keys, nonces, or tokens.
+let startupStep = 'configuration';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -50,14 +52,6 @@ function waitForListening(server: HttpServer | HttpsServer): Promise<void> {
   });
 }
 
-function runCommand(command: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore' });
-    child.once('error', reject);
-    child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`${command} exited with ${code}`)));
-  });
-}
-
 async function close(server: HttpServer | HttpsServer): Promise<void> {
   server.closeAllConnections?.();
   // A listener can still be binding when its sibling fails. Wait for bind
@@ -90,9 +84,11 @@ async function main(): Promise<void> {
   // These APIs are supplied by the GCP attestation and issuer runtime branches.
   // Keep the structural boundary local so this infra entrypoint can be integrated
   // while those dependency branches remain stacked separately.
+  startupStep = 'loading-runtime';
   const attestationRuntime = await import('@wraps/attestation') as unknown as AttestationRuntime;
   const issuerRuntime = await import('@wraps/issuer') as unknown as IssuerRuntime;
   const issuerVerifier = attestationRuntime.verifierFromEnv('issuer');
+  startupStep = 'issuer-attestation';
   const attestedIssuer = await issuerRuntime.fetchAttestedIssuer(
     issuerUrl.toString().replace(/\/$/, ''),
     issuerVerifier,
@@ -101,6 +97,7 @@ async function main(): Promise<void> {
 
   // Both the TLS identity and its private key are created in the workload's
   // process memory. The relay attestation endpoint binds this cert's SPKI.
+  startupStep = 'tls-identity';
   const identity = await createRelayTlsIdentity(hostname);
   const provider = new attestationRuntime.ConfidentialSpaceProvider({ audience });
   const relayOptions = {
@@ -115,7 +112,10 @@ async function main(): Promise<void> {
     attestationPort: positivePort('RELAY_ATTESTATION_PORT', 8080),
   };
   const wireGuardEnabled = process.env.WG_ENABLED === 'true';
-  if (wireGuardEnabled) await runCommand('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
+  // The VM is created with --can-ip-forward, which enables this host setting.
+  // Confidential Space exposes /proc/sys read-only inside the workload, so do
+  // not try to rewrite it here; startWireGuardGateway verifies the value.
+  startupStep = 'relay-listeners';
   const servers = wireGuardEnabled
     ? await startConfidentialWireGuardRelay({
       ...relayOptions,
@@ -166,6 +166,6 @@ async function main(): Promise<void> {
 
 main().catch(() => {
   // Never log URLs, keys, nonces, credentials, or attestation token contents.
-  console.error('[relay] startup failed');
+  console.error(`[relay] startup failed during ${startupStep}`);
   process.exitCode = 1;
 });

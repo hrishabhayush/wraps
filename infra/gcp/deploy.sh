@@ -68,7 +68,7 @@ if [ "${ROLE}" = relay ]; then
   [ -n "${META_SEPARATOR}" ] || die "could not choose a safe metadata separator"
   METADATA="^${META_SEPARATOR}^tee-image-reference=${REF}${META_SEPARATOR}tee-env-ATTESTATION_AUDIENCE=${ATTESTATION_AUDIENCE}${META_SEPARATOR}tee-env-ISSUER_URL=${ISSUER_URL}${META_SEPARATOR}tee-env-RELAY_HOSTNAME=${RELAY_HOSTNAME}"
   if [ -n "${WG_METADATA}" ]; then
-    WG_METADATA="${WG_METADATA//~/${META_SEPARATOR}}"
+    WG_METADATA="${WG_METADATA//\~/${META_SEPARATOR}}"
     METADATA="${METADATA}${META_SEPARATOR}${WG_METADATA}"
   fi
 fi
@@ -110,7 +110,7 @@ if [ "${DRY_RUN}" = 1 ]; then
       --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
     printf '\nDRY RUN (otherwise):'
     printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
-      --direction=INGRESS --priority=1000 --network=default --action=ALLOW --allow=udp:51820 \
+      --direction=INGRESS --priority=1000 --network=default --allow=udp:51820 \
       --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
     printf '\n'
   fi
@@ -135,7 +135,7 @@ if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
     gc compute firewall-rules update "${RULE}" --network=default --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
   else
     gc compute firewall-rules create "${RULE}" --direction=INGRESS --priority=1000 --network=default \
-      --action=ALLOW --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+      --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
   fi
 fi
 

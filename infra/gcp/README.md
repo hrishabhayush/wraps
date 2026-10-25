@@ -142,12 +142,14 @@ infra/gcp/mock-container-fallback.sh
 ```
 
 The script builds the production issuer and relay Dockerfiles, starts both images with mock
-attestation on an isolated container network, and sends an HTTPS request to `example.com` through
-the relay. It exits nonzero unless the SDK verifies both mock attestations, pins the issuer TLS
-key, receives HTTP 200, and spends exactly one meter token. It removes the temporary containers
-and network on exit. Issuer bootstrap and top-up connect directly to the local issuer container;
-the paid merchant request traverses the relay. This tests the same images and metering path while
-avoiding a host route to a container's private IP.
+attestation and a temporary local relay credential on an isolated container network, and sends an
+HTTPS request to `example.com` through the relay. It exits nonzero unless the SDK verifies both
+mock attestations, pins the issuer TLS key, receives HTTP 200, and spends exactly one meter token.
+It removes the temporary containers
+and network on exit. Set `ISSUER_MERCHANT_AUTH_KEYS` to the app's public-key JSON entry to bake the
+same merchant identity into the local issuer image. Issuer bootstrap and top-up connect directly to
+the local issuer container; the paid merchant request traverses the relay. This tests the same images
+and metering path while avoiding a host route to a container's private IP.
 
 ## VM settings (from `deploy.sh`)
 

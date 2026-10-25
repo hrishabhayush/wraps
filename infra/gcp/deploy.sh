@@ -4,6 +4,7 @@
 #   infra/gcp/deploy.sh issuer --debug    debug image (confidential-space-debug): SSH and logs on,
 #                                         and the token says dbgstat=enabled, so the SDK refuses it
 #   ATTESTATION_AUDIENCE=... ISSUER_URL=... RELAY_HOSTNAME=... infra/gcp/deploy.sh relay
+# Another relay region: INSTANCE_NAME=wraps-relay-nl GCP_REGION=europe-west4 GCP_ZONE=europe-west4-a RELAY_ADDRESS=... ...
 #   Add --dry-run after the role options to print the create command without changing GCP.
 # An existing VM with the same name is deleted first (its in-memory keys die with it).
 source "$(dirname "$0")/lib.sh"
@@ -153,7 +154,7 @@ fi
 IP="$(gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
 mkdir -p "${STATE_DIR}"
 echo "${IP}" > "${STATE_DIR}/${NAME}.ip"
-[ "${MODE}" = prod ] && echo "${IP}" > "${STATE_DIR}/${ROLE}.ip"
+[ "${MODE}" = prod ] && [ -z "${INSTANCE_NAME:-}" ] && echo "${IP}" > "${STATE_DIR}/${ROLE}.ip"
 
 echo
 echo "VM:   ${NAME}  (${IP})"

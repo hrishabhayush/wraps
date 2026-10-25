@@ -25,7 +25,15 @@ import { createLiveVerifier, resolveLiveConfig } from './live-config';
 
 // Defaults so the compiled helper works anywhere (the desktop app bundles it).
 // Both IPs are reserved; the expected image digests are embedded at build time.
+// --relay <ip> picks another relay (they all run the same attested image): Iowa 136.80.57.82
+// (default), Netherlands 34.141.178.44, London 35.234.141.198.
 process.env.ISSUER_URL ??= 'https://34.123.78.11';
+const relayIndex = process.argv.indexOf('--relay');
+if (relayIndex >= 0) {
+  const ip = process.argv[relayIndex + 1] ?? '';
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error('--relay needs an IPv4 address');
+  process.env.RELAY_URL = `https://${ip}`;
+}
 process.env.RELAY_URL ??= 'https://136.80.57.82';
 if (!process.env.EXPECTED_JSON) {
   const dir = mkdtempSync(join(tmpdir(), 'wraps-'));

@@ -300,7 +300,7 @@ async function connect(id: string) {
     // An empty wallet buys VPN_TOKENS first (RLUSD with a wallet connected, otherwise the mock rail).
     try {
       if (tk.count() === 0) await topUp(VPN_TOKENS);
-      spent = await spendAtRelay(VPN_TOKENS);
+      spent = await spendAtRelay(VPN_TOKENS, id);
     } catch (e) {
       s.stage = '';
       s.conn = { kind: 'off' };
@@ -353,11 +353,11 @@ async function topUp(n: number) {
 }
 
 /** Hands up to `n` kept tokens to the relay and brings the tunnel up. Unspent tokens go back to the wallet. */
-async function spendAtRelay(n: number): Promise<number> {
+async function spendAtRelay(n: number, nodeId: string): Promise<number> {
   const batch = tk.take(n);
   s.stage = 'paying'; render();
   try {
-    const r = await tauri.connectWith(batch);
+    const r = await tauri.connectWith(batch, nodeId);
     tk.record({ title: `VPN · ${node().city}`, detail: `${r.tokens} tokens = ${r.megabytes} MB`, usd: -r.tokens * USD_PER_TOKEN, at: Date.now() });
     return r.tokens;
   } catch (e) {

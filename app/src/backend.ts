@@ -57,12 +57,15 @@ export class MockBackend implements Backend {
   async disconnect() {}
 }
 
-// The live wraps relay: Google Confidential Space (AMD SEV), reserved IP.
-const LIVE_RELAY: VpnNode = {
-  id: 'usc1', city: 'Iowa', country: 'United States',
-  flag: { h: ['#B22234', '#FFFFFF', '#3C3B6E'] },
-  ip: '136.80.57.82', pricePerMB: 0.01, latencyMs: 30, // 1 token = 10 MB = $0.10
-};
+// The live wraps relays: the same attested image in Google Confidential Space (AMD SEV), each on a
+// reserved IP. Tokens from the one issuer work at any of them. 1 token = 10 MB = $0.10.
+// latencyMs: TCP connect time measured from the dev laptop (US West), 2026-10-25.
+const LIVE_RELAYS: VpnNode[] = [
+  { id: 'usc1', city: 'Iowa', country: 'United States', flag: { h: ['#B22234', '#FFFFFF', '#3C3B6E'] }, ip: '136.80.57.82', pricePerMB: 0.01, latencyMs: 38 },
+  { id: 'ams', city: 'Eemshaven', country: 'Netherlands', flag: { h: ['#AE1C28', '#FFFFFF', '#21468B'] }, ip: '34.141.178.44', pricePerMB: 0.01, latencyMs: 84 },
+  { id: 'lon', city: 'London', country: 'United Kingdom', flag: { bg: '#012169', cross: '#C8102E' }, ip: '35.234.141.198', pricePerMB: 0.01, latencyMs: 77 },
+];
+const relayIp = (nodeId: string) => (LIVE_RELAYS.find(n => n.id === nodeId) ?? LIVE_RELAYS[0]).ip;
 
 /** Real backend: verify the attested relay, pay it, bring WireGuard up. No other app needed. */
 export class TauriBackend implements Backend {
@@ -70,17 +73,17 @@ export class TauriBackend implements Backend {
     const { invoke } = await import('@tauri-apps/api/core');
     return invoke<T>(cmd, args);
   }
-  async listNodes() { return [LIVE_RELAY]; }
-  async attest(_nodeId: string): Promise<Attestation> {
+  async listNodes() { return LIVE_RELAYS; }
+  async attest(nodeId: string): Promise<Attestation> {
     try {
-      const r = await this.call<{ ok: boolean; imageDigest: string }>('vpn_attest');
+      const r = await this.call<{ ok: boolean; imageDigest: string }>('vpn_attest', { relay: relayIp(nodeId) });
       return { ok: true, tee: 'sev', build: `${r.imageDigest.slice(7, 11)}…${r.imageDigest.slice(-2)}`, checkedAt: Date.now() };
     } catch (e) {
       return { ok: false, reason: String(e).slice(0, 120), checkedAt: Date.now() };
     }
   }
   /** Pays the relay with these kept tokens (10 MB each), registers a fresh key, turns the tunnel on. */
-  async connectWith(tokens: string[]) { return this.call<{ tokens: number; megabytes: number }>('vpn_connect', { tokens }); }
+  async connectWith(tokens: string[], nodeId: string) { return this.call<{ tokens: number; megabytes: number }>('vpn_connect', { tokens, relay: relayIp(nodeId) }); }
   /** Mock rail top-up from the live issuer. Returns the tokens for the wallet to keep. */
   async topUpMock(n: number) { return (await this.call<{ tokens: string[] }>('topup_mock', { tokens: n })).tokens; }
   /** RLUSD top-up, step 1: the attested issuer's quote for `n` tokens. */

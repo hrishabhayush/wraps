@@ -97,9 +97,14 @@ fn tunnel(app: &AppHandle, args: &[&str]) -> Result<(), String> {
     }
 }
 
+/// The relay's IPv4 address, checked before it reaches the helper's argument list.
+fn relay_ip(relay: &str) -> Result<&str, String> {
+    relay.parse::<std::net::Ipv4Addr>().map(|_| relay).map_err(|_| "bad relay address".to_string())
+}
+
 #[tauri::command]
-pub async fn vpn_attest(app: AppHandle) -> Result<Value, String> {
-    tauri::async_runtime::spawn_blocking(move || helper(&app, &["--json", "--attest-only"], None))
+pub async fn vpn_attest(app: AppHandle, relay: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || helper(&app, &["--json", "--attest-only", "--relay", relay_ip(&relay)?], None))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -136,11 +141,11 @@ fn bring_up(app: &AppHandle, joined: Value) -> Result<Value, String> {
 /// Pays the relay with the wallet's kept tokens (10 MB each) and brings the tunnel up.
 /// On failure the error is JSON with the tokens the relay did not take (`unspent`).
 #[tauri::command]
-pub async fn vpn_connect(app: AppHandle, tokens: Vec<String>) -> Result<Value, String> {
+pub async fn vpn_connect(app: AppHandle, tokens: Vec<String>, relay: String) -> Result<Value, String> {
     if tokens.is_empty() || tokens.len() > 20 { return Err("connect needs 1 to 20 tokens".into()); }
     tauri::async_runtime::spawn_blocking(move || {
         let kept = serde_json::to_string(&tokens).map_err(|e| e.to_string())?;
-        let joined = helper(&app, &["--json", "--spend"], Some(&kept))?;
+        let joined = helper(&app, &["--json", "--spend", "--relay", relay_ip(&relay)?], Some(&kept))?;
         // The relay has the tokens now: if the tunnel fails, none come back to the wallet.
         bring_up(&app, joined).map_err(|e| serde_json::json!({ "error": e, "unspent": [] }).to_string())
     })

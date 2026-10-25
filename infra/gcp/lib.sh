@@ -4,7 +4,8 @@ set -euo pipefail
 GCP_PROJECT="${GCP_PROJECT:-wraps-hack}"
 GCP_REGION="${GCP_REGION:-us-central1}"
 GCP_ZONE="${GCP_ZONE:-us-central1-a}"
-REGISTRY="${REGISTRY:-${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/wraps}"
+# Images live in one registry (us-central1) even when a relay runs in another region.
+REGISTRY="${REGISTRY:-us-central1-docker.pkg.dev/${GCP_PROJECT}/wraps}"
 WORKLOAD_SA="${WORKLOAD_SA:-wraps-workload@${GCP_PROJECT}.iam.gserviceaccount.com}"
 # These limits are mandatory for every workload VM in this project.
 readonly MACHINE_TYPE="n2d-standard-2"
@@ -27,7 +28,8 @@ check_role() {
   esac
 }
 
-instance_name() { # role [debug]
+instance_name() { # role [debug]; INSTANCE_NAME overrides (e.g. a second relay in another region)
+  if [ -n "${INSTANCE_NAME:-}" ]; then echo "${INSTANCE_NAME}"; return; fi
   if [ "${2:-}" = "debug" ]; then echo "wraps-$1-debug"; else echo "wraps-$1"; fi
 }
 

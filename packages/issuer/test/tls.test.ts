@@ -27,8 +27,8 @@ let b: RunningIssuer;
 let bRequests = 0;
 
 beforeAll(async () => {
-  a = await startIssuer({ tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
-  b = await startIssuer({ tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
+  a = await startIssuer({ merchantAuth: { developmentMode: true }, tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
+  b = await startIssuer({ merchantAuth: { developmentMode: true }, tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
   b.server.prependListener('request', () => (bRequests += 1));
 });
 afterAll(async () => {
@@ -111,7 +111,7 @@ describe('issuer over https', () => {
 
   it('refuses an https issuer that names no TLS key', async () => {
     await expect(
-      Promise.resolve().then(() => issuerTransport({ url: 'https://127.0.0.1:1', issuerName: 'x', tokenKey: new Uint8Array(), claimKey: new Uint8Array(), attestation: {} as any })),
+      Promise.resolve().then(() => issuerTransport({ url: 'https://127.0.0.1:1', issuerName: 'x', tokenKey: new Uint8Array(), claimKey: new Uint8Array(), attestation: {} as any, merchantAuth: 'unknown' })),
     ).rejects.toBeInstanceOf(AttestationError);
   });
 

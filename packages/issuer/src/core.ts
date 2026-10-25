@@ -31,6 +31,15 @@ import {
   tokensToRlusd,
 } from './protocol';
 import { TopUpRail } from './rail';
+import {
+  InFlightPayoutRecord,
+  IssuerSettlementState,
+  IssuerStateSnapshot,
+  IssuerStateStore,
+  IssuerTabState,
+  MemoryIssuerStateStore,
+  MerchantNonceRecord,
+} from './state-store';
 
 export class IssuerError extends Error {
   constructor(readonly status: number, message: string) {
@@ -61,6 +70,8 @@ export interface IssuerOptions {
   minTokenLifetimeMs?: number;
   /** Clock. Tests move it to expire key epochs and quotes. */
   now?: () => number;
+  /** State storage. The in-memory implementation is the safe default, including Confidential Space. */
+  stateStore?: IssuerStateStore;
 }
 
 /** One token-signing key and the window in which its tokens are valid. */
@@ -73,11 +84,7 @@ interface KeyEpoch {
   notAfter: number;
 }
 
-interface Tab {
-  earned: number;
-  paid: number;
-  seq: number;
-}
+interface Tab extends IssuerTabState {}
 
 interface Quote {
   requirement: PaymentRequirement;
@@ -88,13 +95,7 @@ interface Quote {
  * One settle call made with a quote (SEC-03). Kept so a repeat of the same call returns the same
  * claim, and so the merchant can later ask whether its own settle landed.
  */
-interface Settlement {
-  merchantId: string;
-  quoteId: string;
-  /** SHA-256 over the sorted canonical token encodings. Equal only for the exact same tokens. */
-  fingerprint: string;
-  result: SignedClaim;
-}
+interface Settlement extends IssuerSettlementState {}
 
 /** Merchant quote IDs: opaque, short, URL-safe. */
 const SETTLE_QUOTE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -126,17 +127,24 @@ export class IssuerCore {
   private readonly spent = new Set<string>();
   /** SEC-03: settlements made with a quote, by merchantId + quoteId. */
   private readonly settlements = new Map<string, Settlement>();
+  /** Durable record of every successful settlement, including legacy no-quote relay settles. */
+  private settlementHistory: Settlement[] = [];
   private readonly tabs = new Map<string, Tab>();
   private readonly quotes = new Map<string, Quote>();
   private readonly payouts = new Map<string, SignedPayoutRecord[]>();
+  private inFlightPayoutState: InFlightPayoutRecord[] = [];
+  private merchantNonces: MerchantNonceRecord[] = [];
   private fundsHeld = 0;
   private unspentIssued = 0;
   private readonly log: (msg: string) => void;
+  private stateQueue: Promise<unknown> = Promise.resolve();
 
   private constructor(
     private readonly opts: IssuerOptions,
     tokenKeys: IssuerKeyPair,
     private readonly claimKeys: Ed25519KeyPair,
+    private readonly stateStore: IssuerStateStore,
+    state?: IssuerStateSnapshot,
   ) {
     this.name = opts.name ?? DEFAULT_ISSUER_NAME;
     this.now = opts.now ?? Date.now;
@@ -144,6 +152,7 @@ export class IssuerCore {
     if (opts.tlsPublicKey) this.publicKeys.tls = opts.tlsPublicKey;
     this.addEpoch(tokenKeys);
     this.log = opts.log ?? (() => {});
+    if (state) this.restoreState(state);
   }
 
   private get lifetimeMs(): number {
@@ -215,7 +224,86 @@ export class IssuerCore {
 
   /** Keys are made here, at start-up, inside the (future) enclave. */
   static async create(opts: IssuerOptions): Promise<IssuerCore> {
-    return new IssuerCore(opts, await generateIssuerKeys(), generateEd25519());
+    const stateStore = opts.stateStore ?? new MemoryIssuerStateStore();
+    const state = await stateStore.load();
+    return new IssuerCore(opts, await generateIssuerKeys(), generateEd25519(), stateStore, state);
+  }
+
+  /** Issuer clock for timestamp validation in the HTTP layer. */
+  currentTime(): number {
+    return this.now();
+  }
+
+  private snapshot(): IssuerStateSnapshot {
+    return {
+      version: 1,
+      spent: [...this.spent],
+      settlements: this.settlementHistory.map((s) => ({ ...s, tokens: [...s.tokens] })),
+      tabs: Object.fromEntries(this.tabs),
+      fundsHeld: this.fundsHeld,
+      unspentIssued: this.unspentIssued,
+      payouts: Object.fromEntries([...this.payouts].map(([id, history]) => [id, [...history]])),
+      inFlightPayouts: this.inFlightPayoutState.map((p) => ({ ...p })),
+      merchantNonces: this.merchantNonces.map((n) => ({ ...n })),
+    };
+  }
+
+  private restoreState(state: IssuerStateSnapshot) {
+    this.spent.clear();
+    for (const id of state.spent) this.spent.add(id);
+    this.settlements.clear();
+    this.settlementHistory = state.settlements.map((settlement) => ({ ...settlement, tokens: [...settlement.tokens] }));
+    for (const settlement of this.settlementHistory) {
+      if (settlement.quoteId) this.settlements.set(settlementKey(settlement.merchantId, settlement.quoteId), settlement);
+    }
+    this.tabs.clear();
+    for (const [id, tab] of Object.entries(state.tabs)) this.tabs.set(id, { ...tab });
+    this.payouts.clear();
+    for (const [id, history] of Object.entries(state.payouts)) this.payouts.set(id, [...history]);
+    this.inFlightPayoutState = state.inFlightPayouts.map((p) => ({ ...p }));
+    this.merchantNonces = state.merchantNonces.map((n) => ({ ...n }));
+    this.fundsHeld = state.fundsHeld;
+    this.unspentIssued = state.unspentIssued;
+  }
+
+  private withStateLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    const run = this.stateQueue.then(fn, fn);
+    this.stateQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async mutateState<T>(fn: (state: IssuerStateSnapshot) => T): Promise<T> {
+    return this.withStateLock(async () => {
+      const next = this.snapshot();
+      const result = fn(next);
+      // The journal fsync completes before we expose the mutation to callers.
+      await this.stateStore.append(next);
+      this.restoreState(next);
+      return result;
+    });
+  }
+
+  /** Persist a signed merchant request nonce before the route can acknowledge it. */
+  async consumeMerchantNonce(merchantId: string, nonce: string, timestamp: number, windowMs: number): Promise<void> {
+    await this.mutateState((state) => {
+      state.merchantNonces = state.merchantNonces.filter((n) => n.timestamp >= this.now() - windowMs);
+      if (state.merchantNonces.some((n) => n.merchantId === merchantId && n.nonce === nonce)) {
+        throw new IssuerError(409, 'merchant request nonce was already used');
+      }
+      state.merchantNonces.push({ merchantId, nonce, timestamp });
+    });
+  }
+
+  /** Current in-flight payout transfers, including raw signed bytes needed to safely resume. */
+  inFlightPayouts(): InFlightPayoutRecord[] {
+    return this.inFlightPayoutState.map((p) => ({ ...p }));
+  }
+
+  /** Called by the payout rail and fsynced before a newly signed transfer is sent. */
+  async persistInFlightPayouts(records: InFlightPayoutRecord[]): Promise<void> {
+    await this.mutateState((state) => {
+      state.inFlightPayouts = records.map((r) => ({ ...r }));
+    });
   }
 
   get rail(): TopUpRail {
@@ -309,9 +397,11 @@ export class IssuerCore {
       q.used = false;
       throw new IssuerError(402, `payment refused: ${(e as Error).message}`);
     }
-    // No await from here: account for the funds and the tokens together.
-    this.fundsHeld += redeemed.amountTokens;
-    this.unspentIssued += requests.length;
+    // Persist the funds/tokens together before releasing any blind signatures to the caller.
+    await this.mutateState((state) => {
+      state.fundsHeld += redeemed.amountTokens;
+      state.unspentIssued += requests.length;
+    });
     if (this.outstanding() > this.fundsHeld) {
       this.log(`warning: outstanding ${this.outstanding()} is above funds held ${this.fundsHeld} after a paid issue`);
     }
@@ -324,16 +414,20 @@ export class IssuerCore {
     this.checkBatch(requests);
     const epoch = this.current;
     this.checkSigningKey(requests, epoch);
-    if (this.outstanding() + requests.length > this.fundsHeld) {
-      throw new IssuerError(402, `refusing to issue beyond funds held (outstanding ${this.outstanding()}, funds ${this.fundsHeld}, asked ${requests.length})`);
-    }
-    // Reserve before the await so concurrent calls can't both pass the check.
-    this.unspentIssued += requests.length;
+    // Reserve in durable state before the await so concurrent calls and restarts cannot over-issue.
+    await this.mutateState((state) => {
+      const unpaid = Object.values(state.tabs).reduce((sum, tab) => sum + tab.earned - tab.paid, 0);
+      const outstanding = state.unspentIssued + unpaid;
+      if (outstanding + requests.length > state.fundsHeld) {
+        throw new IssuerError(402, `refusing to issue beyond funds held (outstanding ${outstanding}, funds ${state.fundsHeld}, asked ${requests.length})`);
+      }
+      state.unspentIssued += requests.length;
+    });
     try {
       const out = await epoch.issuer.issue(requests.map(fromB64u));
       return out.map(b64u);
     } catch (e) {
-      this.unspentIssued -= requests.length;
+      await this.mutateState((state) => { state.unspentIssued -= requests.length; });
       throw new IssuerError(400, `bad token request: ${(e as Error).message}`);
     }
   }
@@ -409,35 +503,39 @@ export class IssuerCore {
       if (replay) return replay;
     }
     const checked = await this.verify(serialized);
-    // SR7: verification is redone here, never trusted from an earlier /verify.
-    // From here to the end there is no await, so the check and the mark are atomic.
-    if (key) {
-      // A concurrent call with the same (merchantId, quoteId) may have settled during the await.
-      const replay = this.replay(key, fingerprint);
-      if (replay) return replay;
-    }
-    const ids = checked.tokens.map((t) => (t ? tokenId(t) : ''));
-    if (!checked.valid || ids.some((id) => this.spent.has(id))) {
-      const reason = checked.results.find((r) => !r.ok)?.reason ?? 'already spent';
-      throw new IssuerError(409, `tokens rejected: ${reason}`);
-    }
-    for (const id of ids) this.spent.add(id);
-    this.unspentIssued -= ids.length;
-    const tab = this.tabs.get(merchantId) ?? { earned: 0, paid: 0, seq: 0 };
-    tab.earned += ids.length;
-    tab.seq += 1;
-    this.tabs.set(merchantId, tab);
-    const result = signClaim(this.claimKeys.privateKey, {
-      v: 1,
-      issuer: this.name,
-      merchantId,
-      totalTokens: tab.earned,
-      totalRlusd: tokensToRlusd(tab.earned),
-      seq: tab.seq,
-      at: this.now(),
+    // SR7: verification is redone here, never trusted from an earlier /verify. The persistent
+    // mutation lock rechecks spent state after verification, and its append completes before ack.
+    return this.withStateLock(async () => {
+      if (key) {
+        const replay = this.replay(key, fingerprint);
+        if (replay) return replay;
+      }
+      const ids = checked.tokens.map((t) => (t ? tokenId(t) : ''));
+      if (!checked.valid || ids.some((id) => this.spent.has(id))) {
+        const reason = checked.results.find((r) => !r.ok)?.reason ?? 'already spent';
+        throw new IssuerError(409, `tokens rejected: ${reason}`);
+      }
+      const next = this.snapshot();
+      for (const id of ids) next.spent.push(id);
+      next.unspentIssued -= ids.length;
+      const tab = next.tabs[merchantId] ?? { earned: 0, paid: 0, seq: 0 };
+      tab.earned += ids.length;
+      tab.seq += 1;
+      next.tabs[merchantId] = tab;
+      const result = signClaim(this.claimKeys.privateKey, {
+        v: 1,
+        issuer: this.name,
+        merchantId,
+        totalTokens: tab.earned,
+        totalRlusd: tokensToRlusd(tab.earned),
+        seq: tab.seq,
+        at: this.now(),
+      });
+      next.settlements.push({ merchantId, ...(quoteId ? { quoteId } : {}), fingerprint: fingerprint!, tokens: [...serialized].sort(), result });
+      await this.stateStore.append(next);
+      this.restoreState(next);
+      return result;
     });
-    if (key && quoteId && fingerprint) this.settlements.set(key, { merchantId, quoteId, fingerprint, result });
-    return result;
   }
 
   /** The original claim for a repeat settle, undefined if the quote is not settled yet. Throws for other tokens. */
@@ -528,34 +626,38 @@ export class IssuerCore {
    * Call only after the transfer is confirmed. With a txRef, a signed payout record is added to
    * the merchant's history (GET /payouts), so the merchant can match claims to on-chain transfers.
    */
-  markPaid(lines: PaidLine[]) {
-    for (const l of lines) {
-      const t = this.tabs.get(l.merchantId);
-      if (!t) continue;
-      if (!Number.isInteger(l.amountTokens) || l.amountTokens <= 0) continue;
-      t.paid += l.amountTokens;
-      this.fundsHeld -= l.amountTokens;
-      if (l.txRef === undefined) continue;
-      const history = this.payouts.get(l.merchantId) ?? [];
-      history.push(
-        signPayoutRecord(this.claimKeys.privateKey, {
-          v: 1,
-          issuer: this.name,
-          merchantId: l.merchantId,
-          amountTokens: l.amountTokens,
-          amountRlusd: tokensToRlusd(l.amountTokens),
-          txRef: l.txRef,
-          ...(l.payTo ? { payTo: l.payTo } : {}),
-          ...(l.token ? { token: l.token } : {}),
-          ...(l.chainId !== undefined ? { chainId: l.chainId } : {}),
-          paidTotalTokens: t.paid,
-          claimSeq: t.seq,
-          claimTotalTokens: t.earned,
-          at: this.now(),
-        }),
-      );
-      this.payouts.set(l.merchantId, history);
-    }
+  async markPaid(lines: PaidLine[], remainingInFlight = this.inFlightPayoutState): Promise<void> {
+    await this.mutateState((state) => {
+      state.inFlightPayouts = remainingInFlight.map((p) => ({ ...p }));
+      for (const l of lines) {
+        const tab = state.tabs[l.merchantId];
+        if (!tab || !Number.isInteger(l.amountTokens) || l.amountTokens <= 0) continue;
+        const amountTokens = Math.min(l.amountTokens, tab.earned - tab.paid);
+        if (amountTokens <= 0) continue;
+        tab.paid += amountTokens;
+        state.fundsHeld -= amountTokens;
+        if (l.txRef === undefined) continue;
+        const history = state.payouts[l.merchantId] ?? [];
+        history.push(
+          signPayoutRecord(this.claimKeys.privateKey, {
+            v: 1,
+            issuer: this.name,
+            merchantId: l.merchantId,
+            amountTokens,
+            amountRlusd: tokensToRlusd(amountTokens),
+            txRef: l.txRef,
+            ...(l.payTo ? { payTo: l.payTo } : {}),
+            ...(l.token ? { token: l.token } : {}),
+            ...(l.chainId !== undefined ? { chainId: l.chainId } : {}),
+            paidTotalTokens: tab.paid,
+            claimSeq: tab.seq,
+            claimTotalTokens: tab.earned,
+            at: this.now(),
+          }),
+        );
+        state.payouts[l.merchantId] = history;
+      }
+    });
   }
 
   /** Signed payout records for one merchant, oldest first. */

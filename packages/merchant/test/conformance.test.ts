@@ -26,7 +26,7 @@ let t = Date.now();
 const now = () => t;
 
 beforeAll(async () => {
-  issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
+  issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
   merchant = new Merchant({ merchantId: 'm-conf', issuerUrl: issuer.url, verifier: verifier(), log: quiet, now, quoteTtlMs: 60_000 });
   url = await merchant.start();
 });

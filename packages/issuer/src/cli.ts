@@ -1,5 +1,7 @@
 import { payoutConfigFromEnv } from './payout-config';
 import { XrplEvmTransferRail } from './rail-xrpl-evm';
+import { FileIssuerStateStore } from './state-store';
+import { merchantAuthConfigFromEnv } from './merchant-auth';
 import { AttestationMode, startIssuer } from './start';
 
 const attestation = (process.env.ATTESTATION ?? 'mock') as AttestationMode;
@@ -7,6 +9,7 @@ if (attestation !== 'mock' && attestation !== 'confidential-space') {
   throw new Error(`ATTESTATION must be mock or confidential-space, got ${attestation}`);
 }
 const tls = process.env.ISSUER_TLS === '1';
+const host = process.env.ISSUER_HOST ?? '0.0.0.0';
 
 // ISSUER_RAIL=xrpl-evm: users pay RLUSD on XRPL EVM from their own wallet (needs ISSUER_PAYOUT, RLUSD_ADDRESS).
 const evm = process.env.ISSUER_RAIL === 'xrpl-evm';
@@ -22,7 +25,7 @@ const payout = payoutConfigFromEnv(process.env);
 delete process.env.ISSUER_PAYOUT_PRIVATE_KEY;
 
 const issuer = await startIssuer({
-  host: process.env.ISSUER_HOST ?? '0.0.0.0',
+  host,
   port: Number(process.env.ISSUER_PORT ?? 4001),
   attestation,
   audience: process.env.ATTESTATION_AUDIENCE,
@@ -34,6 +37,10 @@ const issuer = await startIssuer({
   payoutRail: payout.rail,
   payoutCaps: payout.caps,
   adminToken: process.env.ISSUER_ADMIN_TOKEN || undefined,
+  merchantAuth: merchantAuthConfigFromEnv(process.env, host, attestation),
+  // The current Confidential Space image does not configure this variable and stays in-memory.
+  // Set it only for local/non-enclave runs whose filesystem survives process restarts.
+  stateStore: process.env.ISSUER_STATE_FILE ? new FileIssuerStateStore(process.env.ISSUER_STATE_FILE) : undefined,
   corsOrigins: (process.env.ISSUER_CORS_ORIGINS ?? 'http://localhost:1420,tauri://localhost').split(','),
 });
 const addr = issuer.server.address();

@@ -77,7 +77,7 @@ async function close(server: HttpsServer): Promise<void> {
 let issuer: Awaited<ReturnType<typeof import('@wraps/issuer').startIssuer>>;
 beforeAll(async () => {
   const { startIssuer } = await import('@wraps/issuer');
-  issuer = await startIssuer({ log: () => {}, payoutIntervalMs: 3_600_000 });
+  issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: () => {}, payoutIntervalMs: 3_600_000 });
 });
 afterAll(async () => issuer?.close());
 afterEach(() => vi.useRealTimers());

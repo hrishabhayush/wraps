@@ -20,6 +20,7 @@
     "payout:dry-run": "tsx packages/issuer/src/payout-cli.ts dry-run",
     "payout:once": "tsx packages/issuer/src/payout-cli.ts once",
     "merchant": "tsx packages/merchant/src/cli.ts",
+    "merchant:auth-key": "tsx scripts/merchant-auth-key.ts",
     "agent": "tsx packages/agent/src/cli.ts",
     "spybot": "tsx packages/spybot/src/cli.ts",
     "sim": "tsx packages/spybot/src/sim-cli.ts",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util';
 import { performance } from 'node:perf_hooks';
-import { MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
+import { MockAttestationVerifier, b64u, generateEd25519, mockPcrs } from '@wraps/attestation';
 import { Merchant } from '@wraps/merchant';
 import { startIssuer } from '@wraps/issuer';
 import { MockTopUpWallet, PrivatePayClient } from '@wraps/sdk';
@@ -35,8 +35,14 @@ if (intervals.some((n) => !Number.isFinite(n) || n <= 0)) throw new Error('--pay
 const quiet = () => {};
 const verifier = new MockAttestationVerifier({ expectedPcrs: mockPcrs('issuer') });
 const caps = { perCallTokens: 5, dailyTokens: 10_000, maxTopUpTokens: 20 };
-const issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
-const merchant = new Merchant({ issuerUrl: issuer.url, verifier, log: quiet, injectPrompt: false });
+const merchantId = 'merchant-research-data';
+const merchantAuthKey = generateEd25519();
+const issuer = await startIssuer({
+  log: quiet,
+  payoutIntervalMs: 3_600_000,
+  merchantAuth: { publicKeys: { [merchantId]: b64u(merchantAuthKey.publicKeyBytes) } },
+});
+const merchant = new Merchant({ merchantId, authPrivateKey: merchantAuthKey.privateKey, issuerUrl: issuer.url, verifier, log: quiet, injectPrompt: false });
 
 try {
   const merchantUrl = await merchant.start();

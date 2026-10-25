@@ -350,7 +350,7 @@ describe('SR8: settle only explicitly allowed, unambiguous on-chain semantics [U
 describe('Flaw classes [FreeRide] at the issuer', () => {
   let issuer: RunningIssuer;
   beforeAll(async () => {
-    issuer = await startIssuer({ log: () => {}, payoutIntervalMs: 3_600_000 });
+    issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: () => {}, payoutIntervalMs: 3_600_000 });
   });
   afterAll(() => issuer.close());
 
@@ -459,7 +459,7 @@ describe('SEC-03: idempotent settle and merchant-scoped status (cross-merchant d
   });
 
   it('SEC-03: /settle/status over HTTP never reveals the other merchant, its quote or its claim', async () => {
-    const issuer = await startIssuer({ log: () => {}, payoutIntervalMs: 3_600_000 });
+    const issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: () => {}, payoutIntervalMs: 3_600_000 });
     try {
       const post = (path: string, body: unknown) =>
         fetch(`${issuer.url}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

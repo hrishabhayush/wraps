@@ -74,5 +74,23 @@ created for this rehearsal, including its dedicated firewall rules; leave the pr
 production WireGuard firewall rule untouched. Follow the project's separate post-hackathon
 cleanup plan before deleting shared images, buckets, keys, or project resources.
 
-INF-22 remains a day-of operational task until the three live runs have passed and their records
-are complete.
+## Rehearsal status (2026-10-25)
+
+Three isolated Confidential Space canary runs passed on the same running issuer and relay
+generation. The runs verified the image digests, both attestations, TLS pins, enforced merchant
+authentication in the canary, issuer traffic through the relay, and the merchant's forwarded relay
+IP. The top-up and payout rails were mocked and a temporary merchant key was used. Full outcomes,
+canary digests, the wrong-digest rejection, and the separate WireGuard peer check are recorded in
+the DEM-06 rehearsal update (PR #58).
+
+These runs validate the rehearsal steps, but do not certify the production VMs. A read-only
+preflight against the production endpoints using the current main `expected.json` verified both
+production image digests and attestations, but failed because the issuer reported
+`merchantAuth: legacy-open` and no local live merchant signing key was configured. The INF-31
+candidate `expected.json` also names different image digests from those currently running in
+production. Do not change expected digests just to accept a running image; build and deploy the
+reviewed candidate, configure its intended merchant key map, then require a green preflight before
+the production demo.
+
+INF-22 remains a day-of operational task. The canary rehearsals are recorded; the production start
+and run still need to pass on the reviewed deployment without restarting either workload.

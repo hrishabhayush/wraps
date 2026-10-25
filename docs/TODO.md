@@ -49,7 +49,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ### Run and demo day
 - [x] **INF-20** Logs: Confidential Space production images send container logs to Cloud Logging only if redirect is on. Never log tokens, keys, IPs or merchant IDs together.
 - [ ] **INF-21** Demo host firewall: on the machine that runs the agent, allow outbound traffic only to the relay, so nothing leaks around the tunnel.
-- [~] **INF-22** Demo day: start the VMs early and **don't restart them**. Keys and the spent list live in memory. Readiness runbook in draft PR #84; live start and three recorded runs remain day-of work.
+- [~] **INF-22** Demo day: start the VMs early and **don't restart them**. Keys and the spent list live in memory. Readiness runbook in draft PR #84; three isolated-canary rehearsals are recorded in DEM-06 PR #58. Production start/run remains pending merchant auth setup and reviewed image deployment.
 - [ ] **INF-23** Fallback: run the same images as normal containers with mock attestation if Confidential Space breaks. Say so on stage if used.
 
 ### After the hackathon

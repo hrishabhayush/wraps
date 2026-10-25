@@ -1,6 +1,8 @@
 import { payoutConfigFromEnv } from './payout-config';
 import { XrplEvmTransferRail } from './rail-xrpl-evm';
-import { FileIssuerStateStore } from './state-store';
+import { FileIssuerStateStore, type IssuerStateStore } from './state-store';
+import { GcsIssuerStateStore } from './gcs-state-store';
+import { createConfidentialSpaceAccessTokenProvider } from './confidential-secret';
 import { assertConfidentialSpaceMerchantAuth, merchantAuthConfigFromEnv } from './merchant-auth';
 import { readConfidentialSecret } from './confidential-secret';
 import { AttestationMode, startIssuer } from './start';
@@ -41,6 +43,28 @@ if (relaySecretVersion) {
 const merchantAuth = merchantAuthConfigFromEnv(merchantAuthEnv, host, attestation);
 if (attestation === 'confidential-space') assertConfidentialSpaceMerchantAuth(merchantAuth);
 
+let stateStore: IssuerStateStore | undefined;
+if (attestation === 'confidential-space') {
+  if (process.env.ISSUER_STATE_FILE !== undefined) {
+    throw new Error('ISSUER_STATE_FILE is local-only; Confidential Space requires encrypted Cloud Storage state');
+  }
+  const bucket = process.env.ISSUER_STATE_GCS_BUCKET?.trim();
+  const kmsKey = process.env.ISSUER_STATE_KMS_KEY?.trim();
+  const workloadIdentityProvider = process.env.GCP_WIF_PROVIDER?.trim();
+  if (!bucket || !kmsKey || !workloadIdentityProvider) {
+    throw new Error('Confidential Space requires ISSUER_STATE_GCS_BUCKET, ISSUER_STATE_KMS_KEY, and GCP_WIF_PROVIDER');
+  }
+  const getAccessToken = createConfidentialSpaceAccessTokenProvider(workloadIdentityProvider);
+  stateStore = new GcsIssuerStateStore({
+    bucket,
+    kmsKey,
+    getAccessToken,
+    objectPrefix: process.env.ISSUER_STATE_GCS_PREFIX,
+  });
+} else {
+  stateStore = process.env.ISSUER_STATE_FILE ? new FileIssuerStateStore(process.env.ISSUER_STATE_FILE) : undefined;
+}
+
 const issuer = await startIssuer({
   host,
   port: Number(process.env.ISSUER_PORT ?? 4001),
@@ -55,9 +79,7 @@ const issuer = await startIssuer({
   payoutCaps: payout.caps,
   adminToken: process.env.ISSUER_ADMIN_TOKEN || undefined,
   merchantAuth,
-  // The current Confidential Space image does not configure this variable and stays in-memory.
-  // Set it only for local/non-enclave runs whose filesystem survives process restarts.
-  stateStore: process.env.ISSUER_STATE_FILE ? new FileIssuerStateStore(process.env.ISSUER_STATE_FILE) : undefined,
+  stateStore,
   corsOrigins: (process.env.ISSUER_CORS_ORIGINS ?? 'http://localhost:1420,tauri://localhost').split(','),
 });
 const addr = issuer.server.address();

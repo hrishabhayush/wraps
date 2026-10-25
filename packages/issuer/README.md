@@ -27,8 +27,8 @@ in one batch, mixed across all customers. Two rails exist:
   checks its receipt by hash first, and rebroadcasts the same signed bytes if it is not mined. No
   new transfer is signed for that merchant while one is in flight, so no merchant is paid twice.
 - In-flight transactions are stored with issuer state before they are sent. A file-backed local
-  run can resume the same signed transaction after restart. The default in-memory store, including
-  the current Confidential Space image, cannot recover state after a process restart.
+  run or the Confidential Space Cloud Storage store can resume the same signed transaction after
+  restart. A process using only the in-memory store cannot recover it.
 - The issuer checks that the RPC reports the configured chain ID before it sends.
 
 Each confirmed payout adds a signed record to the merchant's history:
@@ -84,20 +84,55 @@ Confidential Space, the issuer fails startup unless at least one valid merchant 
 loaded. SDK consumers retain the mode and the live preflight displays it. This mode field is
 runtime-reported and not covered by the key attestation.
 
-Issuer state uses `MemoryIssuerStateStore` unless a store is passed to `startIssuer`. For local or
-non-enclave runs, set `ISSUER_STATE_FILE=./data/issuer-state.jsonl` to use an append-only,
-hash-chained journal. The journal fsyncs state before acknowledging changes and detects tampering,
-partial truncation and rollback against its monotonic head marker. The current Confidential Space
-VM has no persistent disk, so its image intentionally stays on the in-memory store. Durable state
-there needs encrypted and integrity-protected storage with a key released only to the attested
-workload, such as Cloud KMS with an attestation-bound policy. The local head marker detects
-truncation or rollback while the marker remains intact; replacing both local files together needs
-an external monotonic anchor.
+`startIssuer()` uses `MemoryIssuerStateStore` by default in local/test runs. For local or non-enclave
+runs, set `ISSUER_STATE_FILE=./data/issuer-state.jsonl` to use the append-only, hash-chained file
+journal. It fsyncs each complete state snapshot before acknowledging a mutation and detects
+tampering, partial truncation, and rollback against its local head marker.
+
+The Confidential Space CLI requires the encrypted `GcsIssuerStateStore`; it refuses to start in
+memory-only mode. It compresses each state snapshot, encrypts it with a fresh AES-256-GCM data key,
+and wraps that data key with Cloud KMS. Only ciphertext and the wrapped data key are stored in
+Cloud Storage. The WIF token is bound to the production issuer image digest. A new snapshot is a
+new immutable object with a create-only precondition, so two instances loaded from the same
+sequence cannot both acknowledge a write. The workload requires `storage.objectViewer` and
+`storage.objectCreator` on a dedicated bucket, plus `cloudkms.cryptoKeyEncrypterDecrypter` on one
+symmetric KMS key. It does not need permission to delete or overwrite state objects.
+
+Before the first Confidential Space deployment, create a Standard bucket in `us-central1` with
+uniform bucket-level access and public access prevention, and a symmetric `ENCRYPT_DECRYPT` Cloud
+KMS key. Configure these non-secret resource names in the immutable issuer image (not changeable
+TEE metadata):
+
+| Variable | Meaning |
+| --- | --- |
+| `ISSUER_STATE_GCS_BUCKET` | Dedicated bucket for encrypted issuer snapshots. |
+| `ISSUER_STATE_GCS_PREFIX` | Optional object prefix; defaults to `issuer-state/v1`. Use one prefix for one issuer. |
+| `ISSUER_STATE_KMS_KEY` | Full Cloud KMS cryptoKey resource name, for example `projects/wraps-hack/locations/us-central1/keyRings/issuer-state/cryptoKeys/state`. |
+| `GCP_WIF_PROVIDER` | Global Workload Identity Pool provider resource used by the issuer's attested token source. |
+
+The provider must accept the Confidential Space issuer `https://confidentialcomputing.googleapis.com/`
+with audience `https://sts.googleapis.com` and require production secure-boot, `STABLE`,
+`disabled-since-boot`, and the final issuer image digest. Bind its exact digest principal directly
+to the bucket and KMS key; do not grant the VM service account broad storage or KMS roles. Enable
+`storage.googleapis.com` and `cloudkms.googleapis.com`. Use a dedicated bucket and do not configure
+a lifecycle rule that might delete the newest snapshot. An administrator with bucket or IAM
+control can still delete recent snapshots or redirect access; the workload identity itself cannot
+delete or overwrite them. There is no external monotonic anchor against a privileged cloud
+administrator restoring an older snapshot.
+
+The snapshot log is append-only and grows with issuer mutations. Cloud Storage Standard storage in
+`us-central1` is currently listed at about `$0.02/GiB-month`; regional Class A operations are
+`$0.005/1,000` and Class B are `$0.0004/1,000`. Software Cloud KMS has an active key-version charge
+of about `$0.06/month` and cryptographic operations at `$0.03/10,000`; this store uses one KMS
+encrypt per mutation and one decrypt at startup. Check [Cloud Storage pricing](https://cloud.google.com/storage/pricing)
+and [Cloud KMS pricing](https://cloud.google.com/kms/pricing) before production rollout. Cost grows
+with the number and compressed size of retained snapshots.
 
 Issuer token and claim signing keys remain memory-only. A restart creates new keys; previously
 issued tokens are then unknown to the issuer, while persisted tabs, settlement records and payout
-transactions remain in a file-backed local run. Old signed claims and payout records do not verify
-under the new claim key.
+transactions remain in the configured state store. Old signed claims and payout records do not
+verify under the new claim key. The state log preserves ledger and payout accounting, not the
+issuer's token-signing key epochs. `/health` and `/attestation` report the active `statePersistence` mode (`memory`, `file-journal`, or `gcs-kms-encrypted`) so operators can check which backend started.
 
 ### Environment variables
 
@@ -129,7 +164,10 @@ For a secret-free testnet setup template, start with [`funder.env.example`](./fu
 | `GCP_WIF_PROVIDER` | none | Global Workload Identity Pool provider resource used to exchange the Confidential Space token for direct Secret Manager access. |
 | `ISSUER_RELAY_MERCHANT_ID` | `relay` | Merchant ID allowed to use `ISSUER_RELAY_SETTLE_KEY`. |
 | `ISSUER_DEV_MERCHANT_AUTH` | `0` | Local-only merchant auth bypass. Requires a loopback host and non-Confidential-Space attestation. |
-| `ISSUER_STATE_FILE` | none | Optional append-only file store for local/non-enclave runs. Omitted in the current Confidential Space image; default is memory. |
+| `ISSUER_STATE_FILE` | none | Optional append-only file store for local/non-enclave runs. Rejected in Confidential Space. |
+| `ISSUER_STATE_GCS_BUCKET` | none | Required in Confidential Space; dedicated bucket for encrypted state snapshots. |
+| `ISSUER_STATE_GCS_PREFIX` | `issuer-state/v1` | Object prefix for the one issuer state stream. |
+| `ISSUER_STATE_KMS_KEY` | none | Required in Confidential Space; symmetric Cloud KMS cryptoKey resource used to wrap fresh snapshot data keys. |
 | `ISSUER_URL` | `http://127.0.0.1:4001` | Used by the payout scripts below. |
 
 ### Scripts

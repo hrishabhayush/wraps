@@ -234,6 +234,10 @@ export class IssuerCore {
     return this.now();
   }
 
+  get statePersistenceMode(): string {
+    return this.stateStore.mode ?? 'custom';
+  }
+
   private snapshot(): IssuerStateSnapshot {
     return {
       version: 1,

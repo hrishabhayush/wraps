@@ -1,5 +1,6 @@
 import { createHash, randomBytes, X509Certificate } from 'node:crypto';
 import { request as httpsRequest } from 'node:https';
+import type { TLSSocket } from 'node:tls';
 import type { AttestationVerifier } from '@wraps/attestation';
 import { hashPublicKeys } from '@wraps/attestation';
 import { encodeAuthorization, type Token } from '@wraps/tokens';
@@ -19,7 +20,7 @@ export interface VerifiedWireGuardReceipt {
 }
 
 export function isVerifiedWireGuardReceipt(value: unknown): value is VerifiedWireGuardReceipt {
-  return typeof value === 'object' && value !== null && (value as VerifiedWireGuardReceipt)[verifiedReceiptBrand] === true;
+  return typeof value === 'object' && value !== null && Reflect.get(value, verifiedReceiptBrand) === true;
 }
 
 /** Fetch and verify a fresh WireGuard identity receipt before creating a client profile. */
@@ -29,7 +30,7 @@ export async function fetchVerifiedWireGuardReceipt(
   transport: typeof fetch = fetch,
 ): Promise<VerifiedWireGuardReceipt> {
   const url = new URL(attestationUrl);
-  if (url.protocol !== 'https:') throw new TypeError('WireGuard attestation URL must use HTTPS');
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new TypeError('WireGuard attestation URL must use HTTP or HTTPS');
   if (!url.pathname.endsWith('/wireguard-attestation')) {
     url.pathname = `${url.pathname.replace(/\/$/, '')}/wireguard-attestation`;
   }
@@ -191,9 +192,10 @@ export async function registerWireGuardPeer(
       });
     });
     req.once('socket', (socket) => {
-      socket.once('secureConnect', () => {
+      const tlsSocket = socket as TLSSocket;
+      tlsSocket.once('secureConnect', () => {
         try {
-          const cert = socket.getPeerCertificate(true);
+          const cert = tlsSocket.getPeerCertificate(true);
           if (!cert.raw) throw new Error('relay did not present a certificate');
           const actualSpki = new X509Certificate(cert.raw).publicKey.export({ type: 'spki', format: 'der' });
           if (!Buffer.from(actualSpki).equals(expectedSpki)) throw new Error('relay TLS key does not match verified attestation');

@@ -1,56 +1,53 @@
-# Status: issuer on Confidential Space
+# Status: issuer and relay on Confidential Space
 
-Checked live on Oct 24, 2026 (US time).
+Checked live on Oct 25, 2026 (US time), after the relay attestation hardening deployment.
 
 ## What works
 
-- The issuer image builds with Cloud Build and runs in Confidential Space on `n2d-standard-2` with AMD SEV.
-- Image `us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea`, built from commit `1df3bee`.
-- The issuer serves HTTPS on port 443. The certificate is self-signed, and its key is made in the VM at start-up.
-- `GET /attestation?nonce=` returns a token that Google Cloud Attestation signed. The token has our audience and both nonces: the client nonce and the hash of the token, claim and TLS keys.
-- The SDK verifier checks the RS256 signature against Google's JWKS, and the issuer, audience, expiry, hardware, OS, debug state, support attributes, image digest, nonce and key hash.
-- The SDK and the merchant check that the TLS key on the connection is the attested key. Then they pin it. A different key closes the socket before the request goes out.
-- `npm run demo:gcp` ran against the live issuer: the merchant and the agent on a laptop, a top-up, 8 purchases, 8 signed claims and a signed reserves statement, all verified.
+- Issuer and relay images run on Google Confidential Space AMD SEV VMs using `n2d-standard-2`.
+- Both deployments are pinned by the image digest in `expected.json`; the workload VMs use the `wraps` tag, `project=wraps` label, and 12-hour stop limit.
+- The issuer creates its token, claim, and TLS keys in memory. The relay creates its TLS key and self-signed certificate in memory.
+- The relay startup fetches and verifies the issuer's live attestation, pins the issuer TLS SPKI, then starts the TLS CONNECT listener and nonce-bound attestation listener.
+- The relay attestation listener is limited to 60 valid receipt requests per client IP and 120 total per minute, with at most 4 provider calls in flight. A receipt request returns 503 after 5 seconds if Google attestation has not completed; the in-flight slot stays occupied until the provider call settles.
+- SDK-02 verifies the relay receipt and TLS key, reaches the issuer through the restricted tokenless CONNECT route, pins the issuer TLS key, and sends metered merchant tunnels through the relay.
+
+## Current image references
+
+| Role | Image | Result |
+|---|---|---|
+| Issuer | `us-central1-docker.pkg.dev/wraps-hack/wraps/issuer@sha256:892a2b1a22c5a911c221ce7f31aee477f33bf986083111c843935213dbc6fbea` | Verified in Confidential Space; `GCP_AMD_SEV`, `STABLE`, production debug state, expected digest. |
+| Relay | `us-central1-docker.pkg.dev/wraps-hack/wraps/relay@sha256:016cbdb68f3faa8e6653988cf7e3bd72057ff689e58348c6cb4484f8ff3fa303` | Verified in Confidential Space; receipt's image digest and TLS SPKI matched `expected.json`. |
 
 ## Live results
 
-| Check | VM | Result |
-|---|---|---|
-| `npm run verify:gcp` | `wraps-issuer-debug` (debug image) | REFUSED (DEBUG_MODE): `dbgstat` is `enabled`. The token had no support attributes. |
-| `npm run verify:gcp` | `wraps-issuer` (production image) | VERIFIED: `hwmodel GCP_AMD_SEV`, `swname CONFIDENTIAL_SPACE`, `swversion 261000`, `dbgstat disabled-since-boot`, `support [LATEST, STABLE, USABLE]`, image digest matches |
-| `npm run demo:gcp` | `wraps-issuer` | Full flow passed. Claims and reserves verify against the attested claim key. |
-| `demo:gcp` with a wrong digest in `expected.json` | `wraps-issuer` | REFUSED (IMAGE_MISMATCH) before any top-up or payment |
-| `npm run merchant` and `npm run agent` | `wraps-issuer` | Both verified the token and pinned the TLS key |
+| Check | Result |
+|---|---|
+| Issuer `GET /health` | HTTP 200. |
+| `npm run verify:gcp -- https://34.56.67.232` | VERIFIED: AMD SEV, `STABLE`, `dbgstat=disabled-since-boot`, and expected issuer image digest. The address was ephemeral and may change after stopping the VM. |
+| Relay `GET /attestation?nonce=...` on port 8080 | Returned a nonce-bound Google Confidential Space receipt for the pinned relay image. |
+| SDK live flow | Verified relay and issuer attestations, pinned the issuer key through the relay, completed a mock top-up, and sent an HTTPS request through a metered tunnel. Relay token spend was 1. |
+| Full repository validation | `npm run typecheck` and `npm test` passed: 22 main test files / 213 tests and 4 demo test files / 24 tests. |
 
-Both VMs are **stopped**, not deleted. Their disks remain.
+All workload VMs are now stopped. `wraps-issuer-debug` remains terminated rather than deleted. The reserved relay IP `34.68.188.111` remains attached to the stopped `wraps-relay` VM for redeployment. Stopped VM boot disks and Artifact Registry images remain and can incur storage charges.
 
 ## What is still mocked
 
-- The AP4M top-up rail (`MockTopUpRail`). No real voucher or RLUSD.
-- Merchant payouts (`MockPayoutRail`).
-- There is no relay. `packages/relay` does not exist, so there is no relay image.
+- AP4M top-up signing/redemption and merchant payouts. The live SDK smoke test used `MockTopUpWallet`; no real RLUSD or voucher was used.
+- The relay verifier is tested with a mock provider in unit tests. The live relay used Google Confidential Space attestation.
 
 ## Trade-offs and limits
 
-- **Trust in Google.** The claims rest on AMD SEV hardware and on Google Cloud Attestation. Google checks the hardware evidence and signs the token. We do not check AMD's report ourselves. Google, the cloud operator, is in the trusted base.
-- **AMD SEV, not SEV-SNP.** The Confidential Space docs list SEV and TDX. They do not list SEV-SNP, so `deploy.sh` uses SEV. The project can launch SEV-SNP, but we did not test Confidential Space on it.
-- **The image is not reproducible byte for byte.** The base image is pinned by digest and npm installs from the lockfile. But a Docker build stamps file times, so a rebuild can give a different digest. Anyone who wants to check the code must trust our build or rebuild it and compare. Reproducible builds are future work.
-- **Keys die with the VM.** A stopped VM restarts with new keys and a new spent list, and gets a new IP. Do not restart during the demo.
-- **The TLS name is not checked.** The SDK pins the key, not a DNS name. That is the point: no CA is involved.
-- **The first connection is unpinned.** The SDK sends only the nonce on it, then compares the connection's key with the attested key. Nothing that matters (payments, tokens) goes out before that check.
-- **The relay transport.** Over https, the SDK opens TLS connections to the issuer itself. A future relay tunnel (SDK-02) must carry these TLS connections. For now `transport` is used only for http issuers and for non-issuer URLs.
-- **Logs.** The production image sends no container logs out (`log_redirect=debugonly`). The launcher still writes its own logs to the serial console.
-- **Attestation rate.** Google Cloud Attestation allows 5 token requests per second per project per region. The issuer also limits `/attestation` to 60 per IP per minute.
+- **Trust in Google.** Google Cloud Attestation checks the hardware evidence and signs the token. The SDK checks Google's signature and claims; it does not independently verify AMD's report.
+- **AMD SEV.** The Confidential Space image uses SEV, not SEV-SNP.
+- **Image reproducibility.** Base images are pinned by digest and dependencies install from the lockfile, but build timestamps can make rebuilt images differ.
+- **Ephemeral keys and issuer IP.** Stopping and restarting a VM changes its in-memory keys and ephemeral external IP. Redeploy the issuer first, then deploy the relay with the issuer's current IP. Keep the relay's reserved address attached.
+- **Attestation timeout.** A timed-out Google provider call is not cancellable through the current provider interface. Its concurrency slot remains held until it settles, preventing unlimited calls but potentially reducing availability if calls hang.
+- **Public ingress.** The firewall allows source `0.0.0.0/0` to TCP 443 and 8080 on VMs with the `wraps` target tag. The public attestation endpoint is nonce-bound and rate-limited.
+- **Logs.** Production container logs are not redirected; the Confidential Space launcher still writes its own serial-console logs.
+- **Budget.** The repository records a $20 project budget alert. The budget resource itself was not rechecked during this deployment.
 
-## Costs incurred
+## Next operations
 
-- `wraps-issuer-debug` ran about 7 minutes. `wraps-issuer` ran about 5 minutes. Both are `n2d-standard-2` with AMD SEV. Together that is well under $0.05.
-- One Cloud Build run, 32 seconds, inside the free tier.
-- Two stopped 11 GB `pd-standard` disks: about $0.90 per month in total until someone deletes them.
-- Artifact Registry: one image of about 80 MB, a few cents per month.
-
-## Next steps
-
-- Delete `wraps-issuer-debug` when nobody needs it (`gcloud compute instances delete wraps-issuer-debug --zone us-central1-a`).
-- Before the demo, run `infra/gcp/deploy.sh issuer`, then `npm run verify:gcp`. The agent and merchant read the new IP from `infra/gcp/.state/issuer.ip`.
-- Relay: add `infra/gcp/relay.Dockerfile` once `packages/relay` exists. The scripts already take `relay`.
+- Before a demo, redeploy the issuer, verify its new IP, then deploy the relay with that issuer URL and the reserved relay IP. Verify both attestations before using the SDK.
+- Stop both VMs after use with `infra/gcp/stop.sh`.
+- Delete the debug VM and its disk when no longer needed. Remove old Artifact Registry images when their digests are no longer referenced.

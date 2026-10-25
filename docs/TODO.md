@@ -20,7 +20,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **INF-07** Firewall rule `wraps-allow-443` for VMs tagged `wraps`.
 
 ### Images and deploy (agent working on this)
-- [~] **INF-08** Dockerfiles for issuer and relay. Pin base images by digest, use lockfiles.
+- [x] **INF-08** Dockerfiles for issuer and relay. Pin base images by digest, use lockfiles.
 - [~] **INF-09** Build with Cloud Build, push to the registry, print the image digest. Write digests to `infra/gcp/expected.json`, which the SDK reads.
 - [~] **INF-10** `deploy.sh <issuer|relay> [--debug]`: Confidential Space VM, `tee-image-reference` pinned by digest, service account, tag `wraps`, 12-hour max run time that stops the VM, label `project=wraps`. Plus `stop.sh` and `status.sh`.
 - [~] **INF-11** First deploy with the debug image to read logs, then the production image for the demo.
@@ -74,12 +74,12 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 - [x] **RLY-01** HTTPS CONNECT proxy. HTTPS only; loopback by default, public destination IPs only, raw TCP tunnel.
 - [x] **RLY-02** Charges one blind token per 10,000,000 tunnel bytes, settled through the issuer. Partial blocks are charged; tunnels close at quota. (Codex)
-- [ ] **RLY-03** Wire into the relay enclave (INF-10 to INF-14).
+- [x] **RLY-03** Wire into the relay enclave (INF-10 to INF-14). (Codex)
 
 ## Lane 5: Agent and SDK (folders `packages/sdk`, `packages/agent`)
 
 - [~] **SDK-01** Verify issuer and relay attestations (mock verifier first, then the Confidential Space verifier against `infra/gcp/expected.json`). Reject debug images, wrong image digests, wrong keys, reused nonces. Mock verifier done; Confidential Space verifier in progress.
-- [ ] **SDK-02** Tunnel through the relay, pinned to its attested key.
+- [x] **SDK-02** Tunnel through the relay, pinned to its attested key.
 - [~] **SDK-03** Top-up: hit the issuer's 402, sign the AP4M voucher, receive and unblind tokens. (core agent) Mock wallet done; the real AP4M voucher is PAY-03.
 - [x] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment. (core agent)
 - [x] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning. (core agent)

@@ -1,16 +1,30 @@
 import type { LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
 import { isIP, createConnection, type Socket } from 'node:net';
 import { Transform, type Duplex } from 'node:stream';
+import type { AttestationProvider } from '@wraps/attestation';
 import { parseAuthorization, serializeToken, tokenId } from '@wraps/tokens';
 import { BandwidthMeter, HttpRelayIssuer, MAX_TOKENS_PER_TUNNEL, type RelayIssuer } from './meter.js';
+import { startRelayAttestationServer, type RelayAttestationListenOptions } from './attestation.js';
+import { startWireGuardGateway, type RunningWireGuardGateway, type WireGuardGatewayIdentity, type WireGuardGatewayOptions } from './wireguard.js';
+import { WireGuardTokenMeter } from './wireguard-meter.js';
 export type { RelayIssuer } from './meter.js';
+export * from './attestation.js';
+export * from './tls-identity.js';
+export * from './wireguard.js';
+export * from './wireguard-quota.js';
+export * from './wireguard-meter.js';
 
 const MAX_HEADER_SIZE = 16 * 1024;
 const MAX_CLIENT_HELLO_SIZE = 64 * 1024;
 const MAX_TLS_RECORD_SIZE = 18_432;
 const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+const ISSUER_BOOTSTRAP_WINDOW_MS = 60_000;
+const ISSUER_BOOTSTRAP_REQUESTS_PER_CLIENT = 10;
+const ISSUER_BOOTSTRAP_MAX_BYTES = 1024 * 1024;
+const MAX_BOOTSTRAP_CLIENTS = 4096;
 
 export interface RelayServerOptions {
   connectTimeoutMs?: number;
@@ -33,6 +47,34 @@ export interface RelayListenOptions extends RelayServerOptions {
   /** Defaults to loopback because CONNECT destinations have no user authentication. */
   host?: string;
   port?: number;
+}
+
+export interface SecureRelayListenOptions extends RelayServerOptions {
+  /** Self-signed certificate generated inside the Confidential Space workload. */
+  tlsCertificate: string | Buffer;
+  /** The private key matching `tlsCertificate`, generated inside the workload. */
+  tlsPrivateKey: string | Buffer;
+  /** Defaults to loopback; use an explicit workload interface when exposing the proxy. */
+  host?: string;
+  /** Defaults to 8443. */
+  port?: number;
+  /** Optional HTTPS control route handler. Unhandled requests receive 405. */
+  requestHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean> | boolean;
+}
+
+export interface ConfidentialRelayOptions extends RelayServerOptions {
+  tlsCertificate: string | Buffer;
+  tlsPrivateKey: string | Buffer;
+  attestationProvider: AttestationProvider;
+  proxyHost?: string;
+  proxyPort?: number;
+  attestationHost?: string;
+  attestationPort?: number;
+  attestationRequestsPerMinute?: number;
+}
+
+export interface ConfidentialWireGuardRelayOptions extends ConfidentialRelayOptions {
+  wireGuardGateway: WireGuardGatewayOptions;
 }
 
 interface Authority {
@@ -75,6 +117,145 @@ export function startRelayServer(options: RelayListenOptions = {}): Server {
   return server;
 }
 
+/** Create an HTTPS CONNECT listener; origin TLS remains end-to-end through the tunnel. */
+export function createSecureRelayServer(
+  options: SecureRelayListenOptions,
+  dependencies: Partial<RelayDependencies> = {},
+  issuerBootstrapUrl?: string,
+): HttpsServer {
+  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  const server = createHttpsServer({
+    key: options.tlsPrivateKey,
+    cert: options.tlsCertificate,
+    minVersion: 'TLSv1.2',
+    ALPNProtocols: ['http/1.1'],
+    maxHeaderSize: MAX_HEADER_SIZE,
+  }, (req, res) => {
+    void Promise.resolve().then(() => options.requestHandler?.(req, res)).then((handled) => {
+      if (!handled && !res.writableEnded) rejectHttpRequest(req, res);
+    }).catch(() => {
+      if (!res.headersSent) res.writeHead(503).end();
+      else res.destroy();
+    });
+  });
+  server.headersTimeout = 10_000;
+  server.requestTimeout = 10_000;
+  const resolve = dependencies.resolve ?? ((host: string) => lookup(host, { all: true, verbatim: true }));
+  const connect = dependencies.connect ?? ((host: string, family: 4 | 6, port: number) => createConnection({ host, family, port }));
+  const bootstrapAuthority = issuerBootstrapUrl ? parseIssuerAuthority(issuerBootstrapUrl) : undefined;
+  const bootstrapClients = new Map<string, { count: number; startedAt: number }>();
+
+  server.on('connect', (req, client, head) => {
+    void handleConnect(
+      req,
+      client,
+      head,
+      options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
+      resolve,
+      connect,
+      issuer,
+      options.merchantId ?? 'relay',
+      bootstrapAuthority,
+      bootstrapClients,
+    );
+  });
+  return server;
+}
+
+/** Start the HTTPS CONNECT proxy on loopback by default. */
+export function startSecureRelayServer(options: SecureRelayListenOptions): HttpsServer {
+  const server = createSecureRelayServer(options);
+  server.listen(options.port ?? 8443, options.host ?? '127.0.0.1');
+  return server;
+}
+
+/** Start the TLS-pinned proxy and its separate nonce-bound HTTP receipt listener. */
+export function startConfidentialRelay(options: ConfidentialRelayOptions): {
+  proxyServer: HttpsServer;
+  attestationServer: Server;
+} {
+  return startConfidentialRelayInternal(options);
+}
+
+function startConfidentialRelayInternal(options: ConfidentialRelayOptions, wireGuard?: WireGuardGatewayIdentity, requestHandler?: SecureRelayListenOptions['requestHandler']): {
+  proxyServer: HttpsServer;
+  attestationServer: Server;
+} {
+  const proxyServer = createSecureRelayServer({
+    ...options,
+    requestHandler,
+    host: options.proxyHost ?? '127.0.0.1',
+    port: options.proxyPort ?? 8443,
+  }, {}, options.issuerUrl);
+  proxyServer.listen(options.proxyPort ?? 8443, options.proxyHost ?? '127.0.0.1');
+  try {
+    const attestationServer = startRelayAttestationServer({
+      tlsCertificate: typeof options.tlsCertificate === 'string' ? options.tlsCertificate : options.tlsCertificate.toString(),
+      provider: options.attestationProvider,
+      wireGuard,
+      host: options.attestationHost ?? '127.0.0.1',
+      port: options.attestationPort ?? 8080,
+      requestsPerMinute: options.attestationRequestsPerMinute,
+    } satisfies RelayAttestationListenOptions);
+    return { proxyServer, attestationServer };
+  } catch (error) {
+    proxyServer.closeAllConnections?.();
+    proxyServer.close();
+    throw error;
+  }
+}
+
+/** Start the CONNECT relay and an attested WireGuard gateway in the same workload. */
+export async function startConfidentialWireGuardRelay(options: ConfidentialWireGuardRelayOptions): Promise<{
+  proxyServer: HttpsServer;
+  attestationServer: Server;
+  wireGuard: RunningWireGuardGateway;
+  close(): Promise<void>;
+}> {
+  const wireGuard = await startWireGuardGateway(options.wireGuardGateway);
+  const issuer = options.issuer ?? (options.issuerUrl ? new HttpRelayIssuer(options.issuerUrl, options.issuerFetch) : undefined);
+  if (!issuer) {
+    await wireGuard.stop();
+    throw new Error('WireGuard requires a configured relay issuer for token metering');
+  }
+  const tokenMeter = new WireGuardTokenMeter(
+    options.wireGuardGateway.peers,
+    options.merchantId ?? 'relay',
+    issuer,
+    wireGuard.quotas,
+  );
+  try {
+    const servers = startConfidentialRelayInternal(
+      { ...options, issuer },
+      wireGuard.identity,
+      (req, res) => tokenMeter.handle(req, res),
+    );
+    return {
+      ...servers,
+      wireGuard,
+      async close() {
+        servers.proxyServer.closeAllConnections?.();
+        servers.attestationServer.closeAllConnections?.();
+        tokenMeter.close();
+        await Promise.all([
+          closeServer(servers.proxyServer),
+          closeServer(servers.attestationServer),
+          wireGuard.stop(),
+        ]);
+      },
+    };
+  } catch (error) {
+    tokenMeter.close();
+    await wireGuard.stop();
+    throw error;
+  }
+}
+
+function closeServer(server: Server | HttpsServer): Promise<void> {
+  if (!server.listening) return Promise.resolve();
+  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
 function rejectHttpRequest(_req: IncomingMessage, res: ServerResponse): void {
   res.writeHead(405, { connection: 'close', 'content-type': 'text/plain' });
   res.end('CONNECT required\n');
@@ -102,6 +283,48 @@ function parseAuthority(value: string | undefined): Authority | null {
   return { host, port: 443 };
 }
 
+function parseIssuerAuthority(issuerUrl: string): Authority | undefined {
+  try {
+    const url = new URL(issuerUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) return undefined;
+    const host = url.hostname.startsWith('[') && url.hostname.endsWith(']')
+      ? url.hostname.slice(1, -1)
+      : url.hostname;
+    if (isIP(host) !== 4 && isIP(host) !== 6 && !isDnsName(host)) return undefined;
+    return { host: normalizeHost(host), port: 443 };
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeHost(host: string): string {
+  return isIP(host) === 0 ? host.toLowerCase().replace(/\.$/, '') : host.toLowerCase();
+}
+
+function authoritiesMatch(left: Authority, right: Authority): boolean {
+  return left.port === right.port && normalizeHost(left.host) === normalizeHost(right.host);
+}
+
+function allowIssuerBootstrap(clientAddress: string, limits: Map<string, { count: number; startedAt: number }>): boolean {
+  const now = Date.now();
+  for (const [address, entry] of limits) {
+    if (now - entry.startedAt >= ISSUER_BOOTSTRAP_WINDOW_MS) limits.delete(address);
+  }
+  let entry = limits.get(clientAddress);
+  if (entry && now - entry.startedAt >= ISSUER_BOOTSTRAP_WINDOW_MS) {
+    limits.delete(clientAddress);
+    entry = undefined;
+  }
+  if (!entry) {
+    if (limits.size >= MAX_BOOTSTRAP_CLIENTS) return false;
+    limits.set(clientAddress, { count: 1, startedAt: now });
+    return true;
+  }
+  if (entry.count >= ISSUER_BOOTSTRAP_REQUESTS_PER_CLIENT) return false;
+  entry.count += 1;
+  return true;
+}
+
 function isDnsName(host: string): boolean {
   if (host.length > 253 || host.endsWith('.')) return false;
   return host.split('.').every((label) =>
@@ -118,6 +341,8 @@ async function handleConnect(
   connect: RelayDependencies['connect'],
   issuer: RelayIssuer | undefined,
   merchantId: string,
+  bootstrapAuthority?: Authority,
+  bootstrapClients?: Map<string, { count: number; startedAt: number }>,
 ): Promise<void> {
   client.pause();
   const authority = parseAuthority(req.url);
@@ -128,28 +353,41 @@ async function handleConnect(
 
   let tokens: ReturnType<typeof parseAuthorization> = [];
   let serializedTokens: string[] = [];
+  let isIssuerBootstrap = false;
   if (issuer) {
     const authorization = req.headers['proxy-authorization'];
-    tokens = parseAuthorization(typeof authorization === 'string' ? authorization : undefined);
-    if (tokens.length === 0 || tokens.length > MAX_TOKENS_PER_TUNNEL) {
+    const authorizationHeader = typeof authorization === 'string' ? authorization : undefined;
+    const hasAuthorizationHeader = req.rawHeaders.some((header, index) => index % 2 === 0 && header.toLowerCase() === 'proxy-authorization');
+    tokens = parseAuthorization(authorizationHeader);
+    if (!hasAuthorizationHeader && bootstrapAuthority && authoritiesMatch(authority, bootstrapAuthority)) {
+      const clientAddress = req.socket.remoteAddress ?? 'unknown';
+      if (!bootstrapClients || !allowIssuerBootstrap(clientAddress, bootstrapClients)) {
+        respondAndClose(client, 429, 'Issuer bootstrap rate limit exceeded');
+        return;
+      }
+      isIssuerBootstrap = true;
+    } else if (tokens.length === 0 || tokens.length > MAX_TOKENS_PER_TUNNEL) {
       respondAndClose(client, 407, 'A bounded batch of blind tokens is required');
       return;
     }
-    const ids = tokens.map(tokenId);
-    if (new Set(ids).size !== ids.length) {
-      respondAndClose(client, 407, 'Duplicate tokens are not accepted');
-      return;
-    }
 
-    serializedTokens = tokens.map(serializeToken);
-    try {
-      if (!(await issuer.verify(serializedTokens))) {
-        respondAndClose(client, 407, 'Blind tokens are invalid or already spent');
+    if (!isIssuerBootstrap) {
+      const ids = tokens.map(tokenId);
+      if (new Set(ids).size !== ids.length) {
+        respondAndClose(client, 407, 'Duplicate tokens are not accepted');
         return;
       }
-    } catch {
-      respondAndClose(client, 502, 'Issuer verification failed');
-      return;
+
+      serializedTokens = tokens.map(serializeToken);
+      try {
+        if (!(await issuer.verify(serializedTokens))) {
+          respondAndClose(client, 407, 'Blind tokens are invalid or already spent');
+          return;
+        }
+      } catch {
+        respondAndClose(client, 502, 'Issuer verification failed');
+        return;
+      }
     }
   }
 
@@ -173,7 +411,8 @@ async function handleConnect(
 
   // Connect to the exact address that passed validation; do not resolve the hostname again.
   const destination = addresses[0];
-  const meter = new BandwidthMeter(merchantId, serializedTokens, issuer);
+  const meter = isIssuerBootstrap ? undefined : new BandwidthMeter(merchantId, serializedTokens, issuer);
+  let bootstrapBytes = 0;
   const upstream = connect(destination.address, destination.family as 4 | 6, authority.port);
   let established = false;
   const timer = setTimeout(() => upstream.destroy(new Error('connect timeout')), timeoutMs);
@@ -196,8 +435,12 @@ async function handleConnect(
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     void readTLSClientHello(client, head, timeoutMs)
       .then((prefix) => {
-        const clientToUpstream = meteredTransform(meter, finishWhenDrained);
-        const upstreamToClient = meteredTransform(meter, finishWhenDrained);
+        const clientToUpstream = meter
+          ? meteredTransform(meter, finishWhenDrained)
+          : bootstrapLimitedTransform(() => bootstrapBytes, (value) => { bootstrapBytes = value; }, closeBoth);
+        const upstreamToClient = meter
+          ? meteredTransform(meter, finishWhenDrained)
+          : bootstrapLimitedTransform(() => bootstrapBytes, (value) => { bootstrapBytes = value; }, closeBoth);
         clientToUpstream.once('error', closeBoth);
         upstreamToClient.once('error', closeBoth);
         clientToUpstream.pipe(upstream);
@@ -231,6 +474,25 @@ function meteredTransform(meter: BandwidthMeter, finishWhenDrained: () => void):
         callback();
         if (exhausted) finishWhenDrained();
       }, () => callback(new Error('bandwidth settlement failed')));
+    },
+  });
+}
+
+function bootstrapLimitedTransform(
+  getBytes: () => number,
+  setBytes: (bytes: number) => void,
+  closeTunnel: () => void,
+): Transform {
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      const nextTotal = getBytes() + chunk.length;
+      if (nextTotal > ISSUER_BOOTSTRAP_MAX_BYTES) {
+        callback(new Error('issuer bootstrap byte limit exceeded'));
+        setImmediate(closeTunnel);
+        return;
+      }
+      setBytes(nextTotal);
+      callback(null, chunk);
     },
   });
 }
@@ -341,8 +603,9 @@ function respondAndClose(socket: Duplex, status: number, message: string): void 
   const reason = status === 400 ? 'Bad Request'
     : status === 403 ? 'Forbidden'
       : status === 407 ? 'Proxy Authentication Required'
-        : status === 503 ? 'Service Unavailable'
-          : 'Bad Gateway';
+        : status === 429 ? 'Too Many Requests'
+          : status === 503 ? 'Service Unavailable'
+            : 'Bad Gateway';
   socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`);
 }
 

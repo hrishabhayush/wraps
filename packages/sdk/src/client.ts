@@ -17,6 +17,7 @@ import {
   tokensToRlusd,
 } from '@wraps/issuer';
 import { Token, TokenVerifier, blindTokens, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
+import type { PinnedRelayTransport } from './relay';
 
 export interface Caps {
   /** Most tokens one call may cost. A 402 above this is refused. */
@@ -46,8 +47,8 @@ export class PaymentPendingError extends Error {
 }
 
 export class InsufficientTokensError extends Error {
-  constructor(readonly needed: number, readonly have: number) {
-    super(`need ${needed} tokens, have ${have}`);
+  constructor(readonly needed: number, readonly have: number, purpose?: string) {
+    super(`need ${needed} tokens, have ${have}${purpose ? ` (${purpose})` : ''}`);
     this.name = 'InsufficientTokensError';
   }
 }
@@ -77,11 +78,15 @@ export interface PrivatePayOptions {
   verifier: AttestationVerifier;
   wallet: TopUpWallet;
   caps: Caps;
-  /**
-   * How HTTP leaves the agent. Defaults to fetch. SDK-02 plugs the relay tunnel in here,
-   * so every call (attestation, top-up, purchases) goes through it.
-   */
+  /** Direct transport when no relay is configured. Defaults to fetch. */
   transport?: Transport;
+  /**
+   * Pinned relay (SDK-02). When set, all traffic goes through it: merchant calls use a metered
+   * CONNECT, and issuer calls use the relay's restricted tokenless issuer route.
+   */
+  relayTransport?: PinnedRelayTransport;
+  /** Blind tokens spent on each new relay CONNECT. Defaults to 1 (10 MB of metering). */
+  relayTokensPerTunnel?: number;
   now?: () => number;
   onEvent?: (e: SdkEvent) => void;
   /** Re-sends after an ambiguous outcome, with the same tokens and quote. Default 2 retries, 250 ms apart. */
@@ -116,11 +121,16 @@ export class PrivatePayClient {
   private nextReservation = 1;
   private spent = { day: '', tokens: 0 };
   private readonly transport: Transport;
+  private readonly relayTokensPerTunnel: number;
   private readonly now: () => number;
   private readonly emit: (e: SdkEvent) => void;
 
   constructor(private readonly opts: PrivatePayOptions) {
     this.transport = opts.transport ?? fetch;
+    this.relayTokensPerTunnel = opts.relayTokensPerTunnel ?? 1;
+    if (opts.relayTransport && (!Number.isInteger(this.relayTokensPerTunnel) || this.relayTokensPerTunnel < 1 || this.relayTokensPerTunnel > 100)) {
+      throw new TypeError('relayTokensPerTunnel must be an integer from 1 through 100');
+    }
     this.now = opts.now ?? Date.now;
     this.emit = opts.onEvent ?? (() => {});
   }
@@ -157,8 +167,9 @@ export class PrivatePayClient {
   async connect(): Promise<AttestedIssuer> {
     this.issuer = undefined;
     this.issuerCall = undefined;
-    const issuer = await fetchAttestedIssuer(this.opts.issuerUrl, this.opts.verifier, this.transport);
-    this.issuerCall = issuerTransport(issuer, this.transport);
+    const issuerRoute = this.opts.relayTransport ? issuerRouteThroughRelay(this.opts.relayTransport) : this.transport;
+    const issuer = await fetchAttestedIssuer(this.opts.issuerUrl, this.opts.verifier, issuerRoute);
+    this.issuerCall = issuerTransport(issuer, issuerRoute);
     this.issuer = issuer;
     this.tokenVerifier = new TokenVerifier(issuer.tokenKey, issuer.issuerName);
     const m = issuer.attestation.measurement;
@@ -206,8 +217,11 @@ export class PrivatePayClient {
   /** Asks the price without paying. Returns null if the resource is free. */
   async quote(url: string): Promise<Quote | null> {
     this.attested();
-    const res = await this.transport(url);
-    if (res.status !== 402) return null;
+    const res = await this.requestMerchant(url);
+    if (res.status !== 402) {
+      await res.body?.cancel().catch(() => {});
+      return null;
+    }
     const body = (await res.json()) as BlindTokenRequiredBody;
     this.checkChallenge(res, body);
     return { url, service: body.service, price: body.price };
@@ -219,7 +233,7 @@ export class PrivatePayClient {
    */
   async fetch(url: string, init: RequestInit = {}): Promise<Response> {
     this.attested();
-    const first = await this.transport(url, init);
+    const first = await this.requestMerchant(url, init);
     if (first.status !== 402) return first;
     const body = (await first.json()) as BlindTokenRequiredBody;
     this.checkChallenge(first, body);
@@ -233,10 +247,19 @@ export class PrivatePayClient {
     if (price > this.opts.caps.perCallTokens) {
       return this.refuse('PER_CALL_CAP', `price ${price} is above the per-call cap of ${this.opts.caps.perCallTokens}`);
     }
-    if (this.spentToday + price > this.opts.caps.dailyTokens) {
-      return this.refuse('DAILY_CAP', `price ${price} would exceed the daily cap (${this.spentToday}/${this.opts.caps.dailyTokens} spent)`);
+    // With a relay, the paid request needs its own CONNECT, so one more meter batch.
+    const meter = this.opts.relayTransport ? this.relayTokensPerTunnel : 0;
+    if (this.spentToday + price + meter > this.opts.caps.dailyTokens) {
+      const what = meter ? `price ${price} plus relay metering ${meter}` : `price ${price}`;
+      return this.refuse('DAILY_CAP', `${what} would exceed the daily cap (${this.spentToday}/${this.opts.caps.dailyTokens} spent)`);
     }
-    if (this.tokens.length < price) throw new InsufficientTokensError(price, this.tokens.length);
+    if (this.tokens.length < price + meter) {
+      throw new InsufficientTokensError(
+        price + meter,
+        this.tokens.length,
+        meter ? `${meter} relay meter token(s) plus ${price} merchant token(s)` : undefined,
+      );
+    }
 
     // Count the spend and reserve the tokens before sending, so concurrent calls cannot slip past
     // the cap or pick the same tokens.
@@ -307,7 +330,32 @@ export class PrivatePayClient {
     headers.set('authorization', encodeAuthorization(r.tokens));
     // M3: name the merchant's single-use quote, so the payment is bound to this resource and price.
     if (r.quoteId) headers.set(QUOTE_HEADER, r.quoteId);
-    return this.transport(r.url, { ...r.init, headers });
+    // Merchant tokens travel inside end-to-end TLS. Each attempt pays a fresh relay meter batch;
+    // if that batch cannot be paid, the attempt fails and the reservation stays pending.
+    return this.requestMerchant(r.url, { ...r.init, headers }, false);
+  }
+
+  /**
+   * Sends a merchant request. With a relay, takes one meter batch out of the balance and counts it
+   * against the daily cap before the CONNECT. The relay may settle a meter token before a failure is
+   * visible, so the batch is never refunded or reused.
+   */
+  private async requestMerchant(url: string, init?: RequestInit, refuseOnCap = true): Promise<Response> {
+    const relay = this.opts.relayTransport;
+    if (!relay) return this.transport(url, init);
+    const meter = this.relayTokensPerTunnel;
+    this.rollDay();
+    if (this.spent.tokens + meter > this.opts.caps.dailyTokens) {
+      const message = `relay metering ${meter} would exceed the daily cap (${this.spent.tokens}/${this.opts.caps.dailyTokens} spent)`;
+      if (refuseOnCap) return this.refuse('DAILY_CAP', message);
+      throw new Error(message);
+    }
+    if (this.tokens.length < meter) {
+      throw new InsufficientTokensError(meter, this.tokens.length, 'relay meter tokens are required before a CONNECT; call topUp() first');
+    }
+    const batch = this.tokens.splice(0, meter);
+    this.spent.tokens += meter;
+    return relay.fetchWithTokens(url, init, batch);
   }
 
   /**
@@ -368,4 +416,12 @@ export class PrivatePayClient {
     });
     return { status: res.status, body: (await res.json()) as any };
   }
+}
+
+/** Issuer calls through the relay's tokenless issuer route, with the issuer TLS key pinned. */
+function issuerRouteThroughRelay(relay: PinnedRelayTransport): Transport {
+  const route = ((url: string, init?: RequestInit) => relay.fetchIssuer(url, init)) as Transport;
+  route.fetchWithPeer = (url, init) => relay.fetchIssuerWithPeer(url, init);
+  route.fetchPinned = (url, expectedSpki, init) => relay.fetchIssuer(url, init, expectedSpki);
+  return route;
 }

@@ -116,6 +116,17 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ## Lane 9: Security and dependency health
 
 - [ ] **SEC-01** Resolve or document the production dependency audit findings. `npm audit --omit=dev` currently reports 5 findings (1 moderate, 4 high): `ws` through `viem` has a reported npm fix; `sjcl` through the Cloudflare PrivatePass dependency chain has no fix reported.
+- [ ] **SEC-04** Merchant authentication on `/settle` and `/settle/status`. Today any caller can name any merchant ID (documented gap from PR #44).
+- [ ] **SEC-05** Make relay and app settles idempotent by sending a quote ID, like the merchant does (PR #44 only covers quote-ID settles).
+- [ ] **SEC-06** Persist issuer state (spent list, settlement records, in-flight payouts) safely across restarts. Today it lives in memory.
+
+## Follow-ups (from the Oct 25 review pass)
+
+- [ ] **FUP-01** PR #42 (INF-20, production forwarding for WireGuard in the relay): rebuild the relay image from committed source. The PR records a `-dirty` digest. Then merge.
+- [ ] **FUP-02** Close PR #22 (INF-09). PR #42 supersedes it (same files, newer image).
+- [ ] **FUP-03** Stop the test and debug VMs when nobody needs them: `wraps-relay-debug`, `wraps-relay-inf09-wireguard`, `wraps-wg-client-test`. Keep `wraps-issuer`, `wraps-relay`, `wraps-wg-gateway` for the demo. Release unused reserved IPs (`wraps-relay-inf09-test-ip`, and the others after the demo).
+- [ ] **FUP-04** Live testnet payout: fund an issuer wallet with testnet RLUSD and XRP for gas, then follow `packages/issuer/README.md` (`payout:dry-run`, `payout:once`).
+- [ ] **FUP-05** The standalone WireGuard gateway (PR #43) runs on a plain VM, outside Confidential Space: no attestation, no token metering. Don't describe it as attested.
 
 ---
 

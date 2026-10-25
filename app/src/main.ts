@@ -4,15 +4,20 @@ import '@fontsource/geist-mono/500.css';
 import './styles.css';
 import logo from './assets/logo.svg?raw';
 import globe from './assets/globe.svg?raw';
-import { MockBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
+import { MockBackend, TauriBackend, type Attestation, type Flag, type VpnNode } from './backend.ts';
 import * as tk from './tokens.ts';
 import { tick, tokensFor, clock, USD_PER_TOKEN, type Meter } from './meter.ts';
 import * as wc from './wallet.ts';
 import { short } from './chain.ts';
 import QRCode from 'qrcode';
 
-const api = new MockBackend();
 const inTauri = '__TAURI_INTERNALS__' in window;
+// In the desktop app the VPN is real: the relay meters bandwidth and is paid by the connect helper.
+const api = inTauri ? new TauriBackend() : new MockBackend();
+const realVpn = inTauri;
+const tauri = api as TauriBackend;
+// One connect pays the relay this many kept tokens (10 MB each). An empty wallet buys them first.
+const VPN_TOKENS = 10;
 
 type Screen = 'onboarding' | 'home' | 'nodes' | 'wallet';
 type Verified = Extract<Attestation, { ok: true }>;
@@ -36,7 +41,7 @@ const s = {
   bal: undefined as number | undefined, // its balance in the pay asset
   qr: '', // pairing QR (svg) while connecting
   uri: '',
-  stage: '' as '' | wc.PayStage | 'minting' | 'linking',
+  stage: '' as '' | wc.PayStage | 'minting' | 'paying' | 'linking',
   rechecking: false,
   trust: {} as Record<string, 'ok' | 'bad'>, // attestation results this session
   toast: '',
@@ -115,11 +120,17 @@ function home() {
   }[c.kind];
   const line = {
     off: `${ic('shield', 12, 2.2)}Every node is attested before you connect`,
-    verifying: `${ic('shield', 12, 2.2)}Checking ${esc(n.city)}’s enclave…`,
+    verifying: `${ic('shield', 12, 2.2)}${
+      s.stage === 'approve' ? `Approve ${usd(VPN_TOKENS * USD_PER_TOKEN)} RLUSD in your wallet…`
+      : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
+      : s.stage === 'minting' ? 'Minting blind tokens…'
+      : s.stage === 'paying' ? `Paying the relay ${VPN_TOKENS} tokens…`
+      : `Checking ${esc(n.city)}’s enclave…`}`,
     connected: on ? `<span class="g">${ic('shield', 12, 2.2)}</span>TEE attested · ${ago(c.att.checkedAt)}` : '',
     refused: c.kind === 'refused' ? `<span class="r">${ic('alert', 12, 2.2)}</span>${esc(c.reason)}` : '',
   }[c.kind];
-  const m = on ? c.meter : { mb: 0, cost: 0 };
+  // The real VPN is prepaid: the relay was paid `spent` tokens at connect. The preview meters a fake session.
+  const m = !on ? { mb: 0, cost: 0 } : realVpn ? { mb: c.spent * 10, cost: c.spent * USD_PER_TOKEN } : c.meter;
   return `<div class="panel">
     <header class="row between">
       <div class="row brand">${mark(20)}<span>wraps</span></div>
@@ -130,6 +141,7 @@ function home() {
         <div class="timer ${on ? '' : 'idle'}">${clock(secs)}</div>
         ${pill}
         <div class="att">${line}</div>
+        ${on && lastTx() ? `<button class="link small txlink" data-act="openTx" data-arg="${lastTx()}">Top-up paid in RLUSD · ${short(lastTx()!)} ↗</button>` : ''}
       </div>
       <button class="power ${c.kind}" data-act="power" ${c.kind === 'verifying' ? 'disabled' : ''} aria-label="${on ? 'Disconnect' : 'Connect'}">
         <span>${ic('power', 24, 2.4)}</span>
@@ -146,8 +158,8 @@ function home() {
         <div class="tile"><span class="circ">${ic('download', 14)}</span><div class="col"><small>Download</small><b>${on ? `${c.down} Mbps` : '—'}</b></div></div>
       </div>
       <div class="meter row between">
-        <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? 'Metered · this session' : `Billed only while connected`}</span>
-          <span class="mono">${m.mb.toFixed(1)} MB × $${n.pricePerMB}</span></div>
+        <div class="col"><span class="row gap6 live"><i class="${on ? 'on' : ''}"></i>${on ? (realVpn ? 'Prepaid · this session' : 'Metered · this session') : `Billed only while connected`}</span>
+          <span class="mono">${on && realVpn ? `${c.spent} tokens = ${m.mb} MB` : `${m.mb.toFixed(1)} MB × $${n.pricePerMB}`}</span></div>
         <span class="cost mono">$${m.cost.toFixed(m.cost < 1 ? 3 : 2)}</span>
       </div>
     </section>
@@ -202,7 +214,7 @@ function wallet() {
     <section class="activity">${tk.history()
       .slice(0, 3)
       .map(a => `<div class="row gap10 act"><span class="circ grey">${ic(a.usd > 0 ? 'plus' : 'globe', 14)}</span>
-        <div class="col grow"><b>${esc(a.title)}</b><span class="mono muted">${esc(a.detail)}</span></div>
+        <div class="col grow"><b>${esc(a.title)}</b>${a.tx ? `<button class="link small mono" data-act="openTx" data-arg="${a.tx}">${esc(a.detail)} ↗</button>` : `<span class="mono muted">${esc(a.detail)}</span>`}</div>
         <span class="mono ${a.usd > 0 ? 'pos' : ''}">${a.usd > 0 ? '+' : '−'}${usd(Math.abs(a.usd))}</span></div>`)
       .join('') || '<div class="muted empty">No activity yet</div>'}</section>
     <p class="note row gap6">${ic('lock', 12)}Tokens are blind-signed. Nodes can’t tie them to you or your wallet.</p>
@@ -236,10 +248,11 @@ function topupCta() {
     : s.stage === 'linking' ? 'Connecting…'
     : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
     : s.stage === 'minting' ? 'Minting tokens…'
+    : !s.acct && inTauri ? `Top up $${s.amount} on the mock rail → ${tokensFor(s.amount).toLocaleString()} tokens`
     : !s.acct ? 'Connect a wallet to top up'
     : !wc.cfg.token ? 'Set VITE_RLUSD_ADDRESS in app/.env'
     : `Pay $${s.amount} RLUSD → ${tokensFor(s.amount).toLocaleString()} blind tokens`;
-  const off = !!s.stage || !s.acct || !wc.cfg.token;
+  const off = !!s.stage || (!s.acct && !inTauri) || (!!s.acct && !wc.cfg.token);
   return `<button class="cta" data-act="topup" ${off ? 'disabled' : ''}>${label}</button>`;
 }
 
@@ -271,7 +284,7 @@ function toast(msg: string) {
 
 // ---------- actions ----------
 async function connect(id: string) {
-  if (tk.count() === 0) { s.screen = 'wallet'; return toast('Top up to connect'); }
+  if (!realVpn && tk.count() === 0) { s.screen = 'wallet'; return toast('Top up to connect'); }
   s.nodeId = id;
   localStorage.setItem('wraps.node', id);
   s.screen = 'home';
@@ -280,11 +293,82 @@ async function connect(id: string) {
   const att = await api.attest(id);
   s.trust[id] = att.ok ? 'ok' : 'bad';
   if (!att.ok) { s.conn = { kind: 'refused', reason: att.reason }; return render(); }
-  // Pay for the first chunk up front with one real token.
-  try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
-  await api.connect(id);
-  s.conn = { kind: 'connected', since: Date.now(), meter: { mb: 0, cost: 0 }, att, up: 30, down: 40, spent: 1, spending: false };
+  let spent = 1;
+  if (realVpn) {
+    // One click: pay the relay with kept tokens and bring WireGuard up (macOS asks for the admin password).
+    // An empty wallet buys VPN_TOKENS first (RLUSD with a wallet connected, otherwise the mock rail).
+    try {
+      if (tk.count() === 0) await topUp(VPN_TOKENS);
+      spent = await spendAtRelay(VPN_TOKENS);
+    } catch (e) {
+      s.stage = '';
+      s.conn = { kind: 'off' };
+      return toast(errorText(e).slice(0, 90));
+    }
+  } else {
+    // Pay for the first chunk up front with one real token.
+    try { await tk.spend(1, id); } catch (e) { s.conn = { kind: 'off' }; return toast((e as Error).message.slice(0, 90)); }
+    await (api as MockBackend).connect(id);
+  }
+  s.conn = { kind: 'connected', since: Date.now(), meter: { mb: 0, cost: 0 }, att, up: 30, down: 40, spent, spending: false };
   render();
+}
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+const lastTx = () => tk.history().find(a => a.tx)?.tx;
+
+/**
+ * Buys `n` tokens into the wallet from the live attested issuer. With a wallet connected the
+ * issuer's quote is paid in RLUSD on XRPL EVM (visible on the explorer); otherwise on the mock rail.
+ */
+async function topUp(n: number) {
+  try {
+    if (s.acct && wc.cfg.token) {
+      const q = await tauri.topUpQuote(n);
+      let tx: string;
+      try {
+        tx = await wc.payQuote(q, st => { s.stage = st; render(); });
+      } catch (e) {
+        await tauri.topUpCancel();
+        throw e;
+      }
+      s.stage = 'minting'; render();
+      try {
+        tk.keep(await tauri.topUpPaid(tx));
+      } catch (e) {
+        // Paid on-chain but no tokens came back: keep the receipt so it can be chased.
+        tk.record({ title: 'Top up paid, not minted', detail: `${n} tokens · ${short(tx)}`, usd: 0, at: Date.now(), tx });
+        throw e;
+      }
+      tk.record({ title: 'Top up · RLUSD', detail: `${n} tokens · ${short(tx)}`, usd: Number(q.amountRlusd), at: Date.now(), tx });
+    } else {
+      s.stage = 'minting'; render();
+      tk.keep(await tauri.topUpMock(n));
+      tk.record({ title: 'Top up · mock rail', detail: `${n} tokens`, usd: n * USD_PER_TOKEN, at: Date.now() });
+    }
+  } finally {
+    s.stage = '';
+  }
+}
+
+/** Hands up to `n` kept tokens to the relay and brings the tunnel up. Unspent tokens go back to the wallet. */
+async function spendAtRelay(n: number): Promise<number> {
+  const batch = tk.take(n);
+  s.stage = 'paying'; render();
+  try {
+    const r = await tauri.connectWith(batch);
+    tk.record({ title: `VPN · ${node().city}`, detail: `${r.tokens} tokens = ${r.megabytes} MB`, usd: -r.tokens * USD_PER_TOKEN, at: Date.now() });
+    return r.tokens;
+  } catch (e) {
+    // The helper says which tokens the relay did not take (spent ones are dropped). A plain error means none were handed over.
+    const failed = (() => { try { return JSON.parse(String(e)) as { error: string; unspent: string[] }; } catch { return undefined; } })();
+    tk.putBack(failed?.unspent ?? batch);
+    const used = batch.length - (failed?.unspent ?? batch).length;
+    if (used > 0) tk.record({ title: `VPN · ${node().city} (failed)`, detail: `${used} tokens spent`, usd: -used * USD_PER_TOKEN, at: Date.now() });
+    throw new Error(failed?.error ?? errorText(e));
+  } finally {
+    s.stage = '';
+  }
 }
 
 async function disconnect(reason?: string) {
@@ -293,6 +377,7 @@ async function disconnect(reason?: string) {
   s.conn = { kind: 'off' };
   await api.disconnect();
   const mins = Math.max(1, Math.round((Date.now() - c.since) / 60000));
+  if (realVpn) return reason ? toast(reason) : render(); // prepaid at connect, recorded there
   tk.record({ title: `Session · ${node().country}`, detail: `${c.meter.mb.toFixed(0)} MB · ${mins} min · ${c.spent} token${c.spent === 1 ? '' : 's'}`, usd: -c.spent * USD_PER_TOKEN, at: Date.now() });
   reason ? toast(reason) : render();
 }
@@ -313,6 +398,10 @@ const actions: Record<string, (arg: string) => unknown> = {
   topup: async () => {
     try {
       const n = tokensFor(s.amount);
+      if (inTauri) {
+        await topUp(n);
+        return toast(`Minted ${n} blind tokens`);
+      }
       await tk.buy(n, async q => {
         const tx = await wc.payQuote(q, st => { s.stage = st; render(); });
         s.stage = 'minting'; render();
@@ -341,6 +430,7 @@ const actions: Record<string, (arg: string) => unknown> = {
     s.stage = '';
     refreshBalance();
   },
+  openTx: arg => tauri.openTx(arg).catch(e => toast(String(e).slice(0, 90))),
   copyUri: async () => { await navigator.clipboard.writeText(s.uri); toast('Link copied'); },
   cancelWc: () => { s.qr = s.uri = ''; render(); },
   disconnectWallet: async () => { await wc.disconnect(); refreshBalance(); },
@@ -362,13 +452,13 @@ setInterval(async () => {
   // Prepaid (spent tokens not yet used up) plus what's left in the wallet.
   const r = tick(c.meter, 1, 0.08 + Math.random() * 0.06, node().pricePerMB, c.spent * USD_PER_TOKEN - c.meter.cost + tk.usd());
   c.meter = r.meter;
-  if (c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
+  if (!realVpn && c.meter.cost > c.spent * USD_PER_TOKEN && !c.spending && tk.count() > 0) {
     c.spending = true;
     tk.spend(1, s.nodeId).then(() => { c.spent++; }, e => disconnect((e as Error).message)).finally(() => { c.spending = false; });
   }
   c.up = 28 + Math.round(Math.random() * 6);
   c.down = 36 + Math.round(Math.random() * 8);
-  if (r.exhausted) return disconnect('Out of tokens, so you were disconnected');
+  if (!realVpn && r.exhausted) return disconnect('Out of tokens, so you were disconnected');
   if (Date.now() - c.att.checkedAt > 60_000 && !s.rechecking) {
     s.rechecking = true;
     const att = await api.attest(s.nodeId);
@@ -384,6 +474,8 @@ setInterval(async () => {
 // ---------- boot ----------
 (async () => {
   s.nodes = await api.listNodes();
+  // The saved node may not exist in this node list (e.g. a mock node in the real app).
+  if (!s.nodes.some(n => n.id === s.nodeId)) s.nodeId = s.nodes[0].id;
   // Dev preview without Tauri: ?state=onboarding|home|verifying|connected|refused|nodes|wallet
   const p = import.meta.env.DEV ? new URLSearchParams(location.search).get('state') : null;
   if (p) {

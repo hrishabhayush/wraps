@@ -21,7 +21,8 @@ const fromB64u = (s: string) => Uint8Array.from(atob(s.replace(/-/g, '+').replac
 const hex = (b: Uint8Array) => [...b].map(x => x.toString(16).padStart(2, '0')).join('');
 
 // ---------- local store: unspent tokens + activity ----------
-const KEY = 'wraps.tokens.v1';
+// v2: tokens from the live attested issuer (bought through the desktop helper). v1 held local-issuer tokens.
+const KEY = 'wraps.tokens.v2';
 type Store = { tokens: string[]; history: Activity[] };
 const store: Store = JSON.parse(localStorage.getItem(KEY) ?? 'null') ?? { tokens: [], history: [] };
 const save = () => { if (!previewTokens) localStorage.setItem(KEY, JSON.stringify(store)); };
@@ -40,6 +41,21 @@ if (previewTokens > 0) {
 export const count = () => store.tokens.length;
 export const usd = () => count() * USD_PER_TOKEN;
 export const history = () => store.history;
+/** Keeps freshly bought tokens. */
+export function keep(tokens: string[]) {
+  store.tokens.push(...tokens);
+  save();
+}
+/** Takes up to `n` tokens out of the wallet to spend. Give back what wasn't spent with `putBack`. */
+export function take(n: number) {
+  const batch = store.tokens.splice(0, n);
+  save();
+  return batch;
+}
+export function putBack(tokens: string[]) {
+  store.tokens.unshift(...tokens);
+  save();
+}
 export function record(a: Activity) {
   store.history.unshift(a);
   store.history.length = Math.min(store.history.length, 20);

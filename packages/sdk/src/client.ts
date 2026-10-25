@@ -16,7 +16,7 @@ import {
   issuerTransport,
   tokensToRlusd,
 } from '@wraps/issuer';
-import { Token, TokenVerifier, blindTokens, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
+import { Token, TokenVerifier, blindTokens, deserializeToken, encodeAuthorization, equalBytes, finalizeTokens, serializeToken } from '@wraps/tokens';
 import type { PinnedRelayTransport } from './relay';
 import { deriveWireGuardPublicKey, isVerifiedWireGuardReceipt, registerWireGuardPeer as registerPeer, WireGuardRegistrationError, type VerifiedWireGuardReceipt } from './wireguard.js';
 
@@ -143,6 +143,34 @@ export class PrivatePayClient {
   get balance(): number {
     return this.tokens.length;
   }
+  /** The spendable tokens, serialized, so an app can keep them between runs. */
+  exportTokens(): string[] {
+    return this.tokens.map(serializeToken);
+  }
+
+  /** Adds tokens kept from an earlier run. Each must verify under the attested issuer key. */
+  async importTokens(serialized: string[]): Promise<number> {
+    this.attested();
+    const fresh = serialized.map(deserializeToken);
+    for (const t of fresh) {
+      if (!(await this.tokenVerifier!.verify(t))) throw new Error('a kept token does not verify under the attested issuer key');
+    }
+    this.tokens.push(...fresh);
+    return this.balance;
+  }
+
+  /** Asks the issuer (read-only /verify) and drops kept tokens that are spent, expired or bad. Returns how many were dropped. */
+  async dropSpentTokens(): Promise<number> {
+    if (this.tokens.length === 0) return 0;
+    const v = await this.post('/verify', { tokens: this.tokens.map(serializeToken) });
+    if (v.status !== 200 || !Array.isArray(v.body.results) || v.body.results.length !== this.tokens.length) {
+      throw new Error(`issuer /verify failed: ${v.body?.error ?? v.status}`);
+    }
+    const before = this.tokens.length;
+    this.tokens = this.tokens.filter((_, i) => v.body.results[i].ok);
+    return before - this.tokens.length;
+  }
+
   /** Tokens held by payments whose outcome is not final yet. */
   get reservedTokens(): number {
     let n = 0;
@@ -197,6 +225,10 @@ export class PrivatePayClient {
     if (first.status !== 402) throw new Error(`expected 402 from /issue, got ${first.status}`);
     const req = (first.body as PaymentRequiredBody).accepts?.find((a) => a.scheme === this.opts.wallet.scheme);
     if (!req) throw new PaymentRefusedError('UNSUPPORTED_SCHEME', 'issuer offers no scheme this wallet can pay');
+    // An issuer with an attested wallet is paid there and nowhere else.
+    if (issuer.walletAddress && req.scheme !== 'mock-ap4m-voucher' && req.payTo.toLowerCase() !== issuer.walletAddress) {
+      throw new PaymentRefusedError('BAD_QUOTE', `issuer asked to be paid at ${req.payTo}, not its attested wallet ${issuer.walletAddress}`);
+    }
     if (req.tokens !== n || req.amountRlusd !== tokensToRlusd(n)) {
       throw new PaymentRefusedError('BAD_QUOTE', `issuer quoted ${req.amountRlusd} RLUSD for ${req.tokens} tokens, expected ${tokensToRlusd(n)} for ${n}`);
     }
@@ -384,11 +416,20 @@ export class PrivatePayClient {
     return true;
   }
 
-  /** Spend blind tokens to activate this configured peer's metered WireGuard quota. */
+  /** Spend blind tokens to activate this peer's metered WireGuard quota. Returns tokens spent. */
   async registerWireGuardPeer(receipt: VerifiedWireGuardReceipt, clientPrivateKey: string, tlsPort = 443): Promise<number> {
+    return (await this.joinWireGuard(receipt, clientPrivateKey, tlsPort)).tokens;
+  }
+
+  /**
+   * Spend one blind token to register (or top up) a WireGuard peer. On an open
+   * relay any key may join; the relay returns the tunnel address it assigned.
+   */
+  async joinWireGuard(receipt: VerifiedWireGuardReceipt, clientPrivateKey: string, tlsPort = 443): Promise<{ tokens: number; address?: string }> {
     this.attested();
     const publicKey = deriveWireGuardPublicKey(clientPrivateKey);
-    if (!isVerifiedWireGuardReceipt(receipt) || !receipt.peers.some((peer) => peer.publicKey === publicKey)) {
+    if (!isVerifiedWireGuardReceipt(receipt) ||
+        (receipt.registration !== 'open-paid' && !receipt.peers.some((peer) => peer.publicKey === publicKey))) {
       throw new TypeError('a verified receipt containing this peer is required');
     }
     const tokenCount = 1;
@@ -401,8 +442,9 @@ export class PrivatePayClient {
     const reservedDay = this.spent.day;
     const batch = this.tokens.splice(0, tokenCount);
     this.spent.tokens += tokenCount;
+    let address: string | undefined;
     try {
-      await registerPeer(receipt, clientPrivateKey, batch, tlsPort);
+      address = await registerPeer(receipt, clientPrivateKey, batch, tlsPort);
     } catch (error) {
       if (error instanceof WireGuardRegistrationError && error.outcome === 'rejected') {
         this.tokens.unshift(...batch);
@@ -410,7 +452,7 @@ export class PrivatePayClient {
       }
       throw error;
     }
-    return tokenCount;
+    return { tokens: tokenCount, address };
   }
 
   private checkChallenge(res: Response, body: BlindTokenRequiredBody) {

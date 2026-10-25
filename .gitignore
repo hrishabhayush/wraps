@@ -8,3 +8,6 @@ __pycache__/
 .claude/
 target/
 gen/schemas/
+wraps-*.conf
+app/src-tauri/binaries/
+app/src-tauri/resources/wraps-connect.mjs

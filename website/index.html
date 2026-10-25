@@ -1,202 +1,128 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wraps: privacy you can verify</title>
-<meta name="description" content="A pay-as-you-go HTTPS relay with code you can verify. Blind tokens separate top-ups from spending, for people and AI agents.">
-<link rel="icon" type="image/png" href="assets/icon.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@600;700&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wraps — Incognito mode for your agents</title>
+  <meta name="description" content="A private way for agents to browse, call tools, and pay. Verifiable infrastructure, blind-token payments, and a pay-per-use model. Explore the Wraps testnet prototype.">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" type="image/png" href="assets/icon.png">
+  <link rel="preload" href="assets/fonts/outfit-latin-600-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+  <script src="preview.js" defer></script>
 </head>
-<body>
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="logo" viewBox="0 0 120 120"><path d="M99.9752 58.666C99.9897 59.1089 100.001 59.5536 100.001 60C100.001 82.0912 82.0917 99.9997 60.0006 100C48.4244 100 37.998 95.0808 30.6939 87.2207L99.9752 58.666Z"/><path d="M112.974 46.8184L13.1226 87.9746L7.02596 73.1816L106.877 32.0254L112.974 46.8184Z"/><path d="M60.0006 20C71.576 20.0002 82.0013 24.919 89.3053 32.7783L20.024 61.333C20.0095 60.8904 20.0006 60.4461 20.0006 60C20.0006 37.9086 37.9092 20 60.0006 20Z"/></symbol>
-</svg>
-
-<header class="nav">
-  <a class="brand" href="#top" aria-label="Wraps home"><svg class="mark" fill="currentColor"><use href="#logo"/></svg><span>wraps</span></a>
-  <nav class="links">
-    <a href="#how">How it works</a>
-    <a href="#agents">For agents</a>
-    <a href="#privacy">Privacy</a>
-    <a href="https://github.com/hrishabhayush/wraps">GitHub</a>
-  </nav>
-  <a class="pill pill-light" href="#how">Get Wraps</a>
-</header>
-
-<main id="top">
-  <section class="hero dark">
-    <div class="wrap hero-inner">
-      <div class="hero-copy">
-        <p class="eyebrow"><span class="dot"></span>Attested HTTPS relay</p>
-        <h1>Privacy you can verify.</h1>
-        <p class="lede">A pay-as-you-go private relay whose running code you can verify. Blind tokens separate a top-up from later spending. It works for you and your AI agents.</p>
+<body id="top">
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="nav dark">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="Wraps home"><img src="assets/logo.svg" width="36" height="36" alt=""><span>wraps</span></a>
+      <nav class="links" aria-label="Main navigation">
+        <a href="#how">How it works</a><a href="#agents">For agents</a><a href="#privacy">Privacy</a>
+      </nav>
+      <a class="pill pill-light" href="https://github.com/hrishabhayush/wraps/tree/main/apps/demo#readme">Explore the demo <span aria-hidden="true">↗</span></a>
+    </div>
+  </header>
+  <main id="main">
+    <section class="hero dark" aria-labelledby="hero-title">
+      <div class="wrap">
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <p class="eyebrow">Privacy infrastructure for agents</p>
+            <h1 id="hero-title">Incognito mode<br>for your agents.</h1>
+            <p class="lede">A private way to browse, call tools, and pay. Built around an attested private relay and blind-token payments.</p>
+            <div class="ctas">
+              <a class="pill pill-light" href="https://github.com/hrishabhayush/wraps/tree/main/apps/demo#readme">Explore the demo <span aria-hidden="true">↗</span></a>
+              <a class="text-link" href="https://github.com/hrishabhayush/wraps/blob/main/docs/SPEC.md">Read the docs <span aria-hidden="true">→</span></a>
+            </div>
+            <p class="eyebrow hero-terms">Pay per use. No subscription.</p>
+          </div>
+          <div class="hero-visual">
+            <img class="globe" src="assets/globe.svg" width="430" height="430" alt="" fetchpriority="high">
+            <figure class="desktop-preview" aria-label="Wraps desktop app preview: connection status, node selection, wallet, and onboarding">
+              <div class="desktop-screens" id="desktop-screens">
+                <img class="desktop-screen" src="assets/desktop-connected.png" width="1440" height="900" alt="Wraps desktop app connected to Zürich, with a session timer and usage meter" fetchpriority="high">
+                <img class="desktop-screen" src="assets/desktop-nodes.png" width="1440" height="900" alt="" aria-hidden="true">
+                <img class="desktop-screen" src="assets/desktop-wallet.png" width="1440" height="900" alt="" aria-hidden="true">
+                <img class="desktop-screen" src="assets/desktop-onboarding.png" width="1440" height="900" alt="" aria-hidden="true">
+              </div>
+              <figcaption class="preview-controls"><span>App interface preview</span><button class="preview-toggle" type="button" aria-controls="desktop-screens" hidden>Pause preview</button></figcaption>
+            </figure>
+          </div>
+        </div>
+        <p class="prototype-note">Testnet prototype · Blind-token payments live. End-to-end VPN integration in progress.</p>
+      </div>
+    </section>
+    <section class="section" id="agents" aria-labelledby="agents-title">
+      <div class="wrap section-stack">
+        <p class="eyebrow">01 / Made for the agentic web</p>
+        <h2 id="agents-title">Your agent does the work.<br>Privacy should come with it.</h2>
+        <div class="grid3 use-cases">
+          <article class="use-case"><span class="eyebrow">01</span><h3>Tool calls</h3><p>Route supported HTTPS tool requests through a private relay. Keep the agent’s source IP away from the service.</p></article>
+          <article class="use-case"><span class="eyebrow">02</span><h3>Browsing</h3><p>Give web research a private network route. The destination sees the relay, while HTTPS protects request content in transit.</p></article>
+          <article class="use-case"><span class="eyebrow">03</span><h3>Payments</h3><p>Pay participating services with blind tokens. The issuer verifies each token without linking it to its original top-up.</p></article>
+        </div>
+        <p class="note">Private routing is the intended VPN flow. Sites and tool providers still receive your requests and may keep their own logs.</p>
+      </div>
+    </section>
+    <section class="section surface" id="how" aria-labelledby="how-title">
+      <div class="wrap section-stack">
+        <p class="eyebrow">02 / How it works</p>
+        <h2 id="how-title">One top-up.<br>Many private moments.</h2>
+        <ol class="grid3 steps">
+          <li><span class="step-number" aria-hidden="true">1</span><h3>Verify the issuer</h3><p>The SDK checks the issuer’s attestation and code identity before it pays. Unexpected builds are refused.</p></li>
+          <li><span class="step-number" aria-hidden="true">2</span><h3>Load private credit</h3><p>Top up with RLUSD and receive blind-signed tokens. Your top-up is public; each token’s spending link is hidden.</p></li>
+          <li><span class="step-number" aria-hidden="true">3</span><h3>Spend as you go</h3><p>Use tokens for relay bandwidth and supported paid calls. Set spending limits in code before your agent starts.</p></li>
+        </ol>
+      </div>
+    </section>
+    <section class="section canvas" id="app" aria-labelledby="pricing-title">
+      <div class="wrap pricing">
+        <div class="pricing-copy">
+          <p class="eyebrow">03 / Small spends. Full control.</p>
+          <h2 id="pricing-title">Pay for the work.<br>Skip the subscription.</h2>
+          <p>Prepay in RLUSD. Spend tokens as your agent uses bandwidth or buys a supported service. Keep a clear balance and hard limits on every call.</p>
+          <dl class="usage"><div><dt>10 MB</dt><dd>per relay token</dd></div><div><dt>No monthly fee</dt><dd>pay per use</dd></div></dl>
+          <a class="pill pill-dark" href="https://github.com/hrishabhayush/wraps/tree/main/app">Explore the app <span aria-hidden="true">→</span></a>
+        </div>
+        <figure class="app-preview">
+          <img src="assets/panel-preview.png" width="420" height="458" alt="Wraps menu-bar app showing connection status, upload and download speed, and the cost of a session" loading="lazy">
+          <figcaption class="eyebrow">App interface preview · Illustrative rates</figcaption>
+        </figure>
+      </div>
+    </section>
+    <section class="section dark" id="privacy" aria-labelledby="privacy-title">
+      <div class="wrap section-stack">
+        <p class="eyebrow">04 / Privacy you can explain</p>
+        <h2 id="privacy-title">Less to link.<br>More you can verify.</h2>
+        <div class="privacy-grid">
+          <div>
+            <article><h3>Your route</h3><p>The relay is designed to hide the agent’s source IP from destinations. It still sees the agent IP and destination host.</p></article>
+            <article><h3>Your payment</h3><p>Blind signatures separate token issuance from redemption. Merchants receive valid tokens, not your top-up wallet.</p></article>
+          </div>
+          <div>
+            <article><h3>Your verification</h3><p>The SDK checks the issuer’s attested code and keys on Google Confidential Space. Attestation verifies the workload, not what an operator may log outside it.</p></article>
+            <article><h3>The honest boundary</h3><p>Websites can log requests. Logins, API keys and timing can identify an agent. Wraps does not promise total anonymity.</p></article>
+          </div>
+        </div>
+        <aside class="status-note"><p class="eyebrow">Where the prototype is today</p><p>Blind-token payments and issuer attestation are implemented. The metered relay exists; end-to-end VPN integration is still in progress.</p></aside>
+      </div>
+    </section>
+    <section class="section closing" aria-labelledby="closing-title">
+      <div class="wrap section-stack">
+        <p class="eyebrow">Built for agents. Controlled by you.</p>
+        <h2 id="closing-title">Give your agents<br>a little privacy.</h2>
         <div class="ctas">
-          <a class="pill pill-light" href="#how">How it works</a>
-          <a class="pill pill-ghost" href="#agents">For agents</a>
+          <a class="pill pill-dark" href="https://github.com/hrishabhayush/wraps/tree/main/apps/demo#readme">Explore the demo <span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="https://github.com/hrishabhayush/wraps">View on GitHub <span aria-hidden="true">→</span></a>
         </div>
       </div>
-      <img class="globe" src="assets/globe.svg" alt="A dark globe covered in a network of attested nodes, each marked with a glowing shield">
+    </section>
+  </main>
+  <footer class="footer dark">
+    <div class="wrap foot">
+      <a class="brand" href="#top" aria-label="Wraps home"><img src="assets/logo.svg" width="36" height="36" alt=""><span>wraps</span></a>
+      <a class="text-link" href="ip-check/">Check your IP <span aria-hidden="true">↗</span></a><p class="eyebrow">Testnet prototype · 2026</p>
     </div>
-  </section>
-
-  <section class="section">
-    <div class="wrap">
-      <h2>VPNs ask you to trust them.</h2>
-      <p class="sub">Every VPN says it keeps no logs. None of them let you check, and the payment gives you away anyway.</p>
-      <div class="grid3">
-        <div class="card"><span class="num mono">01</span><h3>"No logs" is a promise</h3><p>You can't see what code a VPN server actually runs.</p></div>
-        <div class="card"><span class="num mono">02</span><h3>Paying ties it to you</h3><p>Your card or wallet links every session back to your name.</p></div>
-        <div class="card"><span class="num mono">03</span><h3>A month for 20 minutes</h3><p>Subscriptions charge you for a month when you needed one café session.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section surface" id="how">
-    <div class="wrap">
-      <h2>How Wraps works.</h2>
-      <p class="sub">Three parts, each checkable. No party sees both who you are and what you do.</p>
-      <div class="pillars">
-        <div class="card pillar">
-          <span class="tag tag-green">Verified</span>
-          <h3>Verified workload code</h3>
-          <p>Nodes and the token issuer run open code in confidential VMs, hardware-attested by AMD SEV and verified by Google. Before you connect or pay, the app checks the attestation names the exact code and keys. A modified or debug build is refused. This verifies the measured workload; it does not prove what an operator may log outside it.</p>
-          <p class="refused mono">IMAGE_MISMATCH → refused</p>
-        </div>
-        <div class="card pillar">
-          <span class="tag">Private</span>
-          <h3>Payments that can't be linked</h3>
-          <p>Top up once with RLUSD from your own wallet on the XRPL EVM sidechain. The issuer signs blind tokens (Privacy Pass, RFC 9578): it can tell a token is valid and unspent, but not which payment it came from.</p>
-        </div>
-        <div class="card pillar">
-          <span class="tag">Metered</span>
-          <h3>Pay only while connected</h3>
-          <p>Tokens are spent per chunk of traffic while you're connected. No subscription.</p>
-          <p class="meter mono">214 MB × $0.002 = $0.43</p>
-        </div>
-      </div>
-      <div class="panels">
-        <figure><div class="crop crop-a"><img src="assets/panel-connected.png" width="360" alt="Wraps menu-bar app, connected, showing upload and download speed and the metered cost of this session"></div><figcaption>Metered by the session</figcaption></figure>
-        <figure><div class="crop crop-b"><img src="assets/panel-wallet-connected.png" width="360" alt="Wraps menu-bar wallet: top up 5 dollars of RLUSD from a connected wallet for 50 blind tokens"></div><figcaption>Top up once, get blind tokens</figcaption></figure>
-      </div>
-      <p class="note">Screenshots from the macOS menu-bar app. Coming soon: full-device WireGuard tunnel.</p>
-    </div>
-  </section>
-
-  <section class="section dark" id="agents">
-    <div class="wrap">
-      <h2>Incognito mode for your agents.</h2>
-      <p class="sub">Your agent's tool calls and browsing can go through the attested relay, paid per use with blind tokens. Sites see the relay address; blind tokens separate top-ups from spending. Timing and traffic metadata can still correlate activity.</p>
-      <div class="agents">
-        <div class="code">
-          <div class="code-bar"><span>agent.ts</span><span class="tag tag-dark">Illustrative</span></div>
-<pre class="mono"><code><span class="c">// Check the attestation, then pay per call with blind tokens.</span>
-<span class="k">const</span> wraps = <span class="k">new</span> PrivatePayClient({
-  issuerUrl: <span class="s">'https://issuer.example'</span>,
-  verifier,                <span class="c">// refuses debug or modified builds</span>
-  wallet,                  <span class="c">// your RLUSD top-up wallet</span>
-  caps: { perCallTokens: <span class="n">5</span>, dailyTokens: <span class="n">24</span>, maxTopUpTokens: <span class="n">20</span> },
-});
-
-<span class="k">await</span> wraps.connect();   <span class="c">// attestation checked before any payment</span>
-<span class="k">const</span> res = <span class="k">await</span> wraps.fetch(<span class="s">'https://api.example.com/prices'</span>);
-<span class="c">// 402 → pays in tokens, under the caps. Above the cap: refused.</span></code></pre>
-        </div>
-        <div class="agent-points">
-          <div class="point"><h3>Attested before paying</h3><p>The agent checks the issuer's hardware attestation first. A changed image never gets a cent.</p></div>
-          <div class="point"><h3>Blind-token payments</h3><p>Pay per call with tokens the issuer can't link to the top-up.</p></div>
-          <div class="point"><h3>Caps in code, not in the prompt</h3><p>"Buy 500 more" from a prompt injection hits a hard limit the model can't talk past.</p></div>
-        </div>
-      </div>
-
-      <div class="contrast">
-        <div class="card-dark">
-          <span class="tag tag-red">Plain x402</span>
-          <h3>A public spending record</h3>
-          <p>Every x402 payment on XRPL mainnet publishes payer, merchant, amount and time. Forever.</p>
-          <div class="facts">
-            <div><span class="big mono">50</span><span>payments to one merchant, from 50 wallets</span></div>
-            <div><span class="big mono">44</span><span>funded straight from exchange hot wallets, so the exchange knows who</span></div>
-          </div>
-        </div>
-        <div class="card-dark">
-          <span class="tag tag-green">With Wraps</span>
-          <h3>Top-up and spending are separated</h3>
-          <p>The merchant sees a valid token from the node's IP. A top-up is visible on-chain; merchant payouts are still mocked, with batched payouts planned.</p>
-          <div class="facts">
-            <div><span class="big mono">RFC 9578</span><span>Privacy Pass blind tokens</span></div>
-            <div><span class="big mono">AMD SEV</span><span>attested, verified by Google</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="section canvas">
-    <div class="wrap">
-      <h2>Designed to disappear.</h2>
-      <p class="sub">One button to connect, a clear meter, and a green check when the server is proven.</p>
-    </div>
-    <div class="phones">
-      <img src="assets/phone-onboarding.png" width="260" alt="Onboarding screen">
-      <img src="assets/phone-connect.png" width="260" alt="Connected screen: session timer, attested badge and metered cost">
-      <img src="assets/phone-nodes.png" width="260" alt="Node list with attested locations">
-      <img src="assets/phone-wallet.png" width="260" alt="Wallet screen with token balance and top-up">
-    </div>
-    <div class="wrap">
-      <img class="desktop" src="assets/desktop-connected.png" alt="Wraps macOS menu-bar dropdown, connected, over a desktop">
-    </div>
-  </section>
-
-  <section class="section" id="privacy">
-    <div class="wrap">
-      <h2>Who sees what.</h2>
-      <p class="sub">No single party sees both who you are and what you do.</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th></th><th>Your IP</th><th>Who paid</th><th>Which site</th><th>What you asked</th></tr></thead>
-          <tbody>
-            <tr><th>You</th><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td></tr>
-            <tr><th>Node (relay)</th><td class="y">Yes</td><td class="n">No</td><td class="y">Host name</td><td class="n">No, HTTPS</td></tr>
-            <tr><th>Token issuer</th><td class="n">No, via the node</td><td class="y">Your top-up wallet</td><td class="y">Yes, at redemption</td><td class="n">No</td></tr>
-            <tr><th>Merchant or site</th><td class="n">No, sees the node</td><td class="n">No, a blind token</td><td class="y">It's the site</td><td class="y">Yes, it must</td></tr>
-            <tr><th>Public chain</th><td class="n">No</td><td class="y">A top-up wallet</td><td class="n">Top-ups; merchant payouts are mocked</td><td class="n">No</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="note">The issuer can't link a top-up to the tokens you later spend. The node and issuer run on separate machines so neither can match traffic to payments.</p>
-    </div>
-  </section>
-
-  <section class="section surface">
-    <div class="wrap">
-      <h2>Privacy improves with every user.</h2>
-      <p class="sub">Estimated link rate under the hourly payout model (simulation).</p>
-      <div class="table-wrap">
-        <table class="sim">
-          <thead><tr><th>Users</th><th>Plain x402</th><th>Wraps tokens</th><th>Random guess</th></tr></thead>
-          <tbody class="mono">
-            <tr><td>1</td><td>100%</td><td>100%</td><td>100%</td></tr>
-            <tr><td>5</td><td>100%</td><td class="g">69%</td><td>20%</td></tr>
-            <tr><td>20</td><td>100%</td><td class="g">29%</td><td>5%</td></tr>
-            <tr><td>100</td><td>100%</td><td class="g">6%</td><td>1%</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p class="note">Simulation only, not measured product performance. It models hourly payouts; real attackers can also use amounts, IPs and merchant data.</p>
-    </div>
-  </section>
-</main>
-
-<footer class="footer dark">
-  <div class="wrap foot">
-    <a class="brand" href="#top"><svg class="mark" fill="currentColor"><use href="#logo"/></svg><span>wraps</span></a>
-    <span class="muted">XRPL AI &amp; Fintech Hackathon, NYC 2026</span>
-    <a class="pill pill-ghost" href="https://github.com/hrishabhayush/wraps">GitHub</a>
-  </div>
-</footer>
+  </footer>
 </body>
 </html>

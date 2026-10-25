@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wraps · IP check</title>
+<style>
+@font-face{font-family:Outfit;font-weight:400;font-style:normal;font-display:swap;src:url('../assets/fonts/outfit-latin-400-normal.woff2') format('woff2')}
+@font-face{font-family:Outfit;font-weight:600;font-style:normal;font-display:swap;src:url('../assets/fonts/outfit-latin-600-normal.woff2') format('woff2')}
+@font-face{font-family:'Geist Mono';font-weight:500;font-style:normal;font-display:swap;src:url('../assets/fonts/geist-mono-latin-500-normal.woff2') format('woff2')}
+:root{color-scheme:dark;--ink:#0a0a0a;--muted:#b4b4c0;--line:#252529;--green:#39c989;font-family:Outfit,system-ui,sans-serif;font-weight:400;background:var(--ink);color:#fff;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}body{margin:0}main{max-width:620px;margin:auto;padding:24px 28px 20px}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.brand{display:inline-flex;align-items:center;gap:7px;font-size:28px;font-weight:600;letter-spacing:-.03em}.brand img{width:32px;height:32px;filter:invert(1)}
+.tag,.eyebrow,dt,footer{font-family:'Geist Mono',ui-monospace,monospace;font-weight:500}.tag{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.hero{padding:30px 0 24px}.eyebrow{color:var(--green);font-size:10px;letter-spacing:.025em;margin:0 0 18px;text-transform:uppercase}
+h1{font-size:16px;line-height:1.4;font-weight:400;color:var(--muted);margin:0 0 4px}
+#ip{font-size:clamp(32px,8.5vw,54px);font-weight:600;line-height:1.12;letter-spacing:-.035em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+#status{margin-top:14px;color:var(--muted);font-size:13px;line-height:1.5}
+dl{margin:0}dl>div{display:grid;grid-template-columns:112px minmax(0,1fr);align-items:baseline;gap:16px;border-top:1px solid var(--line);padding:13px 0}dt{color:#a7a7b2;font-size:10px;text-transform:uppercase;line-height:1.6}dd{margin:0;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+#baseline,#checked{font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;font-weight:500}
+.actions{display:flex;gap:12px;flex-wrap:wrap;margin:24px 0 16px}button{font:600 14px Outfit,system-ui,sans-serif;cursor:pointer;min-height:44px;padding:11px 20px;border:1px solid #44444d;border-radius:999px;background:transparent;color:#fff;transition:opacity .15s}button.primary{background:#fff;border-color:#fff;color:var(--ink)}button:hover{opacity:.8}button:disabled{opacity:.5;cursor:default}:focus-visible{outline:3px solid var(--green);outline-offset:5px}
+p{font-size:13px;line-height:1.6;color:var(--muted);margin:0 0 10px}.note{font-size:12px;color:#a7a7b2}#error{color:#ffb8ad;margin-bottom:12px}a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:4px}footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;border-top:1px solid var(--line);margin-top:22px;padding-top:16px;font-size:10px;color:#a7a7b2}footer a{min-height:24px;display:inline-flex;align-items:center}
+[hidden]{display:none!important}
+@media(max-width:380px){main{padding:20px}.brand{font-size:24px}.tag{font-size:9px}dl>div{grid-template-columns:94px minmax(0,1fr);gap:12px}.actions{gap:8px}button{padding-inline:16px}}
+@media(prefers-reduced-motion:reduce){button{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<header><a class="brand" href="../" aria-label="Wraps home"><img src="../assets/logo.svg" alt="" width="32" height="32">wraps</a><span class="tag">Network check</span></header>
+<section class="hero" aria-label="Current public IP">
+<p class="eyebrow">Your network, at a glance</p>
+<h1>Your public IP</h1>
+<div id="ip" aria-live="polite">Checking…</div>
+<div id="status" role="status">Contacting IPinfo</div>
+</section>
+<dl>
+<div><dt>Baseline IP</dt><dd id="baseline">Not saved yet</dd></div>
+<div><dt>Location</dt><dd id="location">—</dd></div>
+<div><dt>Network / ASN</dt><dd id="org">—</dd></div>
+<div><dt>Hostname</dt><dd id="hostname">—</dd></div>
+<div><dt>Timezone</dt><dd id="timezone">—</dd></div>
+<div><dt>Last checked</dt><dd id="checked">—</dd></div>
+</dl>
+<div class="actions"><button class="primary" id="refresh">Refresh IP</button><button id="save" disabled>Use as baseline</button></div>
+<p id="error" role="alert" hidden></p>
+<p>Save your baseline. Connect Wraps. Refresh to compare.</p>
+<p class="note">An IP change alone doesn’t verify VPN routing or DNS and IPv6 leak protection. Location is approximate.</p>
+<footer><a href="https://ipinfo.io" target="_blank" rel="noopener noreferrer">Data by IPinfo ↗</a><a href="https://ipinfo.io/dashboard/lite" target="_blank" rel="noopener noreferrer">Open dashboard ↗</a></footer>
+</main>
+<script>
+const el=id=>document.getElementById(id);
+let baseline='',current=null;
+try{baseline=localStorage.getItem('wraps-ip-baseline')||''}catch{}
+function comparison(ip,base){return !base?'Save this IP before connecting':ip===base?'Same as baseline':'IP changed — verify it matches your VPN exit';}
+function renderStatus(){el('baseline').textContent=baseline||'Not saved yet';el('status').textContent=comparison(current.ip,baseline);}
+async function refresh(){
+ el('refresh').disabled=true;el('save').disabled=true;el('refresh').textContent='Checking…';el('error').hidden=true;
+ const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),10000);
+ try{
+  const response=await fetch('https://ipinfo.io/json',{cache:'no-store',signal:controller.signal});
+  if(!response.ok)throw new Error(response.status===429?'IPinfo rate limit reached. Wait a moment and refresh.':'IPinfo returned HTTP '+response.status+'.');
+  const data=await response.json();
+  if(typeof data.ip!=='string'||!data.ip.trim())throw new Error('IPinfo did not return an IP address.');
+  current=data;el('ip').textContent=data.ip;
+  el('location').textContent=[data.city,data.region,data.country].filter(Boolean).join(', ')||'Unavailable';
+  for(const field of ['org','hostname','timezone'])el(field).textContent=data[field]||'Unavailable';
+  el('checked').textContent=new Date().toLocaleTimeString();renderStatus();el('save').disabled=false;
+ }catch(error){
+  el('error').textContent=error.name==='AbortError'?'The check timed out. Check your connection and refresh.':error.message||'Could not reach IPinfo. Check your connection and refresh.';
+  el('error').hidden=false;el('status').textContent=current?'Check failed — showing last successful result':'Check failed';if(!current)el('ip').textContent='Unavailable';
+ }finally{clearTimeout(timer);el('refresh').disabled=false;el('refresh').textContent='Refresh IP';}
+}
+el('refresh').addEventListener('click',refresh);
+el('save').addEventListener('click',()=>{if(!current)return;baseline=current.ip;try{localStorage.setItem('wraps-ip-baseline',baseline)}catch{}renderStatus();});
+refresh();
+</script>
+</body>
+</html>

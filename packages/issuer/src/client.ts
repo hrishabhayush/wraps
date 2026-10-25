@@ -32,6 +32,8 @@ export interface AttestedIssuer {
   attestation: VerifiedAttestation;
   /** Runtime-reported issuer mode; "unknown" means the issuer predates this field. */
   merchantAuth: MerchantAuthMode | 'unknown';
+  /** The issuer's own XRPL EVM wallet (0x…, lowercase), when its attestation names one. On-chain top-ups must pay it. */
+  walletAddress?: string;
 }
 
 export async function fetchAttestedIssuer(
@@ -71,7 +73,9 @@ export async function fetchAttestedIssuer(
   }
   const attestation = await verifier.verify(body.attestation, { nonce, publicKeysHash: hashPublicKeys(keys) });
   const merchantAuth = body.merchantAuth === 'enforced' || body.merchantAuth === 'legacy-open' ? body.merchantAuth : 'unknown';
-  return { url: issuerUrl, issuerName: body.issuerName, tokenKey: keys.token, claimKey: keys.claim, tlsKey, attestation, merchantAuth };
+  if (keys.wallet && keys.wallet.length !== 20) throw new AttestationError('MALFORMED', 'issuer wallet must be a 20-byte address');
+  const walletAddress = keys.wallet ? `0x${Buffer.from(keys.wallet).toString('hex')}` : undefined;
+  return { url: issuerUrl, issuerName: body.issuerName, tokenKey: keys.token, claimKey: keys.claim, tlsKey, attestation, merchantAuth, walletAddress };
 }
 
 /** Transport for calls to an attested issuer: pinned to its TLS key over https, `fallback` otherwise. */

@@ -196,28 +196,40 @@ async function handleConnect(
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     void readTLSClientHello(client, head, timeoutMs)
       .then((prefix) => {
-        const clientToUpstream = meteredTransform(meter, closeBoth);
-        const upstreamToClient = meteredTransform(meter, closeBoth);
+        const clientToUpstream = meteredTransform(meter, finishWhenDrained);
+        const upstreamToClient = meteredTransform(meter, finishWhenDrained);
         clientToUpstream.once('error', closeBoth);
         upstreamToClient.once('error', closeBoth);
         clientToUpstream.pipe(upstream);
         upstreamToClient.pipe(client);
-        if (prefix.length > 0) clientToUpstream.write(prefix);
         client.pipe(clientToUpstream);
         upstream.pipe(upstreamToClient);
+        if (prefix.length > 0) clientToUpstream.write(prefix);
+
+        let quotaEnding = false;
+        function finishWhenDrained() {
+          if (quotaEnding) return;
+          quotaEnding = true;
+          client.unpipe(clientToUpstream);
+          upstream.unpipe(upstreamToClient);
+          clientToUpstream.end();
+          upstreamToClient.end();
+          clientToUpstream.once('end', () => client.end());
+          upstreamToClient.once('end', () => upstream.end());
+        }
       })
       .catch(closeBoth);
   });
 }
 
-function meteredTransform(meter: BandwidthMeter, closeTunnel: () => void): Transform {
+function meteredTransform(meter: BandwidthMeter, finishWhenDrained: () => void): Transform {
   return new Transform({
     transform(chunk, _encoding, callback) {
       const stream = this;
       void meter.forward(Buffer.from(chunk)).then(({ bytes, exhausted }) => {
         if (bytes.length > 0) stream.push(bytes);
         callback();
-        if (exhausted) setImmediate(closeTunnel);
+        if (exhausted) finishWhenDrained();
       }, () => callback(new Error('bandwidth settlement failed')));
     },
   });

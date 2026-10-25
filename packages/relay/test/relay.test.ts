@@ -125,6 +125,46 @@ describe('HTTPS CONNECT relay', () => {
     expect(echoed).toEqual(clientHello);
   });
 
+  it('flushes all permitted bytes before closing an exhausted tunnel', async () => {
+    let resolveUpstreamEnd!: (bytes: number) => void;
+    const upstreamEnded = new Promise<number>((resolve) => { resolveUpstreamEnd = resolve; });
+    upstreamServer = createTcpServer((socket) => {
+      let received = 0;
+      socket.pause();
+      setTimeout(() => socket.resume(), 100);
+      socket.on('data', (chunk) => { received += chunk.length; });
+      socket.once('end', () => resolveUpstreamEnd(received));
+    });
+    upstreamServer.listen(0, '127.0.0.1');
+    await once(upstreamServer, 'listening');
+    const upstreamAddress = upstreamServer.address();
+    if (!upstreamAddress || typeof upstreamAddress === 'string') throw new Error('upstream did not bind a TCP port');
+    const issuer: RelayIssuer = { verify: async () => true, settle: async () => {} };
+    server = createRelayServer({ issuer }, {
+      resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+      connect: () => createConnection({ host: '127.0.0.1', port: upstreamAddress.port }),
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('relay did not bind a TCP port');
+    const clientHello = validClientHello();
+    await new Promise<void>((resolve, reject) => {
+      const req = request({
+        host: '127.0.0.1', port: address.port, method: 'CONNECT', path: 'example.com:443',
+        headers: { 'proxy-authorization': proxyAuthorization },
+      });
+      req.on('connect', (_res, socket) => {
+        socket.once('end', resolve);
+        socket.once('error', reject);
+        socket.write(Buffer.concat([clientHello, Buffer.alloc(10_000_000)]));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(await upstreamEnded).toBe(10_000_000);
+  });
+
   it('closes a CONNECT tunnel that does not start with a TLS ClientHello', async () => {
     let upstreamReceivedData = false;
     upstreamServer = createTcpServer((socket) => {
@@ -201,7 +241,6 @@ describe('HTTPS CONNECT relay', () => {
     await startDefaultRelay();
     expect(await connectStatus(port, '192.0.2.1:443')).toBe(403);
     expect(await connectStatus(port, '[2002:7f00:1::1]:443')).toBe(403);
-  });
   });
 });
 

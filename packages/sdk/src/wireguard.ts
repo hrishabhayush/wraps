@@ -330,7 +330,12 @@ export async function registerWireGuardPeer(
         clearTimeout(timer);
         if (res.statusCode !== 201) {
           const definitelyRejected = [400, 401, 404, 409, 413, 415, 429].includes(res.statusCode ?? 0);
-          reject(new WireGuardRegistrationError(definitelyRejected ? 'rejected' : 'unknown', `WireGuard peer registration failed (${res.statusCode ?? 'no status'})`));
+          let reason = '';
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { error?: unknown };
+            if (typeof parsed.error === 'string' && /^[a-z0-9 -]{1,64}$/i.test(parsed.error)) reason = `: ${parsed.error}`;
+          } catch { /* no JSON body */ }
+          reject(new WireGuardRegistrationError(definitelyRejected ? 'rejected' : 'unknown', `WireGuard peer registration failed (${res.statusCode ?? 'no status'})${reason}`));
         } else {
           let address: string | undefined;
           try {

@@ -13,7 +13,7 @@ export interface OpenWireGuardRegistration {
 }
 
 const WIREGUARD_KEY = /^[A-Za-z0-9+/]{43}=$/;
-const STAGE_LABELS = new Set(['peer-add-failed', 'settle-failed', 'quota-failed']);
+const STAGE_LABELS = new Set(['token-encoding-failed', 'verify-failed', 'address-failed', 'peer-add-failed', 'settle-failed', 'quota-failed', 'quota-read-failed', 'quota-reset-failed']);
 
 /** Run one registration step; on failure rethrow only a fixed label. */
 async function stage<T>(label: string, step: () => Promise<T>): Promise<T> {
@@ -64,12 +64,13 @@ export class WireGuardTokenMeter {
     }
     let address = '';
     await this.serialize(async () => {
-      if (!(await this.issuer.verify(tokens))) throw new Error('invalid tokens');
+      if (!(await stage('verify-failed', () => this.issuer.verify(tokens)))) throw new Error('invalid tokens');
       let peer = this.peers.get(publicKey);
       if (!peer) {
         // Open relay: admit this key. It gets no forwarding until its quota is paid below.
         if (this.peers.size - this.staticPeers >= this.open!.maxPeers) throw new Error('relay is full');
-        const allowedAddress = nextFreePeerAddress(this.open!.interfaceAddress, [...this.peers.values()].map((p) => p.allowedAddress));
+        const allowedAddress = await stage('address-failed', async () =>
+          nextFreePeerAddress(this.open!.interfaceAddress, [...this.peers.values()].map((p) => p.allowedAddress)));
         if (!allowedAddress) throw new Error('relay is full');
         peer = { publicKey, allowedAddress };
         await stage('peer-add-failed', () => this.open!.addPeer(peer!));
@@ -87,9 +88,9 @@ export class WireGuardTokenMeter {
       if (existing.paidBlocks >= 1000) throw new Error('peer quota limit reached');
       // Reconcile before payment in case the packet quota expired before the
       // asynchronous poller observed it.
-      const usage = await this.quotas.usedBytes();
-      await this.reconcile(publicKey, existing, usage.get(publicKey) ?? 0);
-      await this.issuer.settle(this.merchantId, tokens[0]);
+      const usage = await stage('quota-read-failed', () => this.quotas.usedBytes());
+      await stage('quota-reset-failed', () => this.reconcile(publicKey, existing, usage.get(publicKey) ?? 0));
+      await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0]));
       existing.paidBlocks++;
       if (existing.quotaExhausted) {
         await this.quotas.reset(publicKey);
@@ -119,7 +120,9 @@ export class WireGuardTokenMeter {
         return this.respond(res, 401, 'a valid PrivateToken header is required');
       }
       if (parsed.length !== 1) return this.respond(res, 401, 'exactly one PrivateToken is required per registration');
-      const address = await this.register(body.publicKey, parsed.map(serializeToken));
+      let serialized: string[];
+      try { serialized = parsed.map(serializeToken); } catch { throw new Error('token-encoding-failed'); }
+      const address = await this.register(body.publicKey, serialized);
       res.writeHead(201, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify({ registered: true, address, bytesPerToken: WIREGUARD_BYTES_PER_TOKEN }));
       return true;

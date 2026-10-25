@@ -53,7 +53,8 @@ const ubla = bucket.iamConfiguration?.uniformBucketLevelAccess?.enabled ?? bucke
 if (ubla !== true) errors.push('uniform bucket-level access must be enabled');
 const pap = bucket.iamConfiguration?.publicAccessPrevention ?? bucket.public_access_prevention;
 if (pap !== 'enforced') errors.push('public access prevention must be enforced');
-const lifecycleRules = bucket.lifecycle?.rule ?? bucket.lifecycle?.rules;
+const lifecycle = bucket.lifecycle ?? bucket.lifecycle_config ?? bucket.lifecycle_rule;
+const lifecycleRules = lifecycle?.rule ?? lifecycle?.rules ?? lifecycle;
 if (Array.isArray(lifecycleRules) && lifecycleRules.length !== 0) errors.push('remove lifecycle rules that could delete issuer snapshots');
 if (errors.length) { console.error(`invalid issuer-state bucket: ${errors.join('; ')}`); process.exit(1); }
 NODE

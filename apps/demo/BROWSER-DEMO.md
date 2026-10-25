@@ -25,6 +25,12 @@ The right-hand IP panel refreshes automatically every 15 seconds, browser images
 
 ## Real AP4M purchase
 
+### Sponsored allowance preparation
+
+`WRAPS_SPONSORED=1 npm run ap4m:demo` enables a persistent allowance of ten run attempts and requires a server payment ceiling no higher than 0.05 RLUSD. Each accepted attempt consumes one slot before model work starts, including attempts that later fail. Restarting does not reset the allowance. OpenAI usage is separately billed and bounded by the ten runs and twelve model turns per run; this is not an API-dollar budget. The same report and payment operation are retained, so subsequent retrievals do not buy it again.
+
+This switch does **not** publish the dashboard or make it safe for multiple visitors: it still binds to loopback and shares its local activity feed. Public access requires isolated visitor sessions and a separate gateway. Do not expose this local server through a tunnel as-is.
+
 For the bundled local merchant, run `npm run ap4m:demo` in the terminal holding the exported agent key. It discovers your single open channel, reads its merchant and payout from the chain, and starts `http://127.0.0.1:4180/resource` plus the live dashboard at `http://127.0.0.1:4177`. Startup makes no purchase. The endpoint quotes **0.05 testnet RLUSD** for a saved XRPL EVM block snapshot; the agent may buy the report when useful to your task and within the task budget. The local demo uses the agent wallet to submit the merchant's redemption transaction too (maximum estimated gas fee 0.1 testnet XRP). The payout still goes to the channel's registered merchant. Keep this terminal open. Stop it with Ctrl-C.
 
 The local merchant request does not traverse the VPN. Public browsing, RPC and the observed external IP are separate network checks. The live purchase still requires the external agent IP to match `DEMO_EXIT_IP`. This is a demo of the AP4M voucher exchange, not proof of remote merchant routing or private on-chain payments. The server uses a stable local URL and retains the report and payment state across restarts so an uncertain purchase can resume.

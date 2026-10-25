@@ -2,16 +2,23 @@
 import { createServer, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright';
 import { checkControl, controlPolicy } from './control';
 import { paymentConfig, purchase } from './browser-payment';
 import { parseAgentRequest, runGeneralAgent, openaiModel, type AgentRequest, type ResearchTools } from './general-agent';
 import { browserEnvironment, checkBrowserUrl } from './browser-safety';
+import { SponsoredQuota } from './sponsored-quota';
 
 const port = Number(process.env.BROWSER_DEMO_PORT ?? 4176);
 const base = `http://127.0.0.1:${port}`;
 const expectedIp = process.env.DEMO_EXIT_IP ?? '136.80.57.82';
 const config = paymentConfig(process.env);
+const sponsored = process.env.WRAPS_SPONSORED === '1';
+if (sponsored && (!config.ready || !process.env.OPENAI_API_KEY || Number(config.maximum) > 0.05)) {
+  throw new Error('Sponsored mode requires both keys, a configured channel, and a maximum price of 0.05 RLUSD.');
+}
+const quota = sponsored ? new SponsoredQuota(join(process.env.AP4M_STATE_DIR!, 'sponsored-runs')) : undefined;
 const policy = controlPolicy('127.0.0.1');
 const website = fileURLToPath(new URL('../../../website/', import.meta.url));
 const clients = new Set<ServerResponse>();
@@ -178,10 +185,16 @@ const server = createServer(async (req, res) => {
       let body = '';
       for await (const chunk of req) { body += chunk.toString(); if (Buffer.byteLength(body) > 8192) return json(res, 413, { error: 'Task request too large' }); }
       const request = parseAgentRequest(JSON.parse(body), config.maximum);
+      if (sponsored && request.mode !== 'agent') return json(res, 400, { error: 'Sponsored mode supports general research tasks only.' });
       if (request.mode === 'agent' && !process.env.OPENAI_API_KEY) return json(res, 409, { error: 'Set OPENAI_API_KEY in the terminal and restart the demo.' });
       // Re-check after reading the body so concurrent requests cannot start two agents.
       if (running) return json(res, 409, { error: 'A run is already active' });
-      running = true; void run(request); return json(res, 202, { running });
+      running = true;
+      if (quota) {
+        try { await quota.reserve(); }
+        catch { running = false; return json(res, 429, { error: 'Sponsored allowance unavailable or exhausted. No run was started.' }); }
+      }
+      void run(request); return json(res, 202, { running });
     } catch { return json(res, 400, { error: `Enter a task, mode, and budget between 0 and ${config.maximum} RLUSD.` }); }
   }
   if (req.method === 'POST' && url.pathname === '/api/stop') { activeRun?.abort(); publish('status', 'Stop requested. Already submitted payments cannot be cancelled.'); return json(res, 202, { stopping: running }); }

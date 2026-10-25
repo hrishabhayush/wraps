@@ -37,6 +37,9 @@ describe("parseX402Payment", () => {
   it("ignores payments without the x402 facilitator memo", () => {
     const plain = structuredClone(entry);
     delete plain.tx.Memos;
+    // The T54 v2 payment marker is an alternate x402 signal, so remove it too.
+    delete plain.tx.SourceTag;
+    delete plain.tx.InvoiceID;
     expect(parseX402Payment(plain)).toBeNull();
   });
 

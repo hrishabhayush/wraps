@@ -20,7 +20,7 @@ Last updated: Oct 24, 2026.
 
 **Say:** "hardware-attested by AMD SEV, verified by Google." **Don't say:** "trustless" or "SEV-SNP" (we deployed SEV).
 
-**Show:** `npm run verify:gcp`, `npm run demo:gcp` (after PR #20 merges and the VM is started).
+**Show:** Start the issuer VM, then run `npm run verify:gcp` and `npm run demo:gcp`.
 
 ---
 
@@ -37,12 +37,12 @@ Last updated: Oct 24, 2026.
 
 ## 3. Security tests
 
-**Claim:** "Every attack in our threat model has a test."
+**Claim:** "The listed security flaws and failure modes have regression tests."
 
 | Proof | Status |
 |---|---|
 | 151 tests passing, typecheck clean | On main |
-| 75 tests passing with the Confidential Space verifier (tampered digest, debug, wrong nonce, replay, wrong key hash, bad signature, wrong issuer or audience, expired token, wrong platform, TLS pinning) | PR #20 |
+| Confidential Space verifier tests cover tampered digest, debug mode, wrong nonce, replay, wrong key hash, bad signature, wrong issuer or audience, expired token, wrong platform, and TLS pinning | On main |
 | Tampered issuer refused, debug mode refused, replayed receipt refused | On main (`npm run demo:core -- --tamper`) |
 | Prompt injection ("buy 500 more") stopped by caps in code, not by the model | On main (`npm run demo:core -- --gullible`) |
 | 402 above the price cap refused, no wallet fallback | On main |
@@ -110,14 +110,14 @@ Cited: Dingledine and Mathewson, "Anonymity Loves Company" (2006): anonymity gro
 
 ## 8. The VPN layer
 
-**Claim:** "Merchants never see the agent's IP. Traffic goes through our relay, and the agent pays for bandwidth with the same private tokens."
+**Claim:** "The relay can tunnel and meter HTTPS traffic. Hiding the agent's IP end to end requires the SDK route and relay deployment to be configured."
 
 | Proof | Status |
 |---|---|
 | HTTPS CONNECT relay proxy | On main (PR #2 merged) |
 | Relay metered with blind tokens per 10 MB | On main (PR #3 merged) |
-| SDK tunnels through the attested relay | PR #5 |
-| Relay in Confidential Space | PR #16 (draft) |
+| SDK tunnels through the attested relay | PR #5 (open; not yet on main) |
+| Relay in Confidential Space | PR #16 (draft; not yet deployed) |
 
 ---
 

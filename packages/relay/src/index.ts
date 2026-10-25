@@ -1,7 +1,7 @@
 import type { LookupAddress } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { isIP, createConnection } from 'node:net';
+import { isIP, createConnection, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 const MAX_HEADER_SIZE = 16 * 1024;
@@ -9,6 +9,12 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
 
 export interface RelayServerOptions {
   connectTimeoutMs?: number;
+}
+
+/** Network seams let tests exercise the tunnel without relying on public DNS. */
+export interface RelayDependencies {
+  resolve: (host: string) => Promise<LookupAddress[]>;
+  connect: (host: string, family: 4 | 6, port: number) => Socket;
 }
 
 export interface RelayListenOptions extends RelayServerOptions {
@@ -23,13 +29,18 @@ interface Authority {
 }
 
 /** Create a raw TCP CONNECT proxy for HTTPS on port 443. TLS remains end-to-end. */
-export function createRelayServer(options: RelayServerOptions = {}): Server {
+export function createRelayServer(
+  options: RelayServerOptions = {},
+  dependencies: Partial<RelayDependencies> = {},
+): Server {
   const server = createServer({ maxHeaderSize: MAX_HEADER_SIZE }, rejectHttpRequest);
   server.headersTimeout = 10_000;
   server.requestTimeout = 10_000;
+  const resolve = dependencies.resolve ?? ((host) => lookup(host, { all: true, verbatim: true }));
+  const connect = dependencies.connect ?? ((host, family, port) => createConnection({ host, family, port }));
 
   server.on('connect', (req, client, head) => {
-    void handleConnect(req, client, head, options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
+    void handleConnect(req, client, head, options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS, resolve, connect);
   });
 
   return server;
@@ -76,7 +87,15 @@ function isDnsName(host: string): boolean {
   );
 }
 
-async function handleConnect(req: IncomingMessage, client: Duplex, head: Buffer, timeoutMs: number): Promise<void> {
+async function handleConnect(
+  req: IncomingMessage,
+  client: Duplex,
+  head: Buffer,
+  timeoutMs: number,
+  resolve: RelayDependencies['resolve'],
+  connect: RelayDependencies['connect'],
+): Promise<void> {
+  client.pause();
   const authority = parseAuthority(req.url);
   if (!authority) {
     respondAndClose(client, 400, 'Invalid CONNECT authority; HTTPS on port 443 only');
@@ -87,7 +106,7 @@ async function handleConnect(req: IncomingMessage, client: Duplex, head: Buffer,
   try {
     addresses = isIP(authority.host)
       ? [{ address: authority.host, family: isIP(authority.host) as 4 | 6 }]
-      : await lookup(authority.host, { all: true, verbatim: true });
+      : await resolve(authority.host);
   } catch {
     respondAndClose(client, 502, 'Destination lookup failed');
     return;
@@ -99,7 +118,7 @@ async function handleConnect(req: IncomingMessage, client: Duplex, head: Buffer,
 
   // Connect to the exact address that passed validation; do not resolve the hostname again.
   const destination = addresses[0];
-  const upstream = createConnection({ host: destination.address, family: destination.family, port: authority.port });
+  const upstream = connect(destination.address, destination.family as 4 | 6, authority.port);
   let established = false;
   const timer = setTimeout(() => upstream.destroy(new Error('connect timeout')), timeoutMs);
   timer.unref();
@@ -119,10 +138,67 @@ async function handleConnect(req: IncomingMessage, client: Duplex, head: Buffer,
     established = true;
     clearTimeout(timer);
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-    if (head.length > 0) upstream.write(head);
-    client.pipe(upstream);
-    upstream.pipe(client);
+    void readTLSClientHello(client, head, timeoutMs)
+      .then((prefix) => {
+        client.unshift(prefix);
+        client.pipe(upstream);
+        upstream.pipe(client);
+      })
+      .catch(closeBoth);
   });
+}
+
+/** Buffer and validate the first TLS record before forwarding any tunnel data. */
+function readTLSClientHello(client: Duplex, head: Buffer, timeoutMs: number): Promise<Buffer> {
+  if (head.length >= 6) {
+    return isTLSClientHello(head.subarray(0, 6))
+      ? Promise.resolve(head)
+      : Promise.reject(new Error('CONNECT tunnel did not start with a TLS ClientHello'));
+  }
+
+  return new Promise((resolve, reject) => {
+    const chunks = head.length > 0 ? [head] : [];
+    let length = head.length;
+    const cleanup = () => {
+      clearTimeout(timer);
+      client.off('data', onData);
+      client.off('error', onError);
+      client.off('close', onClose);
+    };
+    const fail = (error: Error) => {
+      cleanup();
+      client.pause();
+      reject(error);
+    };
+    const onData = (chunk: Buffer) => {
+      chunks.push(chunk);
+      length += chunk.length;
+      if (length < 6) return;
+      cleanup();
+      client.pause();
+      const prefix = Buffer.concat(chunks, length);
+      if (!isTLSClientHello(prefix.subarray(0, 6))) {
+        reject(new Error('CONNECT tunnel did not start with a TLS ClientHello'));
+        return;
+      }
+      resolve(prefix);
+    };
+    const onError = (error: Error) => fail(error);
+    const onClose = () => fail(new Error('CONNECT client closed before sending a TLS ClientHello'));
+    const timer = setTimeout(() => fail(new Error('Timed out waiting for a TLS ClientHello')), timeoutMs);
+    timer.unref();
+    client.on('data', onData);
+    client.once('error', onError);
+    client.once('close', onClose);
+    client.resume();
+  });
+}
+
+function isTLSClientHello(prefix: Buffer): boolean {
+  if (prefix.length < 6 || prefix[0] !== 0x16 || prefix[1] !== 0x03) return false;
+  if (prefix[2] < 0x01 || prefix[2] > 0x04 || prefix[5] !== 0x01) return false;
+  const recordLength = (prefix[3] << 8) | prefix[4];
+  return recordLength > 0 && recordLength <= 18_432;
 }
 
 function respondAndClose(socket: Duplex, status: number, message: string): void {

@@ -1,6 +1,8 @@
 // Issuer HTTP API.
 //   GET  /attestation?nonce=<hex>   receipt over nonce + hash of public keys
-//   POST /issue    {requests}       402 until paid via the TopUpRail, then blind signatures
+//   POST /quote    {tokens}         price, payout address and quoteId to pay (no x402, for wallet apps)
+//   POST /issue    {requests, payment?}  blind signatures once paid: payment in the body, or x402
+//                                   (402 quote, then the x-payment header) for agents
 //   POST /verify   {tokens}         read-only: signature valid and not spent
 //   POST /settle   {merchantId, tokens}  mark spent, add to tab, signed running-total claim
 //   GET  /reserves                  signed "outstanding ≤ funds held"
@@ -42,10 +44,19 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
         return sendJson(res, 200, await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))));
       }
 
+      if (route === 'POST /quote') {
+        const body = await readJson(req);
+        const tokens = body.tokens;
+        if (!Number.isInteger(tokens) || tokens < 1) throw new HttpError(400, 'tokens must be a positive integer');
+        return sendJson(res, 200, core.quote(tokens));
+      }
       if (route === 'POST /issue') {
         const body = await readJson(req);
         const requests: string[] = body.requests;
-        const payment = req.headers[PAYMENT_HEADER];
+        // Payment proof in the body ({quoteId, txHash, ...}) or, for x402 clients, in the header.
+        const payment = body.payment && typeof body.payment === 'object'
+          ? Buffer.from(JSON.stringify(body.payment)).toString('base64url')
+          : req.headers[PAYMENT_HEADER];
         if (typeof payment === 'string' && payment) {
           return sendJson(res, 200, { responses: await core.issuePaid(requests, payment) });
         }

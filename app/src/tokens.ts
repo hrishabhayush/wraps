@@ -1,5 +1,5 @@
 // Real blind tokens (RFC 9578, type 0x0002) from the Wraps issuer (packages/issuer).
-// Buy: blind N requests → /issue says 402 with a quote → pay it on-chain → retry with proof →
+// Buy: get a quote → pay it on-chain → send blinded requests + payment proof to /issue →
 // unblind and check every token against the issuer's key. Spend: hand tokens to /settle.
 // The issuer signs blinded requests, so it can't link a spent token back to the payment.
 import { Token, TokenChallenge, publicVerif } from '@cloudflare/privacypass-ts';
@@ -36,10 +36,10 @@ export function record(a: Activity) {
 }
 
 // ---------- issuer API ----------
-async function call(path: string, body?: unknown, headers: Record<string, string> = {}) {
+async function call(path: string, body?: unknown) {
   let r: Response;
   try {
-    r = await fetch(ISSUER_URL + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    r = await fetch(ISSUER_URL + path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   } catch {
     throw new Error(`Can't reach the Wraps issuer at ${ISSUER_URL}`);
   }
@@ -64,15 +64,14 @@ export async function buy(n: number, pay: (q: Quote) => Promise<string>) {
   }));
   const requests = clients.map(x => x.req);
 
-  const first = await call('/issue', { requests });
-  if (first.status !== 402) throw new Error(first.body.error ?? `issuer answered ${first.status}, expected 402`);
-  const quote = (first.body.accepts as Quote[]).find(a => a.scheme === WALLET_SCHEME);
-  if (!quote) throw new Error('Issuer doesn’t accept wallet payments (start it with ISSUER_RAIL=xrpl-evm)');
+  const q = await call('/quote', { tokens: n });
+  if (q.status !== 200) throw new Error(q.body.error ?? 'issuer refused to quote');
+  const quote = q.body as Quote;
+  if (quote.scheme !== WALLET_SCHEME) throw new Error('Issuer doesn’t accept wallet payments (start it with ISSUER_RAIL=xrpl-evm)');
   if (quote.tokens !== n) throw new Error(`Issuer quoted ${quote.tokens} tokens, expected ${n}`);
 
   const txHash = await pay(quote);
-  const proof = b64u(new TextEncoder().encode(JSON.stringify({ quoteId: quote.quoteId, txHash })));
-  const paid = await call('/issue', { requests }, { 'x-payment': proof });
+  const paid = await call('/issue', { requests, payment: { quoteId: quote.quoteId, txHash } });
   if (paid.status !== 200) throw new Error(paid.body.error ?? 'issuer refused the payment');
 
   // Every token must verify under the issuer's key (stops it tagging users with a side key).

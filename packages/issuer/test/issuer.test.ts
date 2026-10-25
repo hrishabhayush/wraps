@@ -50,6 +50,24 @@ async function buyTokens(n: number) {
 }
 
 describe('issuer', () => {
+  it('sells tokens without x402: /quote, pay, then /issue with the payment in the body', async () => {
+    const q = await post('/quote', { tokens: 2 });
+    expect(q.status).toBe(200);
+    expect(q.body).toMatchObject({ tokens: 2, amountRlusd: '0.20' });
+    const pending = await blindTokens(issuer.core.publicKeys.token, 2, issuer.core.name);
+    const requests = pending.map((p) => b64u(p.request));
+    const payment = JSON.parse(Buffer.from(await wallet.pay(q.body), 'base64url').toString());
+    const paid = await post('/issue', { requests, payment });
+    expect(paid.status).toBe(200);
+    expect(paid.body.responses).toHaveLength(2);
+    expect((await post('/issue', { requests, payment })).status).toBe(402); // quote used up
+  });
+
+  it('refuses to quote more than one /issue call can sign', async () => {
+    expect((await post('/quote', { tokens: 201 })).status).toBe(400);
+    expect((await post('/quote', { tokens: 0 })).status).toBe(400);
+  });
+
   it('answers /issue with a 402 that names the price', async () => {
     const pending = await blindTokens(issuer.core.publicKeys.token, 3, issuer.core.name);
     const r = await post('/issue', { requests: pending.map((p) => b64u(p.request)) });

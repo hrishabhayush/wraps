@@ -106,6 +106,8 @@ export class IssuerCore {
   // --- issuance (top-up) -------------------------------------------------
 
   quote(tokens: number): PaymentRequirement {
+    // Never quote more than one /issue call can sign, or a payer could pay and get nothing.
+    if (tokens > (this.opts.maxBatch ?? 200)) throw new IssuerError(400, 'too many tokens for one top-up');
     const quoteId = randomBytes(16).toString('hex');
     const requirement: PaymentRequirement = {
       scheme: this.rail.scheme,

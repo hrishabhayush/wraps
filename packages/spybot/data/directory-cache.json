@@ -1,95 +1,29 @@
 {
   "source": "https://xrpl-ai.org/",
-  "fetchedAt": "2026-10-25T00:23:08.097Z",
+  "fetchedAt": "2026-10-25T00:25:04.718Z",
   "entries": [
     {
-      "address": "ra9b6JX5aPVbdJhogDDddsRAcasWg7gzC3",
-      "service": "X Tweets by IDs",
-      "host": "x402.asksurf.ai",
-      "price": 0.006,
+      "address": "r9Y5kWQvZLXn4vuvqNJovoNpJFzpMCuP2d",
+      "service": "Prove an XRP Ledger transaction (validator quorum; no server trusted; signed receipt)",
+      "host": "numba2witcheese.tail7d8d44.ts.net",
+      "price": 0.002,
       "currency": "RLUSD",
       "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true,
-      "merchant": "AskSurf"
+      "verified": true
     },
     {
-      "address": "rnPmtGgU7fMKrud7m1oK7E1ogN35qDbKV1",
-      "service": "base-ping",
-      "host": "x402.greenhead.io",
+      "address": "rUjBK34fKyMstVePdZwhfJhoQuz4U6wLDL",
+      "service": "XRPL Credential Verify",
+      "host": "verify.sciphr.io",
       "price": 0.002,
       "currency": "XRP",
       "verified": true
     },
     {
-      "address": "rBiU74q2wCPQ7ri9YD6J6LrQ2Y3jFd8pcN",
-      "service": "Briefing Unlock",
-      "host": "published-zeta.vercel.app",
-      "price": 0,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rHyLmYewCQABAx6MMRBBuYYUUYWve2E1Lf",
-      "service": "Audit another XRPL x402 origin (Domain + DID + Credential + catalog hash). Hub/peer inbound — not ASM ignition. GET ?url=",
-      "host": "api.agentic-swarm-marketplace.com",
+      "address": "r4ksbYjcHPzTnYu62qkFh73BtnGM6oYLQ6",
+      "service": "PolluxDEX: best XRPL swap route",
+      "host": "polluxdex.com",
       "price": 0.001,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rNtLRV3Fsr7Nvj3y9Rp5DkNvT3KvRmDkvQ",
-      "service": "DreamWidget Pro, a month: the embeddable Logo Showcase and Video Showcase widgets, with the API to build them",
-      "host": "dreamwidget.com",
-      "price": 23.124952,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rpvQtAL2zoFV6BARKRWGRqzL2yDfNy6eH5",
-      "service": "CryptoBuddy Australian Asset Availability - Mainnet",
-      "host": "x402.cryptobuddy.com.au",
-      "price": 0.001,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rKv7LTd19CUsKKirVzdZWK4HuFChHf4Hp7",
-      "service": "Direct Census Bureau Advance Monthly Retail Trade Survey total retail and food services sales level, with monthly and year-over-year change. Purpose: Measure the direction of US consumer spending at the point of sale using the Census Bureau's own headline retail-sales release. 6-hour freshness target; missing evidence is reported explicitly rather than invented.",
-      "host": "pay.edge-agents.ai",
-      "price": 0.01,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rUjdUGRzZQEA7QE5KjkSSn7v8WR6G8RDLb",
-      "service": "research-brief",
-      "host": "remain-marking-voice-platform.trycloudflare.com",
-      "price": 0.01,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rhteihAJz1KsY6GpWPEc9Jo1W9qrqg1z1i",
-      "service": "AgentNOMOS Purchase Gate",
-      "host": "agentnomos.com",
-      "price": 0.001,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rPzwqkF8BC6uJWAVosexHqf3cpu7Vuuy7g",
-      "service": "Pool snapshot series",
-      "host": "api.x402lab.dev",
-      "price": 0.01,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rMRaxFZnyNHmqfafLbAdGbi9cHi24UhiaG",
-      "service": "ALSP XRPL session evidence",
-      "host": "alsp.vercel.app",
-      "price": 0.01,
       "currency": "XRP",
       "verified": true
     },
@@ -98,142 +32,6 @@
       "service": "Permissioned domain scan",
       "host": "sentinel.xrpl-utilities.io",
       "price": 0.06993,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rGYbaZwYqA5XwFcmxWVdyyut4vUeTD7KcQ",
-      "service": "Firecrawl Batch Scrape",
-      "host": "monid-x402-xrpl-production.up.railway.app",
-      "price": 0.001,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true,
-      "merchant": "Monid Tool Router"
-    },
-    {
-      "address": "rBi1QrVjwaNofisZAQnovoXdHkS73FG1tJ",
-      "service": "Inference Router — Powered by Heurist",
-      "host": "router.heurist.xyz",
-      "price": 0.0005,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true,
-      "merchant": "Heurist Inference Router"
-    },
-    {
-      "address": "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM",
-      "service": "Lumi Market Ideas: all-coins scan (50 signals in one call)",
-      "host": "api.lumitrades.io",
-      "price": 0.0024,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rJMvspZMb1FRHmy8d3RP2eVGPjRmfKXh6e",
-      "service": "Lucy token analysis service (XRPL x402)",
-      "host": "x402.lucyos.ai",
-      "price": 0.001,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rJBKtRaoQTepBEx3xjXWe71m32h3jY7fwB",
-      "service": "X Pay",
-      "host": "app.clawbank.co",
-      "price": 0.0011,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rawcpsYWnGTFQQGx19F7YguBXPXugA3ng7",
-      "service": "Pay a pay: alias over x402",
-      "host": "api.dnsofmoney.com",
-      "price": 0.01,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rwV5T9Gnr5EBH9rJ2G4NABc4bun2XEkHaD",
-      "service": "best interest-paying cryptos",
-      "host": "feed.scalpstream.com",
-      "price": 0.007606,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rfryheo6yzFdLWj8qUQtZc7zG9MKkBkUEy",
-      "service": "render-pro",
-      "host": "app.heinrichstech.com",
-      "price": 0.01,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rERHPAkbSH8bEHYJWKDERJJ9meDab8Zb1N",
-      "service": "Vela Scan — agent-readiness crawl (API edition)",
-      "host": "agent-commerce.emergedigital.com",
-      "price": 0.001,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "raAyazbgEkwzLByXipQuPLWFfnsPS1v1q9",
-      "service": "Register an XRPName domain (.xrp/.xrpl/.xrpfi/.rlusd) via x402. POST { domain } for the exact per-domain price; this is a representative quote.",
-      "host": "xrpdomains.xyz",
-      "price": 10,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rz49jvkbLDYM2dVPwZ3LkDuvp1vFVX3Wi",
-      "service": "Scores an XRPL address on verifiable trust evidence before you pay it or extend it a trustline",
-      "host": "xrpl-agent-marketplace.onrender.com",
-      "price": 0.0005,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rhFHztjS63h6fs5vXgTotuL7jsuryUvDSF",
-      "service": "invinoveritas /signals/full — the live Hyperliquid perps read our own bot enters on, recomputable per coin from the raw metrics we return (funding + 24h delta,",
-      "host": "api.babyblueviper.com",
-      "price": 0.023518,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rEac5rTEr7y81iEyrMTrHCRbnktSE2pNCp",
-      "service": "Vextorium",
-      "host": "api.vextorium.com",
-      "price": 0.002,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rNJ4EzSTPXXg4tSp7wqvfjL9wKXjkZ3tH",
-      "service": "Curated list of XRPL x402 services",
-      "host": "xrpl-directory.onrender.com",
-      "price": 0.005,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "ra4Nn51YwEsC6KJDCirttT47BCdBAs1zzQ",
-      "service": "sentinel-verify-standard",
-      "host": "sentinel.thoughtproof.ai",
-      "price": 0.005,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rKPnjKibwmuajYXFVonUNwrMN4hEJaz3M6",
-      "service": "CryptoBuddy Best Australian Exchange",
-      "host": "x402.cryptobuddy.com.au",
-      "price": 0.001,
       "currency": "XRP",
       "verified": true
     },
@@ -248,54 +46,12 @@
       "merchant": "Heurist Mesh"
     },
     {
-      "address": "rsnHPZjBSastxz1BE38WqKBR3sgpATvreL",
-      "service": "Circle USDC Intelligence on XRPL",
-      "host": "api.cloudpayxagent.xyz",
-      "price": 0.005,
-      "currency": "USDC",
-      "issuer": "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE",
-      "verified": true
-    },
-    {
       "address": "rUXKCZetEbwQc1i5vkJL6SNXYK3hG7Fezy",
       "service": "Returns official Sirene predecessor and successor links for a French establishment, with effective date, headquarters-transfer flag and economic-continuity flag.",
       "host": "api.helpmyagent.com",
       "price": 0.002,
       "currency": "RLUSD",
       "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "r9Y5kWQvZLXn4vuvqNJovoNpJFzpMCuP2d",
-      "service": "Prove an XRP Ledger transaction (validator quorum; no server trusted; signed receipt)",
-      "host": "numba2witcheese.tail7d8d44.ts.net",
-      "price": 0.002,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rLNmmcNEizWaygypRVTKaWoZG6RrqfsJpi",
-      "service": "DB Expert Fishing Product Intelligence search",
-      "host": "db-expert-x402.onrender.com",
-      "price": 0.01,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "r36sbDCAsaCj44ZUXWY2jjGE1jBpsCoRQ4",
-      "service": "token_check",
-      "host": "bruk-agent-api.fly.dev",
-      "price": 0.0008,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "r4ksbYjcHPzTnYu62qkFh73BtnGM6oYLQ6",
-      "service": "PolluxDEX: best XRPL swap route",
-      "host": "polluxdex.com",
-      "price": 0.001,
-      "currency": "XRP",
       "verified": true
     },
     {
@@ -308,27 +64,45 @@
       "verified": true
     },
     {
-      "address": "rs59g3amo5iT6T64Cg96XXMAWuw3WPQcLF",
-      "service": "Wallet permissions check — pay per call in USDC on Base",
-      "host": "xrplhub.io",
-      "price": 0.01,
-      "currency": "RLUSD",
-      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
-      "verified": true
-    },
-    {
-      "address": "rWn9xpJkdDK8soWCnM75Va3Sye7xpYe3P",
-      "service": "NOFA backtest and dry-run trading API",
-      "host": "pay.nofa.ai",
+      "address": "rpvQtAL2zoFV6BARKRWGRqzL2yDfNy6eH5",
+      "service": "CryptoBuddy Australian Asset Availability - Mainnet",
+      "host": "x402.cryptobuddy.com.au",
       "price": 0.001,
       "currency": "XRP",
       "verified": true
     },
     {
-      "address": "rUjBK34fKyMstVePdZwhfJhoQuz4U6wLDL",
-      "service": "XRPL Credential Verify",
-      "host": "verify.sciphr.io",
+      "address": "ra4Nn51YwEsC6KJDCirttT47BCdBAs1zzQ",
+      "service": "sentinel-verify-standard",
+      "host": "sentinel.thoughtproof.ai",
+      "price": 0.005,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true
+    },
+    {
+      "address": "rnPmtGgU7fMKrud7m1oK7E1ogN35qDbKV1",
+      "service": "base-ping",
+      "host": "x402.greenhead.io",
       "price": 0.002,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "ra9b6JX5aPVbdJhogDDddsRAcasWg7gzC3",
+      "service": "X Tweets by IDs",
+      "host": "x402.asksurf.ai",
+      "price": 0.006,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true,
+      "merchant": "AskSurf"
+    },
+    {
+      "address": "rHyLmYewCQABAx6MMRBBuYYUUYWve2E1Lf",
+      "service": "Audit another XRPL x402 origin (Domain + DID + Credential + catalog hash). Hub/peer inbound — not ASM ignition. GET ?url=",
+      "host": "api.agentic-swarm-marketplace.com",
+      "price": 0.001,
       "currency": "XRP",
       "verified": true
     },
@@ -341,34 +115,18 @@
       "verified": false
     },
     {
-      "address": "rEB3eMYcrd1L7WXQMrAAWKfFiM1fRtpggt",
-      "service": "XRPreflight Preflight",
-      "host": "destinationpreflight.com",
-      "price": 0.0005,
+      "address": "raAyazbgEkwzLByXipQuPLWFfnsPS1v1q9",
+      "service": "Register an XRPName domain (.xrp/.xrpl/.xrpfi/.rlusd) via x402. POST { domain } for the exact per-domain price; this is a representative quote.",
+      "host": "xrpdomains.xyz",
+      "price": 10,
       "currency": "XRP",
       "verified": true
     },
     {
-      "address": "rEHuiqohoiCuFgayzpLnkwdcYwrEqV4MtL",
-      "service": "Lightweight XRP context for agents",
-      "host": "web-production-fb721.up.railway.app",
-      "price": 0.001,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "rML2A2XcrVwFUHwfCTdRq8oR4yX1RJHg5n",
-      "service": "N9T2 XRPL x402 Gateway discovery endpoint",
-      "host": "x402.n9t2.com",
-      "price": 0.000323,
-      "currency": "XRP",
-      "verified": true
-    },
-    {
-      "address": "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw",
-      "service": "Buy for your agent",
-      "host": "x402-doctor.fizzl.eu",
-      "price": 0.001,
+      "address": "rKv7LTd19CUsKKirVzdZWK4HuFChHf4Hp7",
+      "service": "Direct Census Bureau Advance Monthly Retail Trade Survey total retail and food services sales level, with monthly and year-over-year change. Purpose: Measure the direction of US consumer spending at the point of sale using the Census Bureau's own headline retail-sales release. 6-hour freshness target; missing evidence is reported explicitly rather than invented.",
+      "host": "pay.edge-agents.ai",
+      "price": 0.01,
       "currency": "RLUSD",
       "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
       "verified": true
@@ -382,6 +140,239 @@
       "verified": true
     },
     {
+      "address": "rBi1QrVjwaNofisZAQnovoXdHkS73FG1tJ",
+      "service": "Inference Router — Powered by Heurist",
+      "host": "router.heurist.xyz",
+      "price": 0.0005,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true,
+      "merchant": "Heurist Inference Router"
+    },
+    {
+      "address": "rUjdUGRzZQEA7QE5KjkSSn7v8WR6G8RDLb",
+      "service": "research-brief",
+      "host": "remain-marking-voice-platform.trycloudflare.com",
+      "price": 0.01,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rBiU74q2wCPQ7ri9YD6J6LrQ2Y3jFd8pcN",
+      "service": "Briefing Unlock",
+      "host": "published-zeta.vercel.app",
+      "price": 0,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw",
+      "service": "Buy for your agent",
+      "host": "x402-doctor.fizzl.eu",
+      "price": 0.001,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true
+    },
+    {
+      "address": "rJBKtRaoQTepBEx3xjXWe71m32h3jY7fwB",
+      "service": "X Pay",
+      "host": "app.clawbank.co",
+      "price": 0.0011,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true
+    },
+    {
+      "address": "rWn9xpJkdDK8soWCnM75Va3Sye7xpYe3P",
+      "service": "NOFA backtest and dry-run trading API",
+      "host": "pay.nofa.ai",
+      "price": 0.001,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rawcpsYWnGTFQQGx19F7YguBXPXugA3ng7",
+      "service": "Pay a pay: alias over x402",
+      "host": "api.dnsofmoney.com",
+      "price": 0.01,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rMRaxFZnyNHmqfafLbAdGbi9cHi24UhiaG",
+      "service": "ALSP XRPL session evidence",
+      "host": "alsp.vercel.app",
+      "price": 0.01,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rsnHPZjBSastxz1BE38WqKBR3sgpATvreL",
+      "service": "Circle USDC Intelligence on XRPL",
+      "host": "api.cloudpayxagent.xyz",
+      "price": 0.005,
+      "currency": "USDC",
+      "issuer": "rGm7WCVp9gb4jZHWTEtGUr4dd74z2XuWhE",
+      "verified": true
+    },
+    {
+      "address": "rEB3eMYcrd1L7WXQMrAAWKfFiM1fRtpggt",
+      "service": "XRPreflight Preflight",
+      "host": "destinationpreflight.com",
+      "price": 0.0005,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rNJ4EzSTPXXg4tSp7wqvfjL9wKXjkZ3tH",
+      "service": "Curated list of XRPL x402 services",
+      "host": "xrpl-directory.onrender.com",
+      "price": 0.005,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rhteihAJz1KsY6GpWPEc9Jo1W9qrqg1z1i",
+      "service": "AgentNOMOS Purchase Gate",
+      "host": "agentnomos.com",
+      "price": 0.001,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rhFHztjS63h6fs5vXgTotuL7jsuryUvDSF",
+      "service": "invinoveritas /signals/full — the live Hyperliquid perps read our own bot enters on, recomputable per coin from the raw metrics we return (funding + 24h delta,",
+      "host": "api.babyblueviper.com",
+      "price": 0.023518,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rM8kmmnz5qPMg7V3r7SHYXgDGvm8PhzLvM",
+      "service": "Lumi Market Ideas: all-coins scan (50 signals in one call)",
+      "host": "api.lumitrades.io",
+      "price": 0.0024,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rPzwqkF8BC6uJWAVosexHqf3cpu7Vuuy7g",
+      "service": "Pool snapshot series",
+      "host": "api.x402lab.dev",
+      "price": 0.01,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rERHPAkbSH8bEHYJWKDERJJ9meDab8Zb1N",
+      "service": "Vela Scan — agent-readiness crawl (API edition)",
+      "host": "agent-commerce.emergedigital.com",
+      "price": 0.001,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rs59g3amo5iT6T64Cg96XXMAWuw3WPQcLF",
+      "service": "Wallet permissions check — pay per call in USDC on Base",
+      "host": "xrplhub.io",
+      "price": 0.01,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true
+    },
+    {
+      "address": "r36sbDCAsaCj44ZUXWY2jjGE1jBpsCoRQ4",
+      "service": "token_check",
+      "host": "bruk-agent-api.fly.dev",
+      "price": 0.0008,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rKPnjKibwmuajYXFVonUNwrMN4hEJaz3M6",
+      "service": "CryptoBuddy Best Australian Exchange",
+      "host": "x402.cryptobuddy.com.au",
+      "price": 0.001,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rML2A2XcrVwFUHwfCTdRq8oR4yX1RJHg5n",
+      "service": "N9T2 XRPL x402 Gateway discovery endpoint",
+      "host": "x402.n9t2.com",
+      "price": 0.000323,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rLNmmcNEizWaygypRVTKaWoZG6RrqfsJpi",
+      "service": "DB Expert Fishing Product Intelligence search",
+      "host": "db-expert-x402.onrender.com",
+      "price": 0.01,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rz49jvkbLDYM2dVPwZ3LkDuvp1vFVX3Wi",
+      "service": "Scores an XRPL address on verifiable trust evidence before you pay it or extend it a trustline",
+      "host": "xrpl-agent-marketplace.onrender.com",
+      "price": 0.0005,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rEHuiqohoiCuFgayzpLnkwdcYwrEqV4MtL",
+      "service": "Lightweight XRP context for agents",
+      "host": "web-production-fb721.up.railway.app",
+      "price": 0.001,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rMnHeutYALco8RYFVcmuU4BCgSzBpPEh32",
+      "service": "Stock-backing analytics for LONG.xyz / Doppler launches on Robinhood Chain: live price in stock and USD, FDV, sell-side depth at -2/-5/-10/-25% moves, cumulated fees, backing-stock float share. Omit token for the aggregate table: share of each Robinhood stock token held in the v4 meme-pool singleton. Deterministic on-chain reads, analytics only.",
+      "host": "macropulse.theaslangroupllc.com",
+      "price": 0.005,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rNtLRV3Fsr7Nvj3y9Rp5DkNvT3KvRmDkvQ",
+      "service": "DreamWidget Pro, a month: the embeddable Logo Showcase and Video Showcase widgets, with the API to build them",
+      "host": "dreamwidget.com",
+      "price": 23.124952,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rGYbaZwYqA5XwFcmxWVdyyut4vUeTD7KcQ",
+      "service": "Get state price detail",
+      "host": "monid-x402-xrpl-production.up.railway.app",
+      "price": 0.01,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true,
+      "merchant": "Monid Tool Router"
+    },
+    {
+      "address": "rfryheo6yzFdLWj8qUQtZc7zG9MKkBkUEy",
+      "service": "render-pro",
+      "host": "app.heinrichstech.com",
+      "price": 0.01,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
+      "verified": true
+    },
+    {
+      "address": "rwV5T9Gnr5EBH9rJ2G4NABc4bun2XEkHaD",
+      "service": "best interest-paying cryptos",
+      "host": "feed.scalpstream.com",
+      "price": 0.007606,
+      "currency": "XRP",
+      "verified": true
+    },
+    {
       "address": "rH2tcNh56xoLUssRubra7DSDCgrReSZodW",
       "service": "On-Chain-Risk-Check — EVM-Adresse rein, Rug-Risiko-Urteil mit Evidenz raus",
       "host": "oracle.evebrief.org",
@@ -391,11 +382,20 @@
       "verified": true
     },
     {
-      "address": "rMnHeutYALco8RYFVcmuU4BCgSzBpPEh32",
-      "service": "Stock-backing analytics for LONG.xyz / Doppler launches on Robinhood Chain: live price in stock and USD, FDV, sell-side depth at -2/-5/-10/-25% moves, cumulated fees, backing-stock float share. Omit token for the aggregate table: share of each Robinhood stock token held in the v4 meme-pool singleton. Deterministic on-chain reads, analytics only.",
-      "host": "macropulse.theaslangroupllc.com",
-      "price": 0.005,
+      "address": "rJMvspZMb1FRHmy8d3RP2eVGPjRmfKXh6e",
+      "service": "Lucy token analysis service (XRPL x402)",
+      "host": "x402.lucyos.ai",
+      "price": 0.001,
       "currency": "XRP",
+      "verified": true
+    },
+    {
+      "address": "rEac5rTEr7y81iEyrMTrHCRbnktSE2pNCp",
+      "service": "Vextorium",
+      "host": "api.vextorium.com",
+      "price": 0.002,
+      "currency": "RLUSD",
+      "issuer": "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De",
       "verified": true
     }
   ]

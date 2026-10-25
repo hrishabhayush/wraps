@@ -137,3 +137,5 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 2. Implement and verify **PAY-03**; then finish the real top-up path in **SDK-03** and RLUSD payouts in **ISS-06**.
 3. For the WireGuard path, the **RLY-04** implementation (#32, #38), **INF-27** runtime (#33), **INF-28** deployment (#40) and **SDK-06** profile (#37) are merged. Add and test the missing receipt route in **RLY-05**, then validate an authorized peer before completing the live path and **SDK-07** (#39).
 4. Address **SEC-01** and finish **SPY-01 to SPY-03**, **DEM-03**, **DEM-04** and **DEM-06** before the live demo.
+
+- [ ] **APP-USE-01** Desktop VPN uses the existing relay quota accurately: consume one 10 MB quota token on connect, show the remaining blind-token wallet balance, and label prepaid quota without presenting simulated traffic as actual usage.

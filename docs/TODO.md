@@ -27,7 +27,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ### Attestation (agent working on this)
 - [~] **INF-12** In the workload, request a Confidential Space attestation token whose nonces bind the client's nonce and the hash of the workload's public keys. Expose `GET /attestation?nonce=`. (Codex)
-- [~] **INF-13** SDK verifier: JWT signed by Google's attestation service, AMD SEV hardware, production image, debug disabled, expected image digest, nonce and key hash match.
+- [x] **INF-13** SDK verifier: JWT signed by Google's attestation service, AMD SEV hardware, production image, debug disabled, expected image digest, nonce and key hash match. (Codex)
 - [~] **INF-14** TLS: the workload makes its own key and a self-signed certificate. The SDK pins the key from the attestation.
 
 ### Keys and secrets

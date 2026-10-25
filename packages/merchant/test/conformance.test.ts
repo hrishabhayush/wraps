@@ -26,7 +26,7 @@ let t = Date.now();
 const now = () => t;
 
 beforeAll(async () => {
-  issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
+  issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
   merchant = new Merchant({ merchantId: 'm-conf', issuerUrl: issuer.url, verifier: verifier(), log: quiet, now, quoteTtlMs: 60_000 });
   url = await merchant.start();
 });
@@ -250,7 +250,7 @@ describe('SR4 / ambiguous settlement: a quote reopens only when settle is known 
     }
   }
 
-  it('SR4 ambiguous settle: the answer is lost after the issuer settled; /verify confirms it and the merchant serves once', async () => {
+  it('SR4 ambiguous settle: the answer is lost after the issuer settled; /settle/status confirms it and the merchant serves once', async () => {
     const lost: Transport = async (u, init) => {
       await fetch(u, init); // the issuer settles
       throw new Error('socket hang up'); // but the merchant never sees the answer
@@ -319,7 +319,7 @@ describe('SR4 / ambiguous settlement: a quote reopens only when settle is known 
       expect((await landed).status).toBe(200); // the late settle lands at the issuer
 
       const r2 = await pay('/analytics', tokens, q.quoteId, base);
-      expect(r2.status).toBe(200); // retry: settle says "already spent", /verify confirms, serve
+      expect(r2.status).toBe(200); // retry: idempotent settle returns the original claim, serve
       expect((await pay('/analytics', tokens, q.quoteId, base)).status).toBe(402);
 
       // The next paid request's claim covers the late settle plus this one: 2 + 2 tokens.
@@ -347,6 +347,131 @@ describe('SR4 / ambiguous settlement: a quote reopens only when settle is known 
       expect(m.claims).toHaveLength(1);
       expect(m.latestClaim?.claim.totalTokens).toBe(2);
     });
+  });
+});
+
+describe('SEC-03: cross-merchant double-serve during an ambiguous settle', () => {
+  /** Merchant A: its /settle calls go through `settle`. Merchant B: a plain merchant. */
+  async function withTwoMerchants(settle: Transport, fn: (a: { base: string; m: Merchant }, b: { base: string; m: Merchant }) => Promise<void>) {
+    const tag = Math.random().toString(16).slice(2);
+    const transport: Transport = (u, init) => (u.endsWith('/settle') ? settle(u, init) : fetch(u, init));
+    const ma = new Merchant({ merchantId: `m-sec03-a-${tag}`, issuerUrl: issuer.url, verifier: verifier(), log: quiet, transport });
+    const mb = new Merchant({ merchantId: `m-sec03-b-${tag}`, issuerUrl: issuer.url, verifier: verifier(), log: quiet });
+    const [a, b] = [await ma.start(), await mb.start()];
+    try {
+      await fn({ base: a, m: ma }, { base: b, m: mb });
+    } finally {
+      await ma.close();
+      await mb.close();
+    }
+  }
+
+  const tab = (merchantId: string) => issuer.core.pendingPayouts().find((l) => l.merchantId === merchantId)?.amountTokens ?? 0;
+
+  it('SEC-03 cross-merchant race: tokens settled at merchant B during A\'s ambiguous settle; A refuses, B serves, exactly one serve', async () => {
+    let entered!: () => void;
+    let release!: () => void;
+    const inSettle = new Promise<void>((r) => (entered = r));
+    const gate = new Promise<void>((r) => (release = r));
+    // A's first settle never reaches the issuer: it hangs, then times out. Later calls pass.
+    let first = true;
+    const timesOut: Transport = async (u, init) => {
+      if (!first) return fetch(u, init);
+      first = false;
+      entered();
+      await gate;
+      throw new Error('request timed out');
+    };
+    await withTwoMerchants(timesOut, async (a, b) => {
+      const tokens = await mint(2);
+      const qa = await quote('/analytics', a.base);
+      const qb = await quote('/analytics', b.base);
+      const atA = pay('/analytics', tokens, qa.quoteId, a.base);
+      await inSettle; // A is now unsure whether its settle landed
+
+      // The payer races the same tokens at B. B verifies, settles and serves.
+      const atB = await pay('/analytics', tokens, qb.quoteId, b.base);
+      expect(atB.status).toBe(200);
+      expect((await atB.json()).data).toBeDefined();
+
+      // A's settle fails. The tokens are spent, but /settle/status says not by A: A must not serve.
+      release();
+      const ra = await atA;
+      expect(ra.status).toBe(402);
+      const body = await ra.json();
+      expect(body.error).toMatch(/spent elsewhere/);
+      expect(body.data).toBeUndefined();
+      expect(body.error).not.toContain(b.m.merchantId); // A learns nothing about B
+
+      expect(a.m.claims).toHaveLength(0);
+      expect(b.m.claims).toHaveLength(1);
+      expect(tab(a.m.merchantId)).toBe(0);
+      expect(tab(b.m.merchantId)).toBe(2);
+      // A's quote reopened for a fresh payment; the raced tokens never buy anything at A.
+      expect((await pay('/analytics', tokens, qa.quoteId, a.base)).status).toBe(402);
+      expect((await pay('/analytics', await mint(2), qa.quoteId, a.base)).status).toBe(200);
+    });
+  });
+
+  it('SEC-03 cross-merchant race: after A answers pending, the payer spends the tokens at B; A\'s retry refuses and never serves', async () => {
+    let first = true;
+    const gateway: Transport = async (u, init) => {
+      if (first) {
+        first = false;
+        return new Response(JSON.stringify({ error: 'gateway timeout' }), { status: 504 }); // never reached the issuer
+      }
+      return fetch(u, init);
+    };
+    await withTwoMerchants(gateway, async (a, b) => {
+      const tokens = await mint(2);
+      const qa = await quote('/analytics', a.base);
+      const r1 = await pay('/analytics', tokens, qa.quoteId, a.base);
+      expect(r1.status).toBe(503); // unspent, but a gateway status: the settle may still land
+      expect(await r1.json()).toMatchObject({ pending: true });
+
+      const qb = await quote('/analytics', b.base);
+      expect((await pay('/analytics', tokens, qb.quoteId, b.base)).status).toBe(200);
+
+      const retry = await pay('/analytics', tokens, qa.quoteId, a.base);
+      expect(retry.status).toBe(402);
+      expect((await retry.json()).error).toMatch(/spent elsewhere/);
+      expect(a.m.claims).toHaveLength(0);
+      expect(tab(a.m.merchantId)).toBe(0);
+      expect(tab(b.m.merchantId)).toBe(2);
+    });
+  });
+
+  it('SEC-03: retrying /settle after a lost answer and a failed status lookup is safe; the original claim comes back and the tab counts once', async () => {
+    let calls = 0;
+    let statusDown = true;
+    const lost: Transport = async (u, init) => {
+      calls++;
+      if (calls > 1) return fetch(u, init);
+      await fetch(u, init); // the issuer settles
+      throw new Error('socket hang up'); // the answer is lost
+    };
+    const tag = Math.random().toString(16).slice(2);
+    const transport: Transport = (u, init) => {
+      if (u.endsWith('/settle/status') && statusDown) return Promise.reject(new Error('connect ECONNREFUSED'));
+      return u.endsWith('/settle') ? lost(u, init) : fetch(u, init);
+    };
+    const m = new Merchant({ merchantId: `m-sec03-retry-${tag}`, issuerUrl: issuer.url, verifier: verifier(), log: quiet, transport });
+    const base = await m.start();
+    try {
+      const q = await quote('/analytics', base);
+      const tokens = await mint(2);
+      const r1 = await pay('/analytics', tokens, q.quoteId, base);
+      expect(r1.status).toBe(503); // settled, but the merchant cannot know yet
+      statusDown = false;
+      const statuses = (await Promise.all(Array.from({ length: 3 }, () => pay('/analytics', tokens, q.quoteId, base)))).map((r) => r.status);
+      expect(statuses.filter((s) => s === 200)).toHaveLength(1); // idempotent settle replays the claim; one serve
+      expect(m.claims).toHaveLength(1);
+      expect(m.latestClaim?.claim.totalTokens).toBe(2);
+      expect(tab(m.merchantId)).toBe(2);
+      expect((await pay('/analytics', tokens, q.quoteId, base)).status).toBe(402);
+    } finally {
+      await m.close();
+    }
   });
 });
 

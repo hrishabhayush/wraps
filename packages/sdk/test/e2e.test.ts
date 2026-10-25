@@ -18,7 +18,7 @@ let urlA: string;
 let urlB: string;
 
 beforeAll(async () => {
-  issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
+  issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
   merchantA = new Merchant({ merchantId: 'merchant-a', issuerUrl: issuer.url, verifier: verifier(), log: quiet });
   merchantB = new Merchant({ merchantId: 'merchant-b', issuerUrl: issuer.url, verifier: verifier(), log: quiet });
   urlA = await merchantA.start();
@@ -47,7 +47,7 @@ async function expectAttestation(p: Promise<unknown>, code: string) {
 
 describe('attestation gate', () => {
   it('refuses an issuer with a tampered PCR0', async () => {
-    const bad = await startIssuer({ buildName: 'issuer-tampered', log: quiet });
+    const bad = await startIssuer({ merchantAuth: { developmentMode: true }, buildName: 'issuer-tampered', log: quiet });
     try {
       const sdk = client({ issuerUrl: bad.url });
       await expectAttestation(sdk.connect(), 'PCR_MISMATCH');
@@ -58,7 +58,7 @@ describe('attestation gate', () => {
   });
 
   it('refuses an issuer in debug mode (all-zero PCRs)', async () => {
-    const bad = await startIssuer({ debugMode: true, log: quiet });
+    const bad = await startIssuer({ merchantAuth: { developmentMode: true }, debugMode: true, log: quiet });
     try {
       await expectAttestation(client({ issuerUrl: bad.url }).connect(), 'DEBUG_MODE');
     } finally {
@@ -96,7 +96,7 @@ describe('attestation gate', () => {
   });
 
   it('refuses a merchant that asks for tokens under a different issuer key', async () => {
-    const other = await startIssuer({ log: quiet });
+    const other = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet });
     try {
       const sdk = client({ issuerUrl: other.url });
       await sdk.connect();

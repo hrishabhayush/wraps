@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto';
 import { AttestationError, AttestationVerifier, VerifiedAttestation, fromB64u, hashPublicKeys } from '@wraps/attestation';
 import { AttestationResponse } from './protocol';
+import type { MerchantAuthMode } from './merchant-auth';
 import { fetchRecordingPeer, pinnedTransport } from './tls';
 
 export interface PeerResponse {
@@ -29,6 +30,8 @@ export interface AttestedIssuer {
   /** SPKI of the issuer's TLS key, when it serves https. Every later request is pinned to it. */
   tlsKey?: Uint8Array;
   attestation: VerifiedAttestation;
+  /** Runtime-reported issuer mode; "unknown" means the issuer predates this field. */
+  merchantAuth: MerchantAuthMode | 'unknown';
 }
 
 export async function fetchAttestedIssuer(
@@ -67,7 +70,8 @@ export async function fetchAttestedIssuer(
     tlsKey = keys.tls;
   }
   const attestation = await verifier.verify(body.attestation, { nonce, publicKeysHash: hashPublicKeys(keys) });
-  return { url: issuerUrl, issuerName: body.issuerName, tokenKey: keys.token, claimKey: keys.claim, tlsKey, attestation };
+  const merchantAuth = body.merchantAuth === 'enforced' || body.merchantAuth === 'legacy-open' ? body.merchantAuth : 'unknown';
+  return { url: issuerUrl, issuerName: body.issuerName, tokenKey: keys.token, claimKey: keys.claim, tlsKey, attestation, merchantAuth };
 }
 
 /** Transport for calls to an attested issuer: pinned to its TLS key over https, `fallback` otherwise. */

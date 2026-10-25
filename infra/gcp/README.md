@@ -43,6 +43,7 @@ resources, images). See `packages/attestation/src/confidential-space.ts`.
 | `deploy.sh <role> [--debug]` | Creates the Confidential Space VM (deletes an existing one with the same name first). |
 | `status.sh [<role> [--debug] [--logs]]` | Lists the VMs, calls `/health`, and with `--logs` shows the serial console. |
 | `stop.sh [<role> [--debug]]` | Stops the VMs. With no role it stops every VM labelled `project=wraps`. |
+| `open-relay-attestation-port.sh [--dry-run]` | Adds tcp:8080 to the existing `wraps-allow-443` ingress rule while keeping tcp:443 and the existing rule scope. |
 | `expected.json` | Image digest per role, plus the policy. The SDK reads it. Commit it after each build. |
 | `.state/` | Last known VM IPs. Not committed. |
 
@@ -50,6 +51,17 @@ The relay listens for HTTPS CONNECT on port 443 and nonce-bound HTTP attestation
 The SDK uses the attested relay key for TLS, then reaches the issuer through a restricted,
 tokenless CONNECT route. Metered merchant tunnels carry their blind-token batch in the CONNECT
 proxy authorization header.
+
+The relay serves HTTPS CONNECT on tcp:443 and its nonce attestation bootstrap endpoint on plain
+HTTP tcp:8080. To allow both ports on the existing `wraps` target tag, run:
+
+```sh
+infra/gcp/open-relay-attestation-port.sh --dry-run
+infra/gcp/open-relay-attestation-port.sh
+```
+
+The script updates only the allowed ports on `wraps-allow-443`; it preserves the rule's current
+source ranges, target tags, network, and priority. It is safe to run repeatedly.
 
 ## Commands
 
@@ -115,8 +127,13 @@ mock attestation. Use it to rehearse without a VM.
 ```
 
 - The Confidential Space docs list `SEV` and `TDX`. They do not list `SEV_SNP`, so we use `SEV`.
-- `tee-container-log-redirect` is set on the debug image only. The image's launch policy
-  (`tee.launch_policy.log_redirect=debugonly`) allows redirect only there.
+- Relay images allow `tee-container-log-redirect` in production so startup failures are
+  observable. Relay output is restricted to fixed startup stages and allowlisted error codes;
+  never print raw errors, keys, tokens, endpoints, or merchant data. Other workloads can keep
+  the `debugonly` policy unless their logs are similarly reviewed.
+- WireGuard-enabled relay launches briefly add `CAP_SYS_ADMIN` so the startup wrapper can set
+  the container guest's IPv4 forwarding sysctl. It remounts `/proc/sys` read-only afterward and
+  removes `CAP_SYS_ADMIN` from the Node process; WireGuard itself keeps only `CAP_NET_ADMIN`.
 - The production image fixes its workload settings. Relay audience, issuer URL, and relay
   hostname are non-secret public configuration passed as `tee-env-*` metadata; do not put keys,
   tokens, or credentials in instance metadata.

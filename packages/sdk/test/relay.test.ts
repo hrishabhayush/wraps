@@ -370,7 +370,7 @@ describe('PrivatePayClient with a pinned relay', () => {
   let merchantUrl: string;
 
   beforeAll(async () => {
-    issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
+    issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
     merchant = new Merchant({
       merchantId: 'relay-sdk-test',
       issuerUrl: issuer.url,

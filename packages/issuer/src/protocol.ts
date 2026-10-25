@@ -1,6 +1,7 @@
 // Wire types shared by issuer, merchant and SDK.
 import { b64u, ed25519Sign, ed25519Verify, fromB64u } from '@wraps/attestation';
 import type { KeyObject } from 'node:crypto';
+import type { MerchantAuthMode } from './merchant-auth';
 
 /** 1 token = 0.10 RLUSD (SPEC §4: 100 tokens for 10 RLUSD). */
 export const RLUSD_PER_TOKEN = 0.1;
@@ -40,6 +41,8 @@ export interface AttestationResponse {
   tokenKeyNotAfter?: number;
   /** All accepted token keys with their validity windows, signed with the attested claim key. */
   tokenKeys?: SignedTokenKeys;
+  /** Runtime-reported HTTP enforcement mode; this field itself is not covered by the key attestation. */
+  merchantAuth?: MerchantAuthMode;
 }
 
 /** One issuer token-signing key epoch (SR3: tokens expire with their key). */
@@ -131,6 +134,14 @@ export interface VerifyResult {
   valid: boolean;
   results: { ok: boolean; reason?: string }[];
 }
+
+/**
+ * SEC-03: answer of POST /settle/status for one (merchantId, quoteId, tokens).
+ * settled-by-you: this merchant's settle for this quote landed with these tokens.
+ * settled-by-other: the tokens are spent, but not by that settle. Never says by whom.
+ * expired: not spent and too old to settle. unspent: not spent and still valid.
+ */
+export type SettleStatus = 'settled-by-you' | 'settled-by-other' | 'unspent' | 'expired';
 
 /**
  * Header a paying client sends with its tokens: the quoteId from the merchant's 402.

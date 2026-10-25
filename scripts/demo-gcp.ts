@@ -7,14 +7,17 @@
 //   EXPECTED_JSON  infra/gcp/expected.json (image digest and policy)
 //   ATTESTATION=mock  rehearsal mode: starts a local https issuer with MOCK attestation instead.
 import { existsSync, readFileSync } from 'node:fs';
+import type { KeyObject } from 'node:crypto';
 import {
   AttestationError,
   ConfidentialSpaceDetails,
   MockAttestationVerifier,
+  b64u,
+  generateEd25519,
   mockPcrs,
   verifierFromEnv,
 } from '@wraps/attestation';
-import { issuerTransport, startIssuer, verifyClaim, verifyReserves } from '@wraps/issuer';
+import { issuerTransport, merchantPrivateKeyFromB64u, startIssuer, verifyClaim, verifyReserves } from '@wraps/issuer';
 import { Merchant } from '@wraps/merchant';
 import { MockTopUpWallet, PrivatePayClient } from '@wraps/sdk';
 import { GullibleReasoner, ResearchAgent } from '@wraps/agent';
@@ -25,10 +28,26 @@ const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 
 const rehearsal = process.env.ATTESTATION === 'mock';
+const merchantId = process.env.MERCHANT_ID ?? 'merchant-research-data';
+let merchantPrivateKey: KeyObject;
+let merchantPublicKey: string | undefined;
+if (rehearsal) {
+  const pair = generateEd25519();
+  merchantPrivateKey = pair.privateKey;
+  merchantPublicKey = b64u(pair.publicKeyBytes);
+} else {
+  if (!process.env.MERCHANT_AUTH_PRIVATE_KEY) throw new Error('set MERCHANT_AUTH_PRIVATE_KEY for a deployed issuer; the matching public key must be in ISSUER_MERCHANT_AUTH_KEYS');
+  merchantPrivateKey = merchantPrivateKeyFromB64u(process.env.MERCHANT_AUTH_PRIVATE_KEY);
+}
 let local: Awaited<ReturnType<typeof startIssuer>> | undefined;
 let issuerUrl = process.env.ISSUER_URL;
 if (rehearsal) {
-  local = await startIssuer({ tls: true, log: (m) => console.log(dim(`[local issuer] ${m}`)), payoutIntervalMs: 3_600_000 });
+  local = await startIssuer({
+    tls: true,
+    log: (m) => console.log(dim(`[local issuer] ${m}`)),
+    payoutIntervalMs: 3_600_000,
+    merchantAuth: { publicKeys: { [merchantId]: merchantPublicKey! } },
+  });
   issuerUrl = local.url;
 } else if (!issuerUrl && existsSync('infra/gcp/.state/issuer.ip')) {
   issuerUrl = `https://${readFileSync('infra/gcp/.state/issuer.ip', 'utf8').trim()}`;
@@ -42,7 +61,7 @@ let merchant: Merchant | undefined;
 let exitCode = 0;
 try {
   console.log(bold('\nMerchant: checking the issuer'));
-  merchant = new Merchant({ issuerUrl, verifier: verifier(), log: (m) => console.log(dim(`[merchant] ${m}`)) });
+  merchant = new Merchant({ merchantId, issuerUrl, verifier: verifier(), authPrivateKey: merchantPrivateKey, log: (m) => console.log(dim(`[merchant] ${m}`)) });
   const merchantUrl = await merchant.start();
 
   const sdk = new PrivatePayClient({

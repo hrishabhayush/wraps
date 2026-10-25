@@ -4,7 +4,10 @@
 //   POST /issue    {requests, payment?}  blind signatures once paid: payment in the body, or x402
 //                                   (402 quote, then the x-payment header) for agents
 //   POST /verify   {tokens}         read-only: signature valid and not spent
-//   POST /settle   {merchantId, tokens}  mark spent, add to tab, signed running-total claim
+//   POST /settle   {merchantId, quoteId?, tokens}  mark spent, add to tab, signed running-total claim.
+//                                   With a quoteId it is idempotent per (merchantId, quoteId) (SEC-03).
+//   POST /settle/status {merchantId, quoteId, tokens}  read-only: settled-by-you, settled-by-other,
+//                                   unspent or expired. Never names another merchant (SEC-03).
 //   GET  /reserves                  signed "outstanding ≤ funds held"
 //   GET  /keys                      token key epochs with not-after times, signed with the claim key
 //   GET  /payouts?merchantId=<id>   signed payout records (amount, tx hash) for one merchant
@@ -15,9 +18,10 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer, IncomingMessage, Server } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { IssuerCore, IssuerError } from './core';
-import { HttpError, RateLimiter, readJson, sendJson } from './http';
+import { HttpError, RateLimiter, readJson, readJsonWithRaw, sendJson } from './http';
 import type { PayoutScheduler } from './payout';
 import { PAYMENT_HEADER, PaymentRequiredBody } from './protocol';
+import { getMerchantAuthMode, MerchantAuthConfig, verifyMerchantRequest } from './merchant-auth';
 
 export interface IssuerServerOptions {
   /** Attestation requests per IP per minute. */
@@ -30,6 +34,10 @@ export interface IssuerServerOptions {
   payouts?: PayoutScheduler;
   /** Bearer token for admin routes. Without it, only loopback callers are allowed. */
   adminToken?: string;
+  /** Per-merchant settlement and payout-history authentication. No configured credentials means legacy-open compatibility mode. */
+  merchantAuth?: MerchantAuthConfig;
+  /** Logger used for the legacy-open startup warning. */
+  log?: (message: string) => void;
 }
 
 function isAdmin(req: IncomingMessage, token?: string): boolean {
@@ -46,13 +54,17 @@ const json = (v: unknown) => JSON.parse(JSON.stringify(v, (_k, x) => (typeof x =
 
 export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions = {}): Server {
   const limiter = new RateLimiter(opts.attestationRateLimit ?? 60, 60_000);
+  const merchantAuth = getMerchantAuthMode(opts.merchantAuth);
+  if (merchantAuth === 'legacy-open') {
+    (opts.log ?? console.warn)('!!! SECURITY WARNING: merchant authentication is LEGACY-OPEN because no issuer merchant or relay credential is configured. Set ISSUER_MERCHANT_AUTH_KEYS and/or ISSUER_RELAY_SETTLE_KEY before enforcing authentication in production.');
+  }
 
   const cors = new Set(opts.corsOrigins ?? []);
   const handler: Parameters<typeof createServer>[1] = async (req, res) => {
     const origin = req.headers.origin;
     if (origin && cors.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Headers', `content-type, ${PAYMENT_HEADER}`);
+      res.setHeader('Access-Control-Allow-Headers', `content-type, ${PAYMENT_HEADER}, x-wraps-merchant-signature, x-wraps-merchant-timestamp, x-wraps-merchant-nonce, authorization`);
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
       res.setHeader('Vary', 'Origin');
     }
@@ -61,13 +73,13 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       const url = new URL(req.url ?? '/', 'http://issuer');
       const route = `${req.method} ${url.pathname}`;
 
-      if (route === 'GET /health') return sendJson(res, 200, { ok: true, issuer: core.name });
+      if (route === 'GET /health') return sendJson(res, 200, { ok: true, issuer: core.name, merchantAuth });
 
       if (route === 'GET /attestation') {
         if (!limiter.allow(req.socket.remoteAddress ?? '?')) throw new HttpError(429, 'too many attestation requests');
         const nonceHex = url.searchParams.get('nonce') ?? '';
         if (!/^[0-9a-fA-F]+$/.test(nonceHex) || nonceHex.length % 2) throw new HttpError(400, 'nonce must be hex');
-        return sendJson(res, 200, await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))));
+        return sendJson(res, 200, { ...await core.attestation(new Uint8Array(Buffer.from(nonceHex, 'hex'))), merchantAuth });
       }
 
       if (route === 'POST /quote') {
@@ -102,8 +114,15 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       }
 
       if (route === 'POST /settle') {
-        const body = await readJson(req);
-        return sendJson(res, 200, await core.settle(body.merchantId, body.tokens));
+        const { value: body, raw } = await readJsonWithRaw(req);
+        await authenticateMerchant(req, core, opts.merchantAuth, String(body?.merchantId ?? ''), req.url ?? '/settle', raw);
+        return sendJson(res, 200, await core.settle(body.merchantId, body.tokens, body.quoteId ?? undefined));
+      }
+
+      if (route === 'POST /settle/status') {
+        const { value: body, raw } = await readJsonWithRaw(req);
+        await authenticateMerchant(req, core, opts.merchantAuth, String(body?.merchantId ?? ''), req.url ?? '/settle/status', raw);
+        return sendJson(res, 200, { status: await core.settleStatus(body.merchantId, body.quoteId, body.tokens) });
       }
 
       if (route === 'GET /reserves') return sendJson(res, 200, core.reserves());
@@ -115,6 +134,7 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       if (route === 'GET /payouts') {
         const merchantId = url.searchParams.get('merchantId') ?? '';
         if (!merchantId) throw new HttpError(400, 'merchantId required');
+        await authenticateMerchant(req, core, opts.merchantAuth, merchantId, req.url ?? '/payouts', Buffer.alloc(0));
         return sendJson(res, 200, { merchantId, payouts: core.payoutHistory(merchantId) });
       }
       if (route === 'GET /payouts/pending' || route === 'POST /payouts/run') {
@@ -138,4 +158,25 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
     }
   };
   return opts.tls ? createHttpsServer({ key: opts.tls.keyPem, cert: opts.tls.certPem }, handler) : createServer(handler);
+}
+
+async function authenticateMerchant(
+  req: IncomingMessage,
+  core: IssuerCore,
+  config: MerchantAuthConfig | undefined,
+  merchantId: string,
+  path: string,
+  rawBody: Uint8Array,
+): Promise<void> {
+  if (getMerchantAuthMode(config) === 'legacy-open') return;
+  if (config?.developmentMode && isLoopback(req.socket.remoteAddress ?? '')) return;
+  const result = verifyMerchantRequest(config, merchantId, req.method ?? 'GET', path, rawBody, req.headers, core.currentTime());
+  if (!result.ok) throw new HttpError(result.status, result.message);
+  if (result.nonce && result.timestamp !== undefined) {
+    await core.consumeMerchantNonce(merchantId, result.nonce, result.timestamp, config?.timestampWindowMs ?? 60_000);
+  }
+}
+
+function isLoopback(ip: string): boolean {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }

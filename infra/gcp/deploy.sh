@@ -25,11 +25,15 @@ REF="$(expected_get "j.roles && j.roles['${ROLE}'] && j.roles['${ROLE}'].imageRe
 
 if [ "${MODE}" = debug ]; then
   FAMILY=confidential-space-debug
-  # The image's launch policy allows log redirect on the debug image only.
+  # Debug boots always redirect output; the relay image allows sanitized logs.
   METADATA="^~^tee-image-reference=${REF}~tee-container-log-redirect=true"
 else
   FAMILY=confidential-space
   METADATA="^~^tee-image-reference=${REF}"
+  # The relay logs only fixed stages and allowlisted failure codes.
+  if [ "${ROLE}" = relay ]; then
+    METADATA="${METADATA}~tee-container-log-redirect=true"
+  fi
 fi
 
 if [ "${ROLE}" = relay ]; then
@@ -37,6 +41,21 @@ if [ "${ROLE}" = relay ]; then
   [ -n "${ISSUER_URL:-}" ] || die "ISSUER_URL is required for relay"
   [ -n "${RELAY_HOSTNAME:-}" ] || die "RELAY_HOSTNAME is required for relay"
   [[ "${ISSUER_URL}" == https://* ]] || die "ISSUER_URL must use HTTPS"
+
+  WG_METADATA=''
+  if [ "${WG_ENABLED:-false}" = true ]; then
+    [ -n "${WG_ENDPOINT:-}" ] || die "WG_ENDPOINT is required when WG_ENABLED=true"
+    [ -n "${WG_INTERFACE_ADDRESS:-}" ] || die "WG_INTERFACE_ADDRESS is required when WG_ENABLED=true"
+    [ -n "${WG_PEERS_JSON:-}" ] || die "WG_PEERS_JSON is required when WG_ENABLED=true"
+    case "${WG_ENDPOINT}" in
+      *:*|*/*|*' '* ) die "WG_ENDPOINT must be a bare hostname or IPv4 address; the UDP port is configured separately" ;;
+    esac
+    WG_EGRESS_INTERFACE="${WG_EGRESS_INTERFACE:-eth0}"
+    for value in "${WG_ENABLED}" "${WG_ENDPOINT}" "${WG_INTERFACE_ADDRESS}" "${WG_EGRESS_INTERFACE}" "${WG_PEERS_JSON}"; do
+      [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "WireGuard metadata values cannot contain newlines"
+    done
+    WG_METADATA="tee-added-capabilities=[\"CAP_NET_ADMIN\",\"CAP_SYS_ADMIN\"]~tee-env-WG_ENABLED=true~tee-env-WG_ENDPOINT=${WG_ENDPOINT}~tee-env-WG_INTERFACE_ADDRESS=${WG_INTERFACE_ADDRESS}~tee-env-WG_EGRESS_INTERFACE=${WG_EGRESS_INTERFACE}~tee-env-WG_PEERS_JSON=${WG_PEERS_JSON}"
+  fi
 
   for value in "${ATTESTATION_AUDIENCE}" "${ISSUER_URL}" "${RELAY_HOSTNAME}"; do
     [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || die "relay metadata values cannot contain newlines"
@@ -48,15 +67,24 @@ if [ "${ROLE}" = relay ]; then
   META_SEPARATOR=''
   for ((i = 0; i < ${#separator}; i++)); do
     candidate="${separator:i:1}"
-    if [[ "${REF}${ATTESTATION_AUDIENCE}${ISSUER_URL}${RELAY_HOSTNAME}" != *"${candidate}"* ]]; then
+    if [[ "${REF}${ATTESTATION_AUDIENCE}${ISSUER_URL}${RELAY_HOSTNAME}${WG_METADATA}" != *"${candidate}"* ]]; then
       META_SEPARATOR="${candidate}"
       break
     fi
   done
   [ -n "${META_SEPARATOR}" ] || die "could not choose a safe metadata separator"
   METADATA="^${META_SEPARATOR}^tee-image-reference=${REF}${META_SEPARATOR}tee-env-ATTESTATION_AUDIENCE=${ATTESTATION_AUDIENCE}${META_SEPARATOR}tee-env-ISSUER_URL=${ISSUER_URL}${META_SEPARATOR}tee-env-RELAY_HOSTNAME=${RELAY_HOSTNAME}"
+  if [ "${MODE}" = prod ]; then
+    METADATA="${METADATA}${META_SEPARATOR}tee-container-log-redirect=true"
+  fi
+  if [ -n "${WG_METADATA}" ]; then
+    WG_METADATA="${WG_METADATA//\~/${META_SEPARATOR}}"
+    METADATA="${METADATA}${META_SEPARATOR}${WG_METADATA}"
+  fi
 fi
 
+VM_TAGS=wraps
+[ "${ROLE}" = relay ] && VM_TAGS=wraps,wraps-relay
 CREATE_ARGS=(
   compute instances create "${NAME}"
   "--zone=${GCP_ZONE}"
@@ -69,7 +97,7 @@ CREATE_ARGS=(
   "--metadata=${METADATA}"
   "--service-account=${WORKLOAD_SA}"
   --scopes=cloud-platform
-  --tags=wraps
+  "--tags=${VM_TAGS}"
   "--labels=project=wraps,role=${ROLE},mode=${MODE}"
   "--max-run-duration=${MAX_RUN_DURATION}"
   --instance-termination-action=STOP
@@ -78,11 +106,24 @@ if [ "${ROLE}" = relay ] && [ -n "${RELAY_ADDRESS:-}" ]; then
   [[ "${RELAY_ADDRESS}" != *$'\n'* && "${RELAY_ADDRESS}" != *$'\r'* ]] || die "RELAY_ADDRESS cannot contain newlines"
   CREATE_ARGS+=("--address=${RELAY_ADDRESS}")
 fi
+if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+  CREATE_ARGS+=(--can-ip-forward)
+fi
 
 if [ "${DRY_RUN}" = 1 ]; then
   printf 'DRY RUN:'
   printf ' %q' gcloud --project="${GCP_PROJECT}" "${CREATE_ARGS[@]}"
   printf '\n'
+  if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+    printf 'DRY RUN (if firewall rule exists):'
+    printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules update wraps-allow-wireguard \
+      --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+    printf '\nDRY RUN (otherwise):'
+    printf ' %q' gcloud --project="${GCP_PROJECT}" compute firewall-rules create wraps-allow-wireguard \
+      --direction=INGRESS --priority=1000 --network=default --allow=udp:51820 \
+      --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+    printf '\n'
+  fi
   exit 0
 fi
 
@@ -97,6 +138,16 @@ echo "Creating ${NAME} (${FAMILY}, ${MACHINE_TYPE}, AMD SEV, stops after ${MAX_R
 gc "${CREATE_ARGS[@]}" \
 || gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(name)' >/dev/null \
 || die "could not create ${NAME}"
+
+if [ "${ROLE}" = relay ] && [ "${WG_ENABLED:-false}" = true ]; then
+  RULE=wraps-allow-wireguard
+  if gc compute firewall-rules describe "${RULE}" >/dev/null 2>&1; then
+    gc compute firewall-rules update "${RULE}" --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+  else
+    gc compute firewall-rules create "${RULE}" --direction=INGRESS --priority=1000 --network=default \
+      --allow=udp:51820 --source-ranges=0.0.0.0/0 --target-tags=wraps-relay
+  fi
+fi
 
 IP="$(gc compute instances describe "${NAME}" --zone "${GCP_ZONE}" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
 mkdir -p "${STATE_DIR}"

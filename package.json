@@ -11,6 +11,8 @@
   },
   "scripts": {
     "demo": "tsx apps/demo/src/server.ts",
+    "demo:live": "tsx scripts/demo-live.ts",
+    "demo:preflight": "tsx scripts/live-preflight.ts",
     "demo:core": "tsx scripts/demo-core.ts",
     "demo:gcp": "tsx scripts/demo-gcp.ts",
     "verify:gcp": "tsx scripts/verify-gcp.ts",
@@ -18,6 +20,7 @@
     "payout:dry-run": "tsx packages/issuer/src/payout-cli.ts dry-run",
     "payout:once": "tsx packages/issuer/src/payout-cli.ts once",
     "merchant": "tsx packages/merchant/src/cli.ts",
+    "merchant:auth-key": "tsx scripts/merchant-auth-key.ts",
     "agent": "tsx packages/agent/src/cli.ts",
     "spybot": "tsx packages/spybot/src/cli.ts",
     "sim": "tsx packages/spybot/src/sim-cli.ts",

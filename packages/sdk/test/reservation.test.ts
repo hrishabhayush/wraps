@@ -16,7 +16,7 @@ let url: string;
 const clock = { t: Date.now() };
 
 beforeAll(async () => {
-  issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
+  issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
   merchant = new Merchant({ merchantId: 'm-sdk-res', issuerUrl: issuer.url, verifier: verifier(), log: quiet, now: () => clock.t, quoteTtlMs: 60_000 });
   url = await merchant.start();
 });

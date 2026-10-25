@@ -27,6 +27,12 @@ prior `/verify` result to spend a token. Issuer errors and ambiguous timeouts
 close the tunnel; settlement is never retried automatically. A valid tunnel is
 refused with 503 until issuer metering is configured.
 
+When the issuer has merchant authentication enabled, configure the relay process with
+`ISSUER_RELAY_SETTLE_KEY` matching the issuer's fixed relay credential. The relay sends it as
+`Authorization: Bearer <key>` on `/settle` and `/settle/status` and uses
+`ISSUER_RELAY_MERCHANT_ID` as its fixed merchant ID (default `relay`). Rebuild and redeploy the
+relay image with these variables before enabling issuer authentication in the live deployment.
+
 The proxy binds to loopback by default and rejects destinations that resolve to
 private, loopback, link-local, or reserved IP ranges. If it is exposed on a
 network, put it behind deployment-level access controls. It supports HTTPS

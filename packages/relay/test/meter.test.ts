@@ -91,4 +91,36 @@ describe('BandwidthMeter', () => {
       { url: 'https://issuer.example/settle', body: { merchantId: 'relay', tokens: ['serialized-token'] } },
     ]);
   });
+
+  it('uses the fixed relay bearer identity for settle and settle status when configured', async () => {
+    const calls: { url: string; body: unknown; headers: Headers }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init?.body)), headers: new Headers(init?.headers) });
+      return new Response(JSON.stringify({ status: 'unspent' }), { status: 200 });
+    }) as typeof fetch;
+    const issuer = new HttpRelayIssuer('https://issuer.example/', fetchImpl, 10_000, {
+      settleKey: 'relay-secret',
+      merchantId: 'relay:fixed',
+    });
+
+    await issuer.settle('caller-supplied-id', 'serialized-token');
+    await issuer.settleStatus('caller-supplied-id', 'quote-1', ['serialized-token']);
+
+    expect(calls.map(({ url, body, headers }) => ({
+      url,
+      body,
+      authorization: headers.get('authorization'),
+    }))).toEqual([
+      {
+        url: 'https://issuer.example/settle',
+        body: { merchantId: 'relay:fixed', tokens: ['serialized-token'] },
+        authorization: 'Bearer relay-secret',
+      },
+      {
+        url: 'https://issuer.example/settle/status',
+        body: { merchantId: 'relay:fixed', quoteId: 'quote-1', tokens: ['serialized-token'] },
+        authorization: 'Bearer relay-secret',
+      },
+    ]);
+  });
 });

@@ -2,7 +2,7 @@ import { isIP } from 'node:net';
 import type { Server as HttpServer } from 'node:http';
 import type { Server as HttpsServer } from 'node:https';
 import type { AttestationProvider, AttestationVerifier } from '@wraps/attestation';
-import { createRelayTlsIdentity, startConfidentialRelay } from '@wraps/relay';
+import { createRelayTlsIdentity, startConfidentialRelay, startConfidentialWireGuardRelay } from '@wraps/relay';
 
 type AttestationRuntime = {
   ConfidentialSpaceProvider: new (options: { audience: string }) => AttestationProvider;
@@ -13,6 +13,9 @@ type IssuerRuntime = {
   fetchAttestedIssuer: (issuerUrl: string, verifier: AttestationVerifier) => Promise<unknown>;
   issuerTransport: (attestedIssuer: unknown) => unknown;
 };
+
+// Keep startup diagnostics useful without exposing URLs, keys, nonces, or tokens.
+let startupStep = 'configuration';
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -51,6 +54,21 @@ function waitForListening(server: HttpServer | HttpsServer): Promise<void> {
 
 async function close(server: HttpServer | HttpsServer): Promise<void> {
   server.closeAllConnections?.();
+  // A listener can still be binding when its sibling fails. Wait for bind
+  // completion, then close it; skipping it while `listening` is false leaks it.
+  if (!server.listening) {
+    await new Promise<void>((resolve) => {
+      const onListening = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); resolve(); };
+      const cleanup = () => {
+        server.off('listening', onListening);
+        server.off('error', onError);
+      };
+      server.once('listening', onListening);
+      server.once('error', onError);
+      if (server.listening) onListening();
+    });
+  }
   if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
@@ -66,9 +84,11 @@ async function main(): Promise<void> {
   // These APIs are supplied by the GCP attestation and issuer runtime branches.
   // Keep the structural boundary local so this infra entrypoint can be integrated
   // while those dependency branches remain stacked separately.
+  startupStep = 'loading-runtime';
   const attestationRuntime = await import('@wraps/attestation') as unknown as AttestationRuntime;
   const issuerRuntime = await import('@wraps/issuer') as unknown as IssuerRuntime;
   const issuerVerifier = attestationRuntime.verifierFromEnv('issuer');
+  startupStep = 'issuer-attestation';
   const attestedIssuer = await issuerRuntime.fetchAttestedIssuer(
     issuerUrl.toString().replace(/\/$/, ''),
     issuerVerifier,
@@ -77,9 +97,10 @@ async function main(): Promise<void> {
 
   // Both the TLS identity and its private key are created in the workload's
   // process memory. The relay attestation endpoint binds this cert's SPKI.
+  startupStep = 'tls-identity';
   const identity = await createRelayTlsIdentity(hostname);
   const provider = new attestationRuntime.ConfidentialSpaceProvider({ audience });
-  const servers = startConfidentialRelay({
+  const relayOptions = {
     issuerUrl: issuerUrl.toString(),
     issuerFetch,
     tlsCertificate: identity.certPem,
@@ -89,35 +110,71 @@ async function main(): Promise<void> {
     proxyPort: positivePort('RELAY_PROXY_PORT', 443),
     attestationHost: process.env.RELAY_ATTESTATION_HOST ?? '0.0.0.0',
     attestationPort: positivePort('RELAY_ATTESTATION_PORT', 8080),
-  });
+  };
+  const wireGuardEnabled = process.env.WG_ENABLED === 'true';
+  // --can-ip-forward enables forwarding at the GCE NIC; the guest kernel must
+  // independently have net.ipv4.ip_forward=1. The gateway checks this value;
+  // the production workload cannot provision a missing guest sysctl itself.
+  startupStep = wireGuardEnabled ? 'wireguard-and-relay-listeners' : 'relay-listeners';
+  const servers = wireGuardEnabled
+    ? await startConfidentialWireGuardRelay({
+      ...relayOptions,
+      wireGuardGateway: {
+        endpoint: required('WG_ENDPOINT'),
+        listenPort: 51820,
+        interfaceAddress: required('WG_INTERFACE_ADDRESS'),
+        egressInterface: process.env.WG_EGRESS_INTERFACE ?? 'eth0',
+        peers: JSON.parse(required('WG_PEERS_JSON')) as Array<{ publicKey: string; allowedAddress: string }>,
+      },
+    })
+    : startConfidentialRelay(relayOptions);
 
   const { proxyServer, attestationServer } = servers;
-  const ready = Promise.all([waitForListening(proxyServer), waitForListening(attestationServer)]);
-  for (const server of [proxyServer, attestationServer]) {
-    server.on('error', () => {
-      console.error('[relay] listener failed');
-      process.exitCode = 1;
-      void Promise.all([close(proxyServer), close(attestationServer)]);
-    });
-  }
-  await ready;
-
-  console.info(`[relay] ready; proxy :${positivePort('RELAY_PROXY_PORT', 443)}, attestation :${positivePort('RELAY_ATTESTATION_PORT', 8080)}`);
-
-  let stopping = false;
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = 'close' in servers
+      ? servers.close()
+      : Promise.all([close(proxyServer), close(attestationServer)]).then(() => undefined);
+    return shutdownPromise;
+  };
   const stop = () => {
-    if (stopping) return;
-    stopping = true;
-    void Promise.all([close(proxyServer), close(attestationServer)]).catch(() => {
-      process.exitCode = 1;
-    });
+    void shutdown().catch(() => { process.exitCode = 1; });
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+
+  const listeners = [proxyServer, attestationServer];
+  const ready = Promise.all(listeners.map(waitForListening));
+  for (const server of listeners) {
+    server.on('error', () => {
+      console.error('[relay] listener failed');
+      process.exitCode = 1;
+      stop();
+    });
+  }
+  try {
+    await ready;
+  } catch (error) {
+    await shutdown().catch(() => { process.exitCode = 1; });
+    throw error;
+  }
+
+  console.info(`[relay] ready; proxy :${positivePort('RELAY_PROXY_PORT', 443)}, attestation :${positivePort('RELAY_ATTESTATION_PORT', 8080)}`);
+
 }
 
-main().catch(() => {
-  // Never log URLs, keys, nonces, credentials, or attestation token contents.
-  console.error('[relay] startup failed');
+main().catch((error: unknown) => {
+  // Keep diagnostics to fixed labels. Raw errors can contain endpoints, keys,
+  // nonces, credentials, or token contents.
+  let failure = 'unexpected';
+  if (startupStep === 'wireguard-and-relay-listeners' && error instanceof Error) {
+    if (error.message === 'WireGuard IPv4 forwarding must be enabled by the VM deployment') {
+      failure = 'guest-ipv4-forwarding-disabled';
+    } else if (error.message.startsWith('Could not start WireGuard;')) {
+      failure = 'wireguard-tools-or-netadmin-setup-failed';
+    }
+  }
+  console.error(`[relay] startup failed during ${startupStep} (${failure})`);
   process.exitCode = 1;
 });

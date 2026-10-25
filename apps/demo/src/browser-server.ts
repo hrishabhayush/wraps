@@ -10,6 +10,7 @@ import { parseAgentRequest, runGeneralAgent, openaiModel, type AgentRequest, typ
 import { browserEnvironment, checkBrowserUrl } from './browser-safety';
 import { SponsoredQuota } from './sponsored-quota';
 import { publicBrowserFetch } from './public-browser-fetch';
+import { AP4M_TASK, runPaymentTask } from './ap4m-task';
 
 const port = Number(process.env.BROWSER_DEMO_PORT ?? 4176);
 const base = `http://127.0.0.1:${port}`;
@@ -63,6 +64,31 @@ async function capture() {
   finally { capturing = false; }
 }
 async function runDemo(request: AgentRequest, signal: AbortSignal) {
+    if (config.resources.length > 1) {
+      publish('task', 'Scripted task: buy each configured research service with a separate AP4M voucher.');
+      await browser?.close();
+      browser = await chromium.launch({ headless: process.env.BROWSER_DEMO_HEADLESS === '1', env: browserEnvironment(process.env) });
+      page = await browser.newPage({ viewport: { width: 1100, height: 740 }, serviceWorkers: 'block' });
+      pageRunId = runId;
+      await page.goto(`${base}/research`);
+      const completed: { service: string; result: unknown }[] = [];
+      const results = await runPaymentTask({ resources: config.resources, budget: request.budget, signal, publish,
+        buy: async (id, budget) => {
+          const net = await checkNetwork();
+          signal.throwIfAborted();
+          const result = await purchase(process.env, net.ip ?? '', expectedIp, publish, budget, id);
+          completed.push({ service: id, result: result.resource });
+          await page!.locator('#result').evaluate((element, content) => { element.textContent = JSON.stringify(content, null, 2); }, completed);
+          await capture();
+          return result;
+        },
+      });
+      await page.locator('#result').evaluate((element, content) => { element.textContent = JSON.stringify(content, null, 2); }, results);
+      await capture();
+      publish('answer', JSON.stringify(results.map(result => ({ service: result.id, result: result.resource })), null, 2));
+      publish('complete', `${results.length} paid service results received. Each new purchase has a confirmed AP4M voucher redemption.`);
+      return;
+    }
     publish('task', `Scripted task: research XRP transaction fees, then evaluate the paid report within a ${request.budget} RLUSD ceiling.`);
     publish('mode', config.ready ? 'AP4M live payment enabled. One retained purchase operation.' : 'Preview: browser actions are real; sample payment challenge only. No vouchers signed or money spent.');
     await browser?.close();
@@ -95,7 +121,7 @@ async function runDemo(request: AgentRequest, signal: AbortSignal) {
     publish('network', net.ip ? `Agent egress: ${net.ip}; expected exit: ${expectedIp}.` : net.error!);
     signal.throwIfAborted();
     publish('decision', `Accept only a valid AP4M channel challenge costing at most ${request.budget} RLUSD. The SDK checks this before signing.`);
-    const result = await purchase(process.env, net.ip ?? '', expectedIp, publish, request.budget);
+    const result = await purchase(process.env, net.ip ?? '', expectedIp, publish, request.budget, config.resources[0].id);
     publish('transaction', result.transactionHash);
     publish('complete', `Voucher redemption confirmed on-chain. Paid resource received. Operation: ${result.operation}.`);
     await page.goto(`${base}/research`);
@@ -160,16 +186,16 @@ async function runAgent(request: AgentRequest, signal: AbortSignal, shared = fal
       if (!link) throw new Error('Link index is no longer available');
       return open(link.url);
     },
-    buy: async budget => {
+    buy: async (resourceId, budget) => {
       await requireExit();
       const net = await checkNetwork();
       signal.throwIfAborted();
-      return purchase(process.env, net.ip ?? '', expectedIp, publish, budget);
+      return purchase(process.env, net.ip ?? '', expectedIp, publish, budget, resourceId);
     },
   };
   await runGeneralAgent({ ...request, model, call: openaiModel(process.env.OPENAI_API_KEY), tools,
     publish, checkNetwork: requireExit, signal,
-    reportDescription: config.ready ? 'A saved XRPL EVM testnet block snapshot: timestamp, block number, transaction count and gas usage. It is not current token pricing or a native XRPL report.' : 'No paid merchant configured. Use free sources only.',
+    resources: config.ready ? config.resources : [],
   });
 }
 
@@ -221,7 +247,9 @@ const server = createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/stop') { activeRun?.abort(); publish('status', 'Stop requested. Already submitted payments cannot be cancelled.'); return json(res, 202, { stopping: running }); }
   if (req.method !== 'GET') return json(res, 405, { error: 'Method not allowed' });
-  if (url.pathname === '/api/status') return json(res, 200, { shareProtocol: 1, runId, running, payments: config.ready, missing: config.missing, maximum: config.maximum, modelReady: Boolean(process.env.OPENAI_API_KEY), model, network, expectedIp });
+  if (url.pathname === '/api/status') return json(res, 200, { shareProtocol: 1, runId, running, payments: config.ready, missing: config.missing, maximum: config.maximum, modelReady: Boolean(process.env.OPENAI_API_KEY), model, network, expectedIp,
+    paymentTask: process.env.AP4M_DEMO_TASK === '1' ? AP4M_TASK : undefined,
+  });
   if (url.pathname === '/api/activity') return json(res, 200, { running, runId, events: history.filter(e => e.id > Number(url.searchParams.get('after') ?? 0)) });
   if (url.pathname === '/frame.jpg') {
     if (!frame || (url.searchParams.has('runId') && Number(url.searchParams.get('runId')) !== frameRunId)) { res.writeHead(204); return res.end(); }

@@ -4,21 +4,24 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Server } from 'node:http';
-import { JsonRpcProvider, Wallet, parseUnits, parseEther } from 'ethers';
+import { JsonRpcProvider, Wallet, parseUnits, parseEther, formatEther } from 'ethers';
 import { PARTICIPANT_LEDGER_INTERFACE } from '@ap4m/sdk';
 import { readParticipantPaymentChannel } from '@ap4m/sdk/participant-requests';
 import { ap4mSession } from '../apps/demo/src/ap4m-account';
+import { AP4M_TASK_RESOURCES } from '../apps/demo/src/ap4m-task';
 
+const task = process.argv.includes('--task');
+if (task && process.env.WRAPS_SPONSORED === '1') throw new Error('The three-service task is local only; use ap4m:demo for sponsored runs.');
 const key = (process.env.AGENT_PRIVATE_KEY ?? '').trim();
 delete process.env.AGENT_PRIVATE_KEY;
 let provider: JsonRpcProvider | undefined, child: ChildProcess | undefined;
-let merchant: { server: Server; close(): Promise<void> } | undefined;
+const merchants: { server: Server; close(): Promise<void> }[] = [];
 let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
   child?.kill('SIGTERM');
-  await merchant?.close();
+  await Promise.all(merchants.map(merchant => merchant.close()));
   provider?.destroy();
 }
 try {
@@ -56,7 +59,28 @@ try {
       note: 'Saved demo research snapshot, not a current market-price feed.' };
     await writeFile(reportPath, JSON.stringify(report), { mode: 0o600, flag: 'wx' });
   }
-  const resourceUrl = 'http://127.0.0.1:4180/resource';
+  const resources = task ? AP4M_TASK_RESOURCES : AP4M_TASK_RESOURCES.slice(0, 1);
+  const reports = [report];
+  if (task) {
+    reports.push({ title: 'XRPL EVM gas utilization', network: report.network, block: report.block, timestamp: report.timestamp,
+      source: report.source, gasUsed: report.gasUsed, gasLimit: report.gasLimit,
+      utilizationPercent: Number(BigInt(report.gasUsed) * 10000n / BigInt(report.gasLimit)) / 100,
+      note: 'Derived from the saved block snapshot; not live network utilization.' });
+    const feePath = join(directory, 'fee-estimate.json');
+    let feeReport;
+    try { feeReport = JSON.parse(await readFile(feePath, 'utf8')); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const fees = await provider.getFeeData();
+      if (fees.gasPrice === null) throw new Error('Could not read the testnet gas price');
+      feeReport = { title: 'XRPL EVM native transfer fee estimate', network: 'XRPL EVM Testnet',
+        source: 'https://rpc.testnet.xrplevm.org', timestamp: new Date().toISOString(),
+        gasPriceWei: fees.gasPrice.toString(), transferGas: '21000', estimatedFeeXrp: formatEther(fees.gasPrice * 21000n),
+        note: 'Saved estimate for a plain native XRP transfer to an externally owned account. Not an RLUSD transfer or current fee quote.' };
+      await writeFile(feePath, JSON.stringify(feeReport), { mode: 0o600, flag: 'wx' });
+    }
+    reports.push(feeReport);
+  }
   const amount = parseUnits('0.05', 18);
   // This local demo uses the agent wallet for redemption gas as well; payout still goes to the channel merchant.
   const submitter = {
@@ -71,16 +95,21 @@ try {
       return wallet.sendTransaction(populated);
     },
   };
-  merchant = createX402Merchant({ context, provider, submitter, stateDirectory: join(directory, 'merchant'),
-    resourceUrl, merchantParticipantId: channel.merchantId, payout: channel.payout, amount: amount.toString(), content: report });
-  await new Promise<void>((resolve, reject) => { merchant!.server.once('error', reject); merchant!.server.listen(4180, '127.0.0.1', resolve); });
-  console.log(`Merchant ready: ${resourceUrl}`);
-  console.log(`Quoted price: 0.05 testnet RLUSD. Payout: ${channel.payout}. Channel: ${channelId}`);
-  console.log('Dashboard: http://127.0.0.1:4177 — enter a task and budget, then Run agent. Startup makes no purchase.');
+  for (const [index, resource] of resources.entries()) {
+    const merchant = createX402Merchant({ context, provider, submitter,
+      stateDirectory: join(directory, index === 0 ? 'merchant' : `merchant-${resource.id}`),
+      resourceUrl: resource.url, merchantParticipantId: channel.merchantId, payout: channel.payout, amount: amount.toString(), content: reports[index] });
+    merchants.push(merchant);
+    await new Promise<void>((resolve, reject) => { merchant.server.once('error', reject); merchant.server.listen(Number(new URL(resource.url).port), '127.0.0.1', resolve); });
+    console.log(`Merchant ready: ${resource.url} — ${resource.description}`);
+  }
+  console.log(`Price per service: 0.05 testnet RLUSD. Task ceiling: ${task ? '0.15' : '0.05'} RLUSD. Payout: ${channel.payout}. Channel: ${channelId}`);
+  console.log('Dashboard: http://127.0.0.1:4177 — review the task and budget, then Run. Startup makes no purchase.');
   child = spawn(process.execPath, ['--import', 'tsx', 'apps/demo/src/browser-server.ts'], {
     cwd: new URL('..', import.meta.url), stdio: 'inherit', env: { ...process.env,
-      AGENT_PRIVATE_KEY: key, AP4M_CHANNEL_ID: channelId, AP4M_RESOURCE_URL: resourceUrl,
-      AP4M_STATE_DIR: join(directory, 'agent'), AP4M_MAX_RLUSD: '0.05', AP4M_ENABLE_PAYMENTS: '1', BROWSER_DEMO_PORT: '4177',
+      AGENT_PRIVATE_KEY: key, AP4M_CHANNEL_ID: channelId, AP4M_RESOURCE_URL: resources[0].url,
+      AP4M_RESOURCES: JSON.stringify(resources), AP4M_DEMO_TASK: task ? '1' : '0',
+      AP4M_STATE_DIR: join(directory, 'agent'), AP4M_MAX_RLUSD: task ? '0.15' : '0.05', AP4M_ENABLE_PAYMENTS: '1', BROWSER_DEMO_PORT: '4177',
     },
   });
   child.once('error', () => { console.error('Could not launch the dashboard'); void close(); });

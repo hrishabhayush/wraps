@@ -1,5 +1,7 @@
 # Live split-screen demo
 
+For the AP4M voucher flow and a task that buys three services using x402, run `npm run ap4m:task` and follow [the browser demo guide](BROWSER-DEMO.md#three-service-ap4m-task). This uses an existing testnet channel; startup makes no purchase.
+
 From the repository root:
 
 ```sh

@@ -32,7 +32,6 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 
 ### Relay networking
 - [~] **INF-27** Configure WireGuard in the Confidential Space relay runtime (PR #33 merged; depends on RLY-04 in #32 and #38). The live relay currently exits during startup; confirm kernel support, capabilities, nftables and peer traffic.
-- [~] **INF-28** Pin and deploy the WireGuard relay image with corrected GCP metadata (draft PR #40; depends on merged RLY-04 PR #38). Diagnose the startup failure and complete authorized-peer traffic validation.
 
 ### Keys and secrets
 - [ ] **INF-15** Wallets (three different ones): agent wallet, funding wallet, issuer payout address. Private keys in a local `.env` that is never committed, or Google Secret Manager.
@@ -84,7 +83,6 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **SDK-02** Tunnel through the relay, pinned to its attested key.
 - [~] **SDK-03** Top-up: hit the issuer's 402, sign the AP4M voucher, receive and unblind tokens. (core agent) Mock wallet done; the real AP4M voucher is PAY-03.
 - [x] **SDK-06** Verify attested WireGuard settings, register prepaid quota and build the client profile (merged PR #37; depends on #33 and #32). Live relay integration remains tracked in INF-27 and INF-28.
-- [~] **SDK-07** Bound WireGuard receipt handling and test failure cases (draft PR #39; live relay test depends on INF-28).
 - [x] **SDK-04** Pay `blindtoken` 402s. Per-call and daily caps in code. Never fall back to a wallet payment. (core agent)
 - [x] **SDK-05** Demo agent: compares prices, decides, refills when low, prints its reasoning. (core agent)
 

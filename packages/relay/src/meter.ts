@@ -1,10 +1,17 @@
+import { createHash, randomUUID } from 'node:crypto';
+
 export const BYTES_PER_TOKEN = 10_000_000;
 export const MAX_TOKENS_PER_TUNNEL = 100;
 
 export interface RelayIssuer {
   verify(tokens: string[]): Promise<boolean>;
-  settle(merchantId: string, token: string): Promise<void>;
+  settle(merchantId: string, token: string, quoteId: string): Promise<void>;
   settleStatus?(merchantId: string, quoteId: string, tokens: string[]): Promise<unknown>;
+}
+
+/** Stable, issuer-compatible ID for one relay settlement operation. */
+export function relaySettlementQuoteId(...parts: string[]): string {
+  return `relay_${createHash('sha256').update(parts.join('\0')).digest('hex')}`;
 }
 
 export interface ForwardedChunk {
@@ -25,6 +32,7 @@ export class BandwidthMeter {
   private queue: Promise<void> = Promise.resolve();
   private failed = false;
   private failureReason: unknown;
+  private readonly settlementSessionId = randomUUID();
 
   constructor(
     private readonly merchantId: string,
@@ -70,7 +78,8 @@ export class BandwidthMeter {
 
         // A timeout is treated as an unknown result. Do not retry or forward
         // more bytes; the caller closes the tunnel and discards this batch.
-        await this.issuer.settle(this.merchantId, token);
+        const quoteId = relaySettlementQuoteId('bandwidth', this.settlementSessionId, String(this.settledTokens), token);
+        await this.issuer.settle(this.merchantId, token, quoteId);
         this.settledTokens++;
       }
 
@@ -109,8 +118,8 @@ export class HttpRelayIssuer implements RelayIssuer {
     return body.valid === true;
   }
 
-  async settle(merchantId: string, token: string): Promise<void> {
-    await this.post('/settle', { merchantId: this.settleKey ? this.relayMerchantId : merchantId, tokens: [token] });
+  async settle(merchantId: string, token: string, quoteId: string): Promise<void> {
+    await this.post('/settle', { merchantId: this.settleKey ? this.relayMerchantId : merchantId, quoteId, tokens: [token] });
   }
 
   async settleStatus(merchantId: string, quoteId: string, tokens: string[]): Promise<unknown> {

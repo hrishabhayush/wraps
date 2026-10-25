@@ -3,25 +3,30 @@ import { BandwidthMeter, HttpRelayIssuer, type RelayIssuer } from '../src/meter.
 
 function stubIssuer(fail = false) {
   const settled: string[] = [];
+  const quoteIds: string[] = [];
   const issuer: RelayIssuer = {
     verify: async () => true,
-    settle: async (_merchantId, token) => {
+    settle: async (_merchantId, token, quoteId) => {
       if (fail) throw new Error('issuer unavailable');
       settled.push(token);
+      quoteIds.push(quoteId);
     },
   };
-  return { issuer, settled };
+  return { issuer, settled, quoteIds };
 }
 
 describe('BandwidthMeter', () => {
   it('charges one token for a partial block and another only when the next block is used', async () => {
-    const { issuer, settled } = stubIssuer();
+    const { issuer, settled, quoteIds } = stubIssuer();
     const meter = new BandwidthMeter('relay', ['t1', 't2'], issuer, 10);
 
     expect((await meter.forward(Buffer.from('12345678'))).bytes.toString()).toBe('12345678');
     expect(settled).toEqual(['t1']);
     expect((await meter.forward(Buffer.from('abcde'))).bytes.toString()).toBe('abcde');
     expect(settled).toEqual(['t1', 't2']);
+    expect(quoteIds).toHaveLength(2);
+    expect(quoteIds.every((quoteId) => /^relay_[a-f0-9]{64}$/.test(quoteId))).toBe(true);
+    expect(new Set(quoteIds).size).toBe(2);
     expect(meter.bytesUsed).toBe(13);
   });
 
@@ -84,11 +89,11 @@ describe('BandwidthMeter', () => {
     const issuer = new HttpRelayIssuer('https://issuer.example/', fetchImpl);
 
     expect(await issuer.verify(['serialized-token'])).toBe(true);
-    await issuer.settle('relay', 'serialized-token');
+    await issuer.settle('relay', 'serialized-token', 'quote-1');
 
     expect(calls).toEqual([
       { url: 'https://issuer.example/verify', body: { tokens: ['serialized-token'] } },
-      { url: 'https://issuer.example/settle', body: { merchantId: 'relay', tokens: ['serialized-token'] } },
+      { url: 'https://issuer.example/settle', body: { merchantId: 'relay', quoteId: 'quote-1', tokens: ['serialized-token'] } },
     ]);
   });
 
@@ -103,7 +108,7 @@ describe('BandwidthMeter', () => {
       merchantId: 'relay:fixed',
     });
 
-    await issuer.settle('caller-supplied-id', 'serialized-token');
+    await issuer.settle('caller-supplied-id', 'serialized-token', 'quote-1');
     await issuer.settleStatus('caller-supplied-id', 'quote-1', ['serialized-token']);
 
     expect(calls.map(({ url, body, headers }) => ({
@@ -113,7 +118,7 @@ describe('BandwidthMeter', () => {
     }))).toEqual([
       {
         url: 'https://issuer.example/settle',
-        body: { merchantId: 'relay:fixed', tokens: ['serialized-token'] },
+        body: { merchantId: 'relay:fixed', quoteId: 'quote-1', tokens: ['serialized-token'] },
         authorization: 'Bearer relay-secret',
       },
       {

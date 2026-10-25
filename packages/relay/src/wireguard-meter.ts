@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { TLSSocket } from 'node:tls';
 import { parseAuthorization, serializeToken } from '@wraps/tokens';
-import type { RelayIssuer } from './meter.js';
+import { relaySettlementQuoteId, type RelayIssuer } from './meter.js';
 import { WIREGUARD_BYTES_PER_TOKEN, type WireGuardQuotaController } from './wireguard-quota.js';
 import { nextFreePeerAddress, type WireGuardPeer } from './wireguard.js';
 
@@ -35,6 +35,7 @@ interface MeteredPeer {
 export class WireGuardTokenMeter {
   private readonly peers = new Map<string, WireGuardPeer>();
   private readonly sessions = new Map<string, MeteredPeer>();
+  private readonly appliedRegistrations = new Map<string, { publicKey: string; address: string }>();
   private readonly registrationLimits = new Map<string, { startedAt: number; count: number }>();
   private readonly staticPeers: number;
   private polling?: NodeJS.Timeout;
@@ -62,9 +63,28 @@ export class WireGuardTokenMeter {
     if (!WIREGUARD_KEY.test(publicKey) || Buffer.from(publicKey, 'base64').toString('base64') !== publicKey) {
       throw new Error('malformed public key');
     }
+    const quoteId = relaySettlementQuoteId('wireguard-registration', publicKey, tokens[0]);
     let address = '';
     await this.serialize(async () => {
-      if (!(await stage('verify-failed', () => this.issuer.verify(tokens)))) throw new Error('invalid tokens');
+      const previous = this.appliedRegistrations.get(quoteId);
+      if (previous) {
+        if (previous.publicKey !== publicKey) throw new Error('invalid tokens');
+        address = previous.address;
+        return;
+      }
+
+      const valid = await stage('verify-failed', () => this.issuer.verify(tokens));
+      if (!valid) {
+        // A retry can arrive after /settle succeeded but a later quota operation
+        // failed. Resume only this exact merchant/quote/token operation.
+        const prior = this.issuer.settleStatus
+          ? await stage('verify-failed', () => this.issuer.settleStatus!(this.merchantId, quoteId, tokens))
+          : undefined;
+        const status = typeof prior === 'object' && prior !== null && 'status' in prior
+          ? (prior as { status?: unknown }).status
+          : undefined;
+        if (status !== 'settled-by-you') throw new Error('invalid tokens');
+      }
       let peer = this.peers.get(publicKey);
       if (!peer) {
         // Open relay: admit this key. It gets no forwarding until its quota is paid below.
@@ -80,9 +100,10 @@ export class WireGuardTokenMeter {
       const existing = this.sessions.get(publicKey);
       if (!existing) {
         // Settle the first prepaid block before adding any forwarding allowance.
-        await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0]));
+        await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0], quoteId));
         await stage('quota-failed', () => this.quotas.enable(publicKey, peer!.allowedAddress.split('/')[0]));
         this.sessions.set(publicKey, { paidBlocks: 1, usedBlocks: 0, quotaExhausted: false });
+        this.appliedRegistrations.set(quoteId, { publicKey, address });
         return;
       }
       if (existing.paidBlocks >= 1000) throw new Error('peer quota limit reached');
@@ -90,8 +111,9 @@ export class WireGuardTokenMeter {
       // asynchronous poller observed it.
       const usage = await stage('quota-read-failed', () => this.quotas.usedBytes());
       await stage('quota-reset-failed', () => this.reconcile(publicKey, existing, usage.get(publicKey) ?? 0));
-      await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0]));
+      await stage('settle-failed', () => this.issuer.settle(this.merchantId, tokens[0], quoteId));
       existing.paidBlocks++;
+      this.appliedRegistrations.set(quoteId, { publicKey, address });
       if (existing.quotaExhausted) {
         await this.quotas.reset(publicKey);
         existing.quotaExhausted = false;

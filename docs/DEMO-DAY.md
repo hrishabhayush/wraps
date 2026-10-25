@@ -17,7 +17,7 @@ Detailed steps are in [REHEARSAL.md](REHEARSAL.md). This page is the short versi
 
 ## 45 minutes before
 
-The issuer and relay VMs stop on their own after 12 hours, so start them early.
+The issuer and relay VMs stop on their own after 24 hours, so check them early.
 
 1. **Check what is running:**
    ```sh
@@ -29,11 +29,9 @@ The issuer and relay VMs stop on their own after 12 hours, so start them early.
    gcloud --project=wraps-hack compute instances start wraps-relay  --zone=us-central1-a
    ```
    Confidential Space takes 2 to 4 minutes to boot and attest.
-3. **The issuer's IP changes on every start** (the relay's does not: `136.80.57.82` is reserved). Get the issuer IP and export it:
+3. **Both IPs are reserved and stay the same across restarts**: issuer `34.123.78.11`, relay `136.80.57.82`. Export the issuer URL:
    ```sh
-   gcloud --project=wraps-hack compute instances describe wraps-issuer --zone=us-central1-a \
-     --format='value(networkInterfaces[0].accessConfigs[0].natIP)'
-   export ISSUER_URL=https://<that-ip>
+   export ISSUER_URL=https://34.123.78.11
    ```
 4. **Run the preflight:**
    ```sh
@@ -83,7 +81,7 @@ Stop with the **Stop** button or Ctrl-C. That closes the local merchant and the 
 
 | Problem | Fix |
 |---|---|
-| Preflight: issuer unreachable | VM stopped or IP changed. Start it, re-export `ISSUER_URL` (step 3 above). |
+| Preflight: issuer unreachable | VM stopped. Start it (step 2 above) and wait 2 to 4 minutes. `ISSUER_URL` stays `https://34.123.78.11`. |
 | Preflight: digest mismatch | The running image differs from `infra/gcp/expected.json`. Pull main; if still wrong, redeploy with `infra/gcp/deploy.sh issuer` (or follow `infra/gcp/relay-deploy.md`). |
 | Preflight: cloudflared missing | `brew install cloudflared`, or set `DEMO_MERCHANT_URL` to a public HTTPS URL for the merchant. |
 | Port 4174 busy | `DEMO_PORT=4175 npm run demo:live`. |
@@ -97,4 +95,4 @@ Stop with the **Stop** button or Ctrl-C. That closes the local merchant and the 
 gcloud --project=wraps-hack compute instances stop wraps-issuer wraps-relay --zone=us-central1-a
 gcloud --project=wraps-hack compute addresses delete wraps-relay-ip --region=us-central1   # reserved, unused
 ```
-Keep `wraps-relay-live-ip` (`136.80.57.82`) only if you will demo again; delete it otherwise. See FUP-03 in TODO.md.
+Keep `wraps-relay-live-ip` (`136.80.57.82`) and `wraps-issuer-ip` (`34.123.78.11`) only if you will demo again; delete them otherwise (reserved IPs cost a little while their VM is stopped). See FUP-03 in TODO.md.

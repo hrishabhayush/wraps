@@ -3,6 +3,11 @@
 # Build the final issuer and relay images first; their digests become the only accepted identities.
 source "$(dirname "$0")/lib.sh"
 
+STATE_ENV="${STATE_DIR}/issuer-state.env"
+[ -f "${STATE_ENV}" ] || die "issuer state configuration is missing; run infra/gcp/setup-issuer-state.sh prepare"
+# shellcheck source=/dev/null
+source "${STATE_ENV}"
+
 POOL_ID="${GCP_WIF_POOL_ID:-wraps-attested}"
 PROVIDER_ID="${GCP_WIF_PROVIDER_ID:-wraps-cs}"
 SECRET_ID="${ISSUER_RELAY_SETTLE_KEY_SECRET_ID:-wraps-relay-settle-key}"
@@ -14,15 +19,29 @@ EXPECTED_WORKLOAD_SA="wraps-workload@${GCP_PROJECT}.iam.gserviceaccount.com"
 ISSUER_DIGEST="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.issuer?.imageDigest ?? "")' "${EXPECTED_JSON}")"
 RELAY_DIGEST="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.relay?.imageDigest ?? "")' "${EXPECTED_JSON}")"
 KEY_FINGERPRINT="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.issuer?.merchantAuthKeyFingerprint ?? "")' "${EXPECTED_JSON}")"
+ISSUER_PROVIDER="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.issuer?.config?.gcpWifProvider ?? "")' "${EXPECTED_JSON}")"
+RELAY_PROVIDER="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.relay?.config?.gcpWifProvider ?? "")' "${EXPECTED_JSON}")"
+ISSUER_BUCKET="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.issuer?.config?.issuerStateGcsBucket ?? "")' "${EXPECTED_JSON}")"
+ISSUER_PREFIX="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.issuer?.config?.issuerStateGcsPrefix ?? "")' "${EXPECTED_JSON}")"
+ISSUER_KMS_KEY="$(node -e 'const j=require(process.argv[1]); process.stdout.write(j.roles?.issuer?.config?.issuerStateKmsKey ?? "")' "${EXPECTED_JSON}")"
 [[ "${ISSUER_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || die "expected.json has no valid issuer digest"
 [[ "${RELAY_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || die "expected.json has no valid relay digest"
 [[ "${KEY_FINGERPRINT}" =~ ^[0-9a-f]{64}$ ]] || die "issuer image was not built with a pinned merchant public-key map"
+[[ "${ISSUER_PROVIDER}" = "${GCP_WIF_PROVIDER}" && "${RELAY_PROVIDER}" = "${GCP_WIF_PROVIDER}" ]] \
+  || die "issuer and relay images must bake the provider in issuer-state.env; rebuild both"
+[[ "${ISSUER_BUCKET}" = "${ISSUER_STATE_GCS_BUCKET}" && "${ISSUER_PREFIX}" = "${ISSUER_STATE_GCS_PREFIX}" && "${ISSUER_KMS_KEY}" = "${ISSUER_STATE_KMS_KEY}" ]] \
+  || die "issuer image state resources do not match issuer-state.env; rebuild the issuer"
+[[ "${ISSUER_STATE_KMS_KEY}" =~ ^projects/${GCP_PROJECT}/locations/${GCP_REGION}/keyRings/[A-Za-z0-9_-]{1,63}/cryptoKeys/[A-Za-z0-9_-]{1,63}$ ]] \
+  || die "issuer state KMS key must belong to ${GCP_PROJECT} in ${GCP_REGION}"
 
-gc services enable iam.googleapis.com cloudresourcemanager.googleapis.com \
-  iamcredentials.googleapis.com sts.googleapis.com secretmanager.googleapis.com --quiet
+gc services enable storage.googleapis.com cloudkms.googleapis.com iam.googleapis.com \
+  cloudresourcemanager.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
+  secretmanager.googleapis.com --quiet
 
 PROJECT_NUMBER="$(gc projects describe "${GCP_PROJECT}" --format='value(projectNumber)')"
 [[ "${PROJECT_NUMBER}" =~ ^[0-9]+$ ]] || die "could not read the GCP project number"
+WIF_PROVIDER_RESOURCE="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+[ "${GCP_WIF_PROVIDER}" = "${WIF_PROVIDER_RESOURCE}" ] || die "issuer-state.env WIF provider does not match the configured pool and provider IDs"
 
 MAPPING='google.subject="gcpcs::"+assertion.submods.container.image_digest+"::"+assertion.submods.gce.project_number+"::"+assertion.submods.gce.instance_id,attribute.image_digest=assertion.submods.container.image_digest'
 CONDITION="assertion.submods.gce.project_number == '${PROJECT_NUMBER}' && assertion.swname == 'CONFIDENTIAL_SPACE' && assertion.secboot == true && assertion.dbgstat == 'disabled-since-boot' && 'STABLE' in assertion.submods.confidential_space.support_attributes && assertion.submods.container.image_digest in ['${ISSUER_DIGEST}', '${RELAY_DIGEST}'] && '${WORKLOAD_SA}' in assertion.google_service_accounts"
@@ -147,10 +166,22 @@ for member in "${ISSUER_MEMBER}" "${RELAY_MEMBER}"; do
     --condition="expression=${SECRET_ACCESS_CONDITION},title=Access pinned relay credential version" --quiet >/dev/null
 done
 
+# The issuer alone receives the read/list, create-only, and encrypt/decrypt
+# roles. The relay has no access to financial state or its wrapping key.
+gc storage buckets add-iam-policy-binding "gs://${ISSUER_STATE_GCS_BUCKET}" \
+  --member="${ISSUER_MEMBER}" --role=roles/storage.objectViewer --quiet >/dev/null
+gc storage buckets add-iam-policy-binding "gs://${ISSUER_STATE_GCS_BUCKET}" \
+  --member="${ISSUER_MEMBER}" --role=roles/storage.objectCreator --quiet >/dev/null
+KMS_KEYRING="${ISSUER_STATE_KMS_KEY#*/keyRings/}"
+KMS_KEYRING="${KMS_KEYRING%%/*}"
+gc kms keys add-iam-policy-binding "${ISSUER_STATE_KMS_KEY##*/}" \
+  --location="${GCP_REGION}" --keyring="${KMS_KEYRING}" \
+  --member="${ISSUER_MEMBER}" --role=roles/cloudkms.cryptoKeyEncrypterDecrypter --quiet >/dev/null
+
 mkdir -p "${STATE_DIR}"
 umask 077
 cat > "${STATE_DIR}/merchant-auth.env" <<EOF
-export GCP_WIF_PROVIDER=projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}
+export GCP_WIF_PROVIDER=${WIF_PROVIDER_RESOURCE}
 export ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION=projects/${GCP_PROJECT}/secrets/${SECRET_ID}/versions/${SECRET_VERSION}
 EOF
 

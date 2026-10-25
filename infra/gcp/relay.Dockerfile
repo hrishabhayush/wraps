@@ -2,6 +2,7 @@
 # from the Docker Official Image page for node:22.23.4-bookworm-slim.
 FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09 AS build
 WORKDIR /repo
+ARG GCP_WIF_PROVIDER
 
 COPY package.json package-lock.json tsconfig.json ./
 COPY infra/gcp/relay-entrypoint.ts ./infra/gcp/relay-entrypoint.ts
@@ -25,6 +26,7 @@ RUN ./node_modules/.bin/esbuild infra/gcp/relay-entrypoint.ts \
 
 # Runtime: only the pinned Node image and bundled relay workload are shipped.
 FROM --platform=linux/amd64 node:22.23.4-bookworm-slim@sha256:ea11b74b986d520137cdef9a5346e447a00f275ecc4abc0055b7151226231e09
+ARG GCP_WIF_PROVIDER
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 iptables nftables procps \
     util-linux \
@@ -40,12 +42,13 @@ ENV NODE_ENV=production \
     RELAY_PROXY_PORT=443 \
     RELAY_ATTESTATION_HOST=0.0.0.0 \
     RELAY_ATTESTATION_PORT=8080 \
-    TZ=UTC
+    TZ=UTC \
+    GCP_WIF_PROVIDER=${GCP_WIF_PROVIDER}
 
 EXPOSE 443/tcp 8080/tcp 51820/udp
 # Relay startup logs use fixed labels and allowlisted failure codes only.
 LABEL "tee.launch_policy.log_redirect"="always"
-LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON,ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION,GCP_WIF_PROVIDER"
+LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON,ISSUER_RELAY_SETTLE_KEY_SECRET_VERSION"
 LABEL "tee.launch_policy.allow_capabilities"="true"
 
 # The provider reads the Confidential Space launcher socket; TLS key material

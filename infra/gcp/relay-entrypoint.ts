@@ -15,6 +15,9 @@ type IssuerRuntime = {
   issuerTransport: (attestedIssuer: unknown) => unknown;
 };
 
+// Keep startup diagnostics useful without exposing URLs, keys, nonces, or tokens.
+let startupStep = 'configuration';
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -90,9 +93,11 @@ async function main(): Promise<void> {
   // These APIs are supplied by the GCP attestation and issuer runtime branches.
   // Keep the structural boundary local so this infra entrypoint can be integrated
   // while those dependency branches remain stacked separately.
+  startupStep = 'loading-runtime';
   const attestationRuntime = await import('@wraps/attestation') as unknown as AttestationRuntime;
   const issuerRuntime = await import('@wraps/issuer') as unknown as IssuerRuntime;
   const issuerVerifier = attestationRuntime.verifierFromEnv('issuer');
+  startupStep = 'issuer-attestation';
   const attestedIssuer = await issuerRuntime.fetchAttestedIssuer(
     issuerUrl.toString().replace(/\/$/, ''),
     issuerVerifier,
@@ -101,6 +106,7 @@ async function main(): Promise<void> {
 
   // Both the TLS identity and its private key are created in the workload's
   // process memory. The relay attestation endpoint binds this cert's SPKI.
+  startupStep = 'tls-identity';
   const identity = await createRelayTlsIdentity(hostname);
   const provider = new attestationRuntime.ConfidentialSpaceProvider({ audience });
   const relayOptions = {
@@ -115,7 +121,11 @@ async function main(): Promise<void> {
     attestationPort: positivePort('RELAY_ATTESTATION_PORT', 8080),
   };
   const wireGuardEnabled = process.env.WG_ENABLED === 'true';
-  if (wireGuardEnabled) await runCommand('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
+  if (wireGuardEnabled) {
+    startupStep = 'wireguard-forwarding';
+    await runCommand('sysctl', ['-w', 'net.ipv4.ip_forward=1']);
+  }
+  startupStep = 'relay-listeners';
   const servers = wireGuardEnabled
     ? await startConfidentialWireGuardRelay({
       ...relayOptions,
@@ -166,6 +176,6 @@ async function main(): Promise<void> {
 
 main().catch(() => {
   // Never log URLs, keys, nonces, credentials, or attestation token contents.
-  console.error('[relay] startup failed');
+  console.error(`[relay] startup failed during ${startupStep}`);
   process.exitCode = 1;
 });

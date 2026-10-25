@@ -6,3 +6,4 @@ export * from './identity';
 export * from './server';
 export * from './boot-config';
 export * from './log';
+export * from './egress-check';

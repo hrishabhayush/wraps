@@ -45,8 +45,9 @@ function readAmount(a: unknown): Amount | null {
 
 /**
  * Turn one `account_tx` entry into an X402Payment, or null if it is not a
- * successful Payment carrying an x402 facilitator memo. Works with
- * api_version 1 (`tx`) and 2 (`tx_json` + `hash`).
+ * successful Payment carrying an x402 facilitator memo, or the t54 v2
+ * source tag together with an invoice ID. Works with api_version 1 (`tx`)
+ * and 2 (`tx_json` + `hash`).
  */
 export function parseX402Payment(entry: any): X402Payment | null {
   const tx = entry?.tx ?? entry?.tx_json;
@@ -69,6 +70,12 @@ export function parseX402Payment(entry: any): X402Payment | null {
     } else if (data) {
       otherMemos.push(data);
     }
+  }
+  // The current t54 x402-xrpl buyer signs this tag by default. In v2 the
+  // invoice ID binds the Payment to a quoted request; the tag alone is not
+  // enough to classify a transaction as x402.
+  if (facilitator === null && tx.SourceTag === T54_SOURCE_TAG && typeof tx.InvoiceID === "string") {
+    facilitator = "t54-xrpl-x402";
   }
   if (facilitator === null) return null;
 
@@ -201,23 +208,31 @@ export async function* followPayments(
   while (!opts.signal?.aborted) {
     let marker: unknown;
     let maxSeen = min - 1;
-    do {
-      const res: any = await rpc.request("account_tx", {
-        account: merchant,
-        ledger_index_min: min,
-        ledger_index_max: -1,
-        forward: true,
-        limit: 200,
-        ...(marker ? { marker } : {}),
-      });
-      for (const entry of res.transactions ?? []) {
-        const p = parseX402Payment(entry);
-        const ledger = (entry.tx ?? entry.tx_json)?.ledger_index ?? entry.ledger_index;
-        if (typeof ledger === "number") maxSeen = Math.max(maxSeen, ledger);
-        if (p && p.merchant === merchant) yield p;
-      }
-      marker = res.marker;
-    } while (marker && !opts.signal?.aborted);
+    try {
+      do {
+        const res: any = await rpc.request("account_tx", {
+          account: merchant,
+          ledger_index_min: min,
+          ledger_index_max: -1,
+          forward: true,
+          limit: 200,
+          ...(marker ? { marker } : {}),
+        });
+        for (const entry of res.transactions ?? []) {
+          const p = parseX402Payment(entry);
+          const ledger = (entry.tx ?? entry.tx_json)?.ledger_index ?? entry.ledger_index;
+          if (typeof ledger === "number") maxSeen = Math.max(maxSeen, ledger);
+          if (p && p.merchant === merchant) yield p;
+        }
+        marker = res.marker;
+      } while (marker && !opts.signal?.aborted);
+    } catch (error) {
+      // XRPL rejects a range whose minimum is one ledger beyond the current
+      // validated ledger. That is the normal idle state while following.
+      if ((error as { code?: string }).code !== "lgrIdxsInvalid") throw error;
+      await sleep(opts.intervalMs ?? 4000);
+      continue;
+    }
     min = maxSeen + 1;
     await sleep(opts.intervalMs ?? 4000);
   }

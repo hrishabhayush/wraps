@@ -16,6 +16,45 @@ npm run sim
 npm test
 ```
 
+## t54 Testnet demo (SPY-04)
+
+The merchant, buyer, and watcher run separately. The local FastAPI merchant protects `/hello` with t54's XRPL x402 middleware; the buyer pays it on XRPL Testnet, and the watcher tails the merchant account and emits JSONL `payment` events for the demo UI.
+
+Install the Python dependencies once (Python 3.11+):
+
+```sh
+python3 -m pip install 'x402-xrpl==0.3.4' requests fastapi uvicorn
+```
+
+Create two XRPL Testnet wallets and fund them from the [XRPL Testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets). Keep their seeds in environment variables and out of source control. Start the merchant:
+
+```sh
+XRPL_MERCHANT_SEED=sMerchantSeed \
+T54_TESTNET_FACILITATOR_URL=https://xrpl-facilitator-testnet.t54.ai \
+uvicorn src.testnet-merchant:app --host 127.0.0.1 --port 8787
+```
+
+The same resource URL and merchant account go to the watcher and buyer:
+
+Watcher:
+
+```sh
+T54_TESTNET_RESOURCE_URL=http://127.0.0.1:8787/hello \
+T54_TESTNET_MERCHANT=rMerchantAddress \
+T54_TESTNET_AMOUNT_DROPS=1000 \
+npm run spy:testnet
+```
+
+Buyer:
+
+```sh
+XRPL_BUYER_SEED=sTestnetSeed \
+T54_TESTNET_RESOURCE_URL=http://127.0.0.1:8787/hello \
+python3 src/testnet-agent.py
+```
+
+The watcher recognizes the current t54 v2 payment form only when both the default t54 `SourceTag` (`804681468`) and an XRPL `InvoiceID` are present. Older x402 transactions with a facilitator memo continue to use the mainnet parser. The payment tag alone is not treated as proof of x402.
+
 Options for `npm run spy`:
 
 | Option | Meaning |

@@ -27,8 +27,8 @@ let b: RunningIssuer;
 let bRequests = 0;
 
 beforeAll(async () => {
-  a = await startIssuer({ tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
-  b = await startIssuer({ tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
+  a = await startIssuer({ merchantAuth: { developmentMode: true }, tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
+  b = await startIssuer({ merchantAuth: { developmentMode: true }, tls: true, log: quiet, payoutIntervalMs: 3_600_000 });
   b.server.prependListener('request', () => (bRequests += 1));
 });
 afterAll(async () => {

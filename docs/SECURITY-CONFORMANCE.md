@@ -14,7 +14,9 @@ npm run test:conformance
 ```
 
 Most tests live in `packages/issuer/test/conformance.test.ts` and
-`packages/merchant/test/conformance.test.ts`. Each test name starts with its rule ID. The SDK
+`packages/merchant/test/conformance.test.ts`. SEC-04 and SEC-06 coverage is in
+`packages/issuer/test/merchant-auth-conformance.test.ts` and
+`packages/issuer/test/state-conformance.test.ts`. Each test name starts with its rule ID. The SDK
 reservation tests (SEC-02) live in `packages/sdk/test/reservation.test.ts`, and the payout rail
 tests live in `packages/issuer/test/payout-xrpl-evm.test.ts` and `payout-anvil.test.ts`.
 `npm test` runs all of them.
@@ -61,6 +63,8 @@ through the mock AP4M voucher rail or a real RLUSD transfer (`XrplEvmTransferRai
 | FreeRide denial of settlement | pass | `SR4 / FreeRide denial of settlement: the merchant serves nothing when settlement fails, and the payer can retry` | Settle comes before serve, so a merchant is never left unpaid. A settle the issuer refused reopens the quote. An ambiguous settle keeps it held (SEC-02). The payer loses nothing either way. |
 | SEC-02 ambiguous settle | pass (fixed) | `SR4 ambiguous settle: the answer is lost after the issuer settled; /settle/status confirms it and the merchant serves once`, `SR4 ambiguous settle: issuer unreachable; the quote stays held, even past expiry, until the same tokens settle it`, `SR4 ambiguous settle race: a delayed settle lands after the merchant answered pending; the retry serves once and the tab counts it once`, `SR4 ambiguous settle race: after a gateway 504, concurrent retries with the same tokens are served exactly once`, `SEC-02: a network error keeps the tokens reserved, not reusable, until resolvePending settles them`, `SEC-02: a merchant whose settle was ambiguous answers 503 pending; the SDK retries with the same tokens and is served once` | A timeout, network error or gateway 502/504 on `/settle` never reopens the quote blindly. The merchant looks the outcome up. If it cannot know, it keeps the quote and tokens held and answers 503 `pending` with `retry-after`. The SDK reserves tokens before it pays. A definite refusal restores the unspent ones. An ambiguous outcome keeps them reserved until `resolvePending()` retries with the same tokens and quote. |
 | SEC-03 cross-merchant double-serve | pass (fixed) | `SEC-03 cross-merchant race: tokens settled at merchant B during A's ambiguous settle; A refuses, B serves, exactly one serve`, `SEC-03 cross-merchant race: after A answers pending, the payer spends the tokens at B; A's retry refuses and never serves`, `SEC-03: retrying /settle after a lost answer and a failed status lookup is safe; the original claim comes back and the tab counts once`, `SEC-03: a repeat settle with the same merchant, quote and tokens returns the original claim and counts once`, `SEC-03: concurrent identical settles for one quote all return the one original claim`, `SEC-03: a repeat settle on the same quote with different tokens is refused, and those tokens stay unspent`, `SEC-03: /settle/status answers settled-by-you, settled-by-other, unspent and expired`, `SEC-03: a token settled and then expired still reports settled, and a repeat settle still returns the original claim`, `SEC-03: /settle/status refuses malformed input and forged tokens instead of guessing`, `SEC-03: /settle/status over HTTP never reveals the other merchant, its quote or its claim` | See below. Settle is idempotent per (merchant, quote). After an ambiguous settle the merchant asks a merchant-scoped status, and serves only on `settled-by-you`. |
+| SEC-04 merchant authentication | partial: merchant routes pass; relay integration gap | `SEC-04: rejects unauthenticated, wrong-key, stale and replayed settle requests; identities cannot be substituted`, `SEC-04: allows the fixed relay ID only with its separately configured legacy key` | `/settle`, `/settle/status` and `GET /payouts?merchantId=` require an Ed25519 signature bound to merchant ID, method, path, body hash, timestamp and nonce. The issuer persists nonce use. The relay key mode is implemented, but the current relay client does not send its bearer credential yet. |
+| SEC-06 issuer state persistence | local file store pass; Confidential Space gap | `SEC-06: restores spent tokens, settlements, tabs and funds after restart; old keys are not restored`, `SEC-06: resumes the same in-flight signed payout after restart and does not broadcast a second transfer`, `SEC-06: detects journal tampering, partial truncation and rollback to an older valid record` | `IssuerStateStore` has an in-memory default and an append-only file implementation for local/non-enclave runs. File records have sequence numbers, a SHA-256 chain and a separately fsynced head marker. The current Confidential Space image has no persistent disk and stays in-memory. |
 
 ## SEC-03: cross-merchant double-serve
 
@@ -129,18 +133,14 @@ and does not store it as its latest claim.
   RLUSD address and merchant addresses.
 - **Ambiguous settle (SEC-02).** See the SEC-02 row.
 - **Cross-merchant double-serve (SEC-03).** See the SEC-03 section.
+- **Merchant authentication (SEC-04).** Configure `ISSUER_MERCHANT_AUTH_KEYS` as a JSON object mapping merchant IDs to base64url Ed25519 SPKI public keys. Merchants sign `/settle` and `/settle/status`; payout-history lookups use the same request format. Unknown IDs, bad signatures, stale timestamps and repeated nonces are refused. Local demos generate and register an ephemeral key automatically. `ISSUER_DEV_MERCHANT_AUTH=1` is restricted to loopback mock runs. The relay's temporary `ISSUER_RELAY_SETTLE_KEY` is bound to one fixed relay ID; its current client still needs to attach `Authorization: Bearer <key>`.
+- **Issuer state (SEC-06).** `MemoryIssuerStateStore` is the default. `FileIssuerStateStore` appends snapshots and fsyncs each record before acknowledging the state change. It checks the sequence/hash chain and head marker on load, and contains spent IDs, settlements, tabs, paid history, funds held, unspent-issued counts, merchant nonces and signed in-flight payout bytes. Set `ISSUER_STATE_FILE` only for a local/non-enclave run whose filesystem survives process restarts.
 
 ## Honest limits
 
-- **No merchant authentication.** The issuer does not authenticate merchants on `/settle` or
-  `/settle/status`. Admin routes have a bearer token, but there is no per-merchant credential.
-  The status answer is bound to the merchantId and quoteId sent in the original settle. So
-  anyone who knows a (merchantId, quoteId, tokens) triple can ask its status. The payer already
-  knows all three, so it learns nothing new. Anyone can also settle tokens they hold to any
-  merchant's tab, which pays that merchant. A payer can block its own quote by settling other
-  tokens to it first. That harms only the payer. Merchant credentials are future work.
-- Settlement records and the spent list live in issuer memory (SPEC §12: do not restart the
-  enclave). The merchant keeps quotes in memory too.
+- **Relay authentication integration remains open.** The issuer has a separate fixed-ID bearer credential (`ISSUER_RELAY_SETTLE_KEY`) because relay settles have no quote ID and the current relay HTTP client does not sign. The relay needs to attach `Authorization: Bearer <key>` through its `issuerFetch` before strict authentication can be enabled for relay traffic. This task did not edit `packages/relay` or `infra/`; unsigned relay settles are rejected outside local loopback development mode.
+- **Confidential Space state does not survive restart today.** The deployed confidential VM has no persistent disk and uses `MemoryIssuerStateStore`. Durable enclave state needs storage encrypted and integrity-protected with a key released only to the attested workload, for example Cloud KMS with an attestation-bound policy. That is roadmap work; the file journal is for local/non-enclave runs. Its local head marker detects a truncated or rolled-back journal while the marker remains intact; replacing both local files together needs an external monotonic anchor to detect.
+- **Signing keys are memory-only.** Restarting the enclave creates new token and claim keys. In a file-backed local run, persisted spent IDs and settlement records remain, but old tokens fail as unknown-key/bad-signature and old signed claims/payout records cannot be verified against the new claim key. Tabs, payout history and in-flight payout bytes remain; `/settle/status` can still identify a previously settled quote.
 - Settles without a quote ID (relay, app) are not idempotent. A repeat is refused as "already
   spent", as before.
 - The attestation itself still binds only the current token key and the claim key. Older

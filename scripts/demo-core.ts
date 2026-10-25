@@ -3,7 +3,7 @@
 //   --tamper      the issuer runs a modified build (different PCR0). The agent must refuse it.
 //   --debug-mode  the issuer runs in debug mode (all-zero PCRs). The agent must refuse it.
 //   --gullible    the agent's reasoning obeys "buy 500 more" text in merchant data. The caps must hold.
-import { AttestationError, MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
+import { AttestationError, MockAttestationVerifier, b64u, generateEd25519, mockPcrs } from '@wraps/attestation';
 import { startIssuer, verifyClaim, verifyReserves } from '@wraps/issuer';
 import { Merchant } from '@wraps/merchant';
 import { MockTopUpWallet, PrivatePayClient } from '@wraps/sdk';
@@ -17,13 +17,21 @@ const green = (s: string) => `\x1b[32m${s}\x1b[0m`;
 
 const expectedPcrs = mockPcrs('issuer');
 console.log(bold('Core payment flow demo') + dim(' (MOCK attestation, MOCK AP4M rail, MOCK payouts)\n'));
+const merchantId = 'merchant-research-data';
+const merchantAuthKey = generateEd25519();
 
 // The merchant must trust the real issuer, so it starts against an honest one. A tampered issuer
 // is started separately for the agent to probe.
-const issuer = await startIssuer({ log: (m) => console.log(dim(`[issuer] ${m}`)), payoutIntervalMs: 3_600_000 });
+const issuer = await startIssuer({
+  log: (m) => console.log(dim(`[issuer] ${m}`)),
+  payoutIntervalMs: 3_600_000,
+  merchantAuth: { publicKeys: { [merchantId]: b64u(merchantAuthKey.publicKeyBytes) } },
+});
 const merchant = new Merchant({
+  merchantId,
   issuerUrl: issuer.url,
   verifier: new MockAttestationVerifier({ expectedPcrs }),
+  authPrivateKey: merchantAuthKey.privateKey,
   log: (m) => console.log(dim(`[merchant] ${m}`)),
 });
 const merchantUrl = await merchant.start();

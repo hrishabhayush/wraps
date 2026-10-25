@@ -4,7 +4,7 @@
 //
 // Tamper mode points the agent at a second issuer built as 'issuer-tampered'. Its PCR0 differs,
 // so the SDK must refuse it with PCR_MISMATCH before any top-up or purchase.
-import { AttestationError, MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
+import { AttestationError, MockAttestationVerifier, b64u, generateEd25519, mockPcrs } from '@wraps/attestation';
 import { ResearchAgent, DEMO_TASKS } from '@wraps/agent';
 import { startIssuer } from '@wraps/issuer';
 import { Merchant } from '@wraps/merchant';
@@ -37,13 +37,18 @@ export async function runPrivateAgent(publish: Publish, opts: AgentRunOptions = 
   try {
     publish('status', { message: tamper ? 'Starting trusted merchant and a tampered issuer build.' : 'Starting local mock issuer and merchant.' });
     const expectedPcrs = mockPcrs('issuer');
+    const merchantId = 'merchant-research-data';
+    const merchantAuthKey = generateEd25519();
     issuer = await start({
       payoutIntervalMs: 3_600_000,
       log: (m) => publish('issuer', { message: m }),
+      merchantAuth: { publicKeys: { [merchantId]: b64u(merchantAuthKey.publicKeyBytes) } },
     });
     merchant = new Merchant({
+      merchantId,
       issuerUrl: issuer.url,
       verifier: new MockAttestationVerifier({ expectedPcrs }),
+      authPrivateKey: merchantAuthKey.privateKey,
       log: (m) => publish('merchant', { message: m }),
     });
     const merchantUrl = await merchant.start();

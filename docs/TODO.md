@@ -116,9 +116,9 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 ## Lane 9: Security and dependency health
 
 - [ ] **SEC-01** Resolve or document the production dependency audit findings. `npm audit --omit=dev` currently reports 5 findings (1 moderate, 4 high): `ws` through `viem` has a reported npm fix; `sjcl` through the Cloudflare PrivatePass dependency chain has no fix reported.
-- [ ] **SEC-04** Merchant authentication on `/settle` and `/settle/status`. Today any caller can name any merchant ID (documented gap from PR #44).
+- [ ] **SEC-04** Merchant authentication on `/settle` and `/settle/status`. Ed25519 merchant signatures and the issuer's fixed-ID relay-key mode are implemented; the relay must still attach its configured key before strict mode can be used for relay settlements (documented gap from PR #44).
 - [ ] **SEC-05** Make relay and app settles idempotent by sending a quote ID, like the merchant does (PR #44 only covers quote-ID settles).
-- [ ] **SEC-06** Persist issuer state (spent list, settlement records, in-flight payouts) safely across restarts. Today it lives in memory.
+- [ ] **SEC-06** Persist issuer state (spent list, settlement records, in-flight payouts) safely across restarts. A hash-chained file store is available for local/non-enclave runs; the current Confidential Space image remains in-memory until attestation-bound encrypted storage is implemented.
 
 ## Follow-ups (from the Oct 25 review pass)
 

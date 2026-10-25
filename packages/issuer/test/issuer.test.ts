@@ -20,7 +20,7 @@ const wallet = new MockTopUpWallet();
 const quiet = () => {};
 
 beforeAll(async () => {
-  issuer = await startIssuer({ log: quiet, payoutIntervalMs: 3_600_000 });
+  issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: quiet, payoutIntervalMs: 3_600_000 });
 });
 afterAll(() => issuer.close());
 

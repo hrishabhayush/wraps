@@ -7,6 +7,7 @@
 // taken as proof of our own settle, so a payer racing the tokens at a second merchant gets
 // served at most once.
 import { randomBytes } from 'node:crypto';
+import type { KeyObject } from 'node:crypto';
 import { createServer, IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { AttestationVerifier } from '@wraps/attestation';
 import {
@@ -20,6 +21,7 @@ import {
   issuerTransport,
   listenUrl,
   sendJson,
+  signMerchantRequest,
   verifyClaim,
 } from '@wraps/issuer';
 import { challengeHeader, parseAuthorization, serializeToken, tokenId } from '@wraps/tokens';
@@ -39,6 +41,8 @@ export interface MerchantOptions {
   now?: () => number;
   /** How often to re-check the issuer's attestation, so 402s follow token key rotation (SR3). Default 10 min. */
   issuerRefreshMs?: number;
+  /** Ed25519 key registered with the issuer for this merchant ID. */
+  authPrivateKey?: KeyObject;
 }
 
 /** M5: paid responses must never be stored by a browser, proxy or CDN. */
@@ -294,11 +298,7 @@ export class Merchant {
     let status = 0;
     let reason: string;
     try {
-      const r = await this.issuerCall!(`${this.opts.issuerUrl}/settle`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ merchantId: this.merchantId, quoteId, tokens: serialized }),
-      });
+      const r = await this.requestIssuer('/settle', { merchantId: this.merchantId, quoteId, tokens: serialized }, true);
       status = r.status;
       const body = await r.json().catch(() => undefined);
       if (r.ok && body?.claim && typeof body.signature === 'string') return { kind: 'settled', claim: body as SignedClaim };
@@ -312,7 +312,7 @@ export class Merchant {
 
     let lookup: { ok: boolean; body: any };
     try {
-      lookup = await this.callIssuer('/settle/status', { merchantId: this.merchantId, quoteId, tokens: serialized });
+      lookup = await this.callIssuer('/settle/status', { merchantId: this.merchantId, quoteId, tokens: serialized }, true);
     } catch (e) {
       return { kind: 'unknown', reason: `${reason}; /settle/status failed: ${(e as Error).message}` };
     }
@@ -396,13 +396,29 @@ export class Merchant {
     sendJson(res, 402, body, { 'www-authenticate': challengeHeader(issuer.tokenKey, issuer.issuerName) });
   }
 
-  private async callIssuer(path: string, body: unknown): Promise<{ ok: boolean; body: any }> {
-    const r = await this.issuerCall!(`${this.opts.issuerUrl}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+  private async callIssuer(path: string, body: unknown, authenticate = false): Promise<{ ok: boolean; body: any }> {
+    const r = await this.requestIssuer(path, body, authenticate);
     return { ok: r.ok, body: await r.json() };
+  }
+
+  private requestIssuer(path: string, payload: unknown, authenticate = false): Promise<Response> {
+    const body = JSON.stringify(payload);
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (authenticate && this.opts.authPrivateKey) {
+      Object.assign(headers, signMerchantRequest(
+        this.opts.authPrivateKey,
+        this.merchantId,
+        'POST',
+        path,
+        body,
+        this.now(),
+      ));
+    }
+    return this.issuerCall!(`${this.opts.issuerUrl}${path}`, {
+      method: 'POST',
+      headers,
+      body,
+    });
   }
 }
 

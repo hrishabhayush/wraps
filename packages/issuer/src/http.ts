@@ -2,6 +2,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export async function readJson(req: IncomingMessage, limit = 1_000_000): Promise<any> {
+  return (await readJsonWithRaw(req, limit)).value;
+}
+
+export async function readJsonWithRaw(req: IncomingMessage, limit = 1_000_000): Promise<{ value: any; raw: Buffer }> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const c of req) {
@@ -9,9 +13,10 @@ export async function readJson(req: IncomingMessage, limit = 1_000_000): Promise
     if (size > limit) throw new HttpError(413, 'body too large');
     chunks.push(c as Buffer);
   }
-  if (size === 0) return {};
+  const raw = Buffer.concat(chunks);
+  if (size === 0) return { value: {}, raw };
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    return { value: JSON.parse(raw.toString('utf8')), raw };
   } catch {
     throw new HttpError(400, 'body is not JSON');
   }

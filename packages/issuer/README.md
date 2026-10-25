@@ -26,14 +26,57 @@ in one batch, mixed across all customers. Two rails exist:
 - A tx whose send timed out, or whose receipt has not come yet, stays in flight. The next batch
   checks its receipt by hash first, and rebroadcasts the same signed bytes if it is not mined. No
   new transfer is signed for that merchant while one is in flight, so no merchant is paid twice.
-- In-flight state lives in memory, like the rest of the issuer (SPEC §12). Do not restart the
-  issuer while a payout is in flight.
+- In-flight transactions are stored with issuer state before they are sent. A file-backed local
+  run can resume the same signed transaction after restart. The default in-memory store, including
+  the current Confidential Space image, cannot recover state after a process restart.
 - The issuer checks that the RPC reports the configured chain ID before it sends.
 
 Each confirmed payout adds a signed record to the merchant's history:
 `GET /payouts?merchantId=<id>`. A record has the tx hash, the payout address, the token and
 chain, the total paid so far, and the merchant's latest claim (`claimSeq`, `claimTotalTokens`).
-It is signed with the attested claim key. Check it with `verifyPayoutRecord()`.
+It is signed with the attested claim key and the request requires that merchant's Ed25519
+signature. Check the record with `verifyPayoutRecord()`.
+
+## Merchant authentication and issuer state
+
+The issuer requires a per-merchant Ed25519 signature on `/settle`, `/settle/status` and
+`GET /payouts?merchantId=<id>`. It covers the merchant ID, HTTP method, exact path, SHA-256 body
+hash, timestamp and a random nonce. Timestamps are accepted within 60 seconds; a nonce cannot be
+reused. Configure public keys as `ISSUER_MERCHANT_AUTH_KEYS`, a JSON object mapping merchant IDs
+to base64url-encoded Ed25519 SPKI keys.
+
+Generate a keypair and the matching env lines with:
+
+```sh
+npm run merchant:auth-key -- merchant-research-data
+```
+
+Keep `MERCHANT_AUTH_PRIVATE_KEY` secret in the merchant process. Put the generated public-key
+mapping in the issuer's `ISSUER_MERCHANT_AUTH_KEYS`. Local `demo:core` and `demo` runs generate and
+register an ephemeral keypair automatically. `ISSUER_DEV_MERCHANT_AUTH=1` is a local-only bypass;
+the issuer accepts it only on a loopback, non-Confidential-Space listener.
+
+The relay's existing settle client cannot yet add request headers. The issuer offers a temporary
+fixed-ID credential mode with `ISSUER_RELAY_SETTLE_KEY` and optional
+`ISSUER_RELAY_MERCHANT_ID=relay`; the relay must send `Authorization: Bearer <key>` using its
+`issuerFetch`. Until that relay-side change lands, strict issuer authentication rejects the
+relay's unsigned settles. The local demo's loopback development mode keeps its embedded relay
+tests working.
+
+Issuer state uses `MemoryIssuerStateStore` unless a store is passed to `startIssuer`. For local or
+non-enclave runs, set `ISSUER_STATE_FILE=./data/issuer-state.jsonl` to use an append-only,
+hash-chained journal. The journal fsyncs state before acknowledging changes and detects tampering,
+partial truncation and rollback against its monotonic head marker. The current Confidential Space
+VM has no persistent disk, so its image intentionally stays on the in-memory store. Durable state
+there needs encrypted and integrity-protected storage with a key released only to the attested
+workload, such as Cloud KMS with an attestation-bound policy. The local head marker detects
+truncation or rollback while the marker remains intact; replacing both local files together needs
+an external monotonic anchor.
+
+Issuer token and claim signing keys remain memory-only. A restart creates new keys; previously
+issued tokens are then unknown to the issuer, while persisted tabs, settlement records and payout
+transactions remain in a file-backed local run. Old signed claims and payout records do not verify
+under the new claim key.
 
 ### Environment variables
 
@@ -59,6 +102,11 @@ For a secret-free testnet setup template, start with [`funder.env.example`](./fu
 | `PAYOUT_MAX_BATCH_FEE_XRP` | `0.5` | Hard gas fee cap per batch, in XRP. |
 | `PAYOUT_RECEIPT_TIMEOUT_MS` | `60000` | How long a batch waits for receipts before leaving a tx in flight. |
 | `ISSUER_ADMIN_TOKEN` | none | Bearer token for the payout admin routes. Without it, they answer loopback callers only. |
+| `ISSUER_MERCHANT_AUTH_KEYS` | `{}` | JSON map of merchant ID to base64url Ed25519 SPKI public key. Required for merchant-specific routes in strict mode. |
+| `ISSUER_RELAY_SETTLE_KEY` | none | Temporary bearer credential for the fixed relay merchant ID; the relay must attach it before strict mode works for relay settlements. |
+| `ISSUER_RELAY_MERCHANT_ID` | `relay` | Merchant ID allowed to use `ISSUER_RELAY_SETTLE_KEY`. |
+| `ISSUER_DEV_MERCHANT_AUTH` | `0` | Local-only merchant auth bypass. Requires a loopback host and non-Confidential-Space attestation. |
+| `ISSUER_STATE_FILE` | none | Optional append-only file store for local/non-enclave runs. Omitted in the current Confidential Space image; default is memory. |
 | `ISSUER_URL` | `http://127.0.0.1:4001` | Used by the payout scripts below. |
 
 ### Scripts

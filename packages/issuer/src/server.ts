@@ -18,9 +18,10 @@ import { timingSafeEqual } from 'node:crypto';
 import { createServer, IncomingMessage, Server } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { IssuerCore, IssuerError } from './core';
-import { HttpError, RateLimiter, readJson, sendJson } from './http';
+import { HttpError, RateLimiter, readJson, readJsonWithRaw, sendJson } from './http';
 import type { PayoutScheduler } from './payout';
 import { PAYMENT_HEADER, PaymentRequiredBody } from './protocol';
+import { MerchantAuthConfig, verifyMerchantRequest } from './merchant-auth';
 
 export interface IssuerServerOptions {
   /** Attestation requests per IP per minute. */
@@ -33,6 +34,8 @@ export interface IssuerServerOptions {
   payouts?: PayoutScheduler;
   /** Bearer token for admin routes. Without it, only loopback callers are allowed. */
   adminToken?: string;
+  /** Per-merchant settlement and payout-history authentication. Missing config denies all merchants. */
+  merchantAuth?: MerchantAuthConfig;
 }
 
 function isAdmin(req: IncomingMessage, token?: string): boolean {
@@ -55,7 +58,7 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
     const origin = req.headers.origin;
     if (origin && cors.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Headers', `content-type, ${PAYMENT_HEADER}`);
+      res.setHeader('Access-Control-Allow-Headers', `content-type, ${PAYMENT_HEADER}, x-wraps-merchant-signature, x-wraps-merchant-timestamp, x-wraps-merchant-nonce, authorization`);
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
       res.setHeader('Vary', 'Origin');
     }
@@ -105,12 +108,14 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       }
 
       if (route === 'POST /settle') {
-        const body = await readJson(req);
+        const { value: body, raw } = await readJsonWithRaw(req);
+        await authenticateMerchant(req, core, opts.merchantAuth, String(body?.merchantId ?? ''), req.url ?? '/settle', raw);
         return sendJson(res, 200, await core.settle(body.merchantId, body.tokens, body.quoteId ?? undefined));
       }
 
       if (route === 'POST /settle/status') {
-        const body = await readJson(req);
+        const { value: body, raw } = await readJsonWithRaw(req);
+        await authenticateMerchant(req, core, opts.merchantAuth, String(body?.merchantId ?? ''), req.url ?? '/settle/status', raw);
         return sendJson(res, 200, { status: await core.settleStatus(body.merchantId, body.quoteId, body.tokens) });
       }
 
@@ -123,6 +128,7 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
       if (route === 'GET /payouts') {
         const merchantId = url.searchParams.get('merchantId') ?? '';
         if (!merchantId) throw new HttpError(400, 'merchantId required');
+        await authenticateMerchant(req, core, opts.merchantAuth, merchantId, req.url ?? '/payouts', Buffer.alloc(0));
         return sendJson(res, 200, { merchantId, payouts: core.payoutHistory(merchantId) });
       }
       if (route === 'GET /payouts/pending' || route === 'POST /payouts/run') {
@@ -146,4 +152,24 @@ export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions =
     }
   };
   return opts.tls ? createHttpsServer({ key: opts.tls.keyPem, cert: opts.tls.certPem }, handler) : createServer(handler);
+}
+
+async function authenticateMerchant(
+  req: IncomingMessage,
+  core: IssuerCore,
+  config: MerchantAuthConfig | undefined,
+  merchantId: string,
+  path: string,
+  rawBody: Uint8Array,
+): Promise<void> {
+  if (config?.developmentMode && isLoopback(req.socket.remoteAddress ?? '')) return;
+  const result = verifyMerchantRequest(config, merchantId, req.method ?? 'GET', path, rawBody, req.headers, core.currentTime());
+  if (!result.ok) throw new HttpError(result.status, result.message);
+  if (result.nonce && result.timestamp !== undefined) {
+    await core.consumeMerchantNonce(merchantId, result.nonce, result.timestamp, config?.timestampWindowMs ?? 60_000);
+  }
+}
+
+function isLoopback(ip: string): boolean {
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }

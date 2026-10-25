@@ -2,6 +2,7 @@
 import { keccak256, type Hex } from 'viem';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import type { IssuerCore, PaidLine, PayoutLine } from './core';
+import type { InFlightPayoutRecord } from './state-store';
 import { MerchantRegistry } from './merchant-registry';
 import { tokensToRlusd } from './protocol';
 import { XRPL_EVM_TESTNET_RPC, toUnits } from './rail-xrpl-evm';
@@ -29,6 +30,10 @@ export interface PayoutRail {
   estimateFeeRlusd?(lines: PayoutLine[]): Promise<number>;
   /** The transfers a batch would send, without sending. Optional. */
   preview?(lines: PayoutLine[]): PayoutPreview;
+  /** Optional durable in-flight transfer support, implemented by the XRPL EVM rail. */
+  restoreInFlight?(records: InFlightPayoutRecord[]): void;
+  inFlightRecords?(): InFlightPayoutRecord[];
+  setInFlightPersistence?(persist: (records: InFlightPayoutRecord[]) => Promise<void>): void;
 }
 
 export interface PayoutPreview {
@@ -116,13 +121,9 @@ export interface XrplEvmPayoutRailOptions {
   log?: (msg: string) => void;
 }
 
-interface InFlight {
-  merchantId: string;
+interface InFlight extends InFlightPayoutRecord {
   hash: Hex;
   raw: Hex;
-  nonce: number;
-  amountTokens: number;
-  payTo: string;
 }
 
 interface RpcReceipt {
@@ -158,6 +159,7 @@ export class XrplEvmPayoutRail implements PayoutRail {
   private readonly pinned = new Map<string, string>();
   private readonly account?: PrivateKeyAccount;
   private readonly inFlight = new Map<string, InFlight>();
+  private persistInFlight?: (records: InFlightPayoutRecord[]) => Promise<void>;
   private decimals?: number;
   private chainChecked = false;
   private busy = false;
@@ -192,6 +194,23 @@ export class XrplEvmPayoutRail implements PayoutRail {
   /** Merchants with a transfer sent but not yet confirmed. */
   pendingMerchants(): string[] {
     return [...this.inFlight.keys()];
+  }
+
+  restoreInFlight(records: InFlightPayoutRecord[]): void {
+    this.inFlight.clear();
+    for (const record of records) this.inFlight.set(record.merchantId, { ...record, hash: record.hash as Hex, raw: record.raw as Hex });
+  }
+
+  inFlightRecords(): InFlightPayoutRecord[] {
+    return [...this.inFlight.values()].map((record) => ({ ...record }));
+  }
+
+  setInFlightPersistence(persist: (records: InFlightPayoutRecord[]) => Promise<void>): void {
+    this.persistInFlight = persist;
+  }
+
+  private async saveInFlightBeforeSend(): Promise<void> {
+    await this.persistInFlight?.(this.inFlightRecords());
   }
 
   private get chainId(): number {
@@ -391,6 +410,9 @@ export class XrplEvmPayoutRail implements PayoutRail {
       }
       planned.push({ line: l, tx: this.buildTx(l.merchantId, payTo, l.amountRlusd), payTo });
     }
+    // Commit confirmed prior transfers before creating another. Otherwise removing their records
+    // from the in-flight set could let a crash make the same tab eligible for a second payment.
+    if (done.length > 0) return done;
     if (planned.length === 0 && refused.length && results.length === 0 && rebroadcast.length === 0) throw new Error(refused.join('; '));
 
     // 3. Gas: hard caps per transfer, on price, and per batch.
@@ -437,6 +459,12 @@ export class XrplEvmPayoutRail implements PayoutRail {
       });
       const f: InFlight = { merchantId: r.line.merchantId, hash: keccak256(raw), raw, nonce, amountTokens: r.line.amountTokens, payTo: r.payTo };
       this.inFlight.set(f.merchantId, f);
+      try {
+        await this.saveInFlightBeforeSend();
+      } catch (e) {
+        this.inFlight.delete(f.merchantId);
+        throw e;
+      }
       try {
         const h = await this.rpc<string>('eth_sendRawTransaction', [raw]);
         if (typeof h === 'string' && h.toLowerCase() !== f.hash) throw new Error(`RPC returned hash ${h}, expected ${f.hash}`);
@@ -527,6 +555,12 @@ export class PayoutScheduler {
     private readonly log: (msg: string) => void = () => {},
   ) {
     this.caps = { ...DEFAULT_PAYOUT_CAPS, ...caps };
+    const inFlight = core.inFlightPayouts();
+    if (inFlight.length > 0 && !rail.restoreInFlight) {
+      throw new Error('persisted payout transactions require a rail that can resume in-flight transfers');
+    }
+    rail.restoreInFlight?.(inFlight);
+    rail.setInFlightPersistence?.((records) => core.persistInFlightPayouts(records));
   }
 
   start() {
@@ -577,7 +611,7 @@ export class PayoutScheduler {
           ...(r.chainId !== undefined ? { chainId: r.chainId } : {}),
         });
       }
-      this.core.markPaid(paid);
+      await this.core.markPaid(paid, this.rail.inFlightRecords?.() ?? this.core.inFlightPayouts());
       return paid;
     } finally {
       this.running = false;

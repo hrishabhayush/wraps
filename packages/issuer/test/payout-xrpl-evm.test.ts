@@ -320,7 +320,7 @@ describe('payout records and the admin API', () => {
 
   it('GET /payouts serves the history; admin routes need the token', async () => {
     const { rail } = setup();
-    const issuer = await startIssuer({ log: () => {}, payoutIntervalMs: 3_600_000, payoutRail: rail, adminToken: 'secret' });
+    const issuer = await startIssuer({ merchantAuth: { developmentMode: true }, log: () => {}, payoutIntervalMs: 3_600_000, payoutRail: rail, adminToken: 'secret' });
     try {
       await settle(issuer.core, 'm-a', 1);
       expect((await fetch(`${issuer.url}/payouts/pending`)).status).toBe(403);

@@ -1,5 +1,6 @@
 export * from './protocol';
 export * from './rail';
+export * from './rail-xrpl-evm';
 export * from './core';
 export * from './payout';
 export * from './server';

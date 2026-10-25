@@ -12,12 +12,23 @@ import { PAYMENT_HEADER, PaymentRequiredBody } from './protocol';
 export interface IssuerServerOptions {
   /** Attestation requests per IP per minute. */
   attestationRateLimit?: number;
+  /** Browser origins allowed to call the API (e.g. the Wraps desktop app's webview). */
+  corsOrigins?: string[];
 }
 
 export function createIssuerServer(core: IssuerCore, opts: IssuerServerOptions = {}): Server {
   const limiter = new RateLimiter(opts.attestationRateLimit ?? 60, 60_000);
 
+  const cors = new Set(opts.corsOrigins ?? []);
   return createServer(async (req, res) => {
+    const origin = req.headers.origin;
+    if (origin && cors.has(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Headers', `content-type, ${PAYMENT_HEADER}`);
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+      res.setHeader('Vary', 'Origin');
+    }
+    if (req.method === 'OPTIONS') return void res.writeHead(204).end();
     try {
       const url = new URL(req.url ?? '/', 'http://issuer');
       const route = `${req.method} ${url.pathname}`;

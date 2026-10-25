@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { MockAttestationProvider, b64u, fromB64u } from '@wraps/attestation';
 import { blindTokens, finalizeTokens, serializeToken } from '@wraps/tokens';
-import { IssuerCore, FileIssuerStateStore, MemoryIssuerStateStore, MockTopUpRail, MockTopUpWallet, PayoutScheduler, XrplEvmPayoutRail, toUnits, type XrplEvmPayoutRailOptions } from '../src/index';
+import { IssuerCore, FileIssuerStateStore, MemoryIssuerStateStore, MockTopUpRail, MockTopUpWallet, PayoutScheduler, startIssuer, XrplEvmPayoutRail, toUnits, type XrplEvmPayoutRailOptions } from '../src/index';
 import { FakeEvm } from './helpers/fake-evm';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
@@ -24,6 +24,17 @@ async function newCore(stateStore: MemoryIssuerStateStore | FileIssuerStateStore
 }
 
 describe('SEC-06 issuer state persistence', () => {
+  it('SEC-06: reports the active state persistence mode on health and attestation', async () => {
+    const issuer = await startIssuer({ stateStore: new MemoryIssuerStateStore(), log: quiet, payoutIntervalMs: 3_600_000 });
+    try {
+      expect((await (await fetch(`${issuer.url}/health`)).json() as { statePersistence: string }).statePersistence).toBe('memory');
+      const attested = await (await fetch(`${issuer.url}/attestation?nonce=${'03'.repeat(16)}`)).json() as { statePersistence: string };
+      expect(attested.statePersistence).toBe('memory');
+    } finally {
+      await issuer.close();
+    }
+  });
+
   it('SEC-06: restores spent tokens, settlements, tabs and funds after restart; old keys are not restored', async () => {
     const store = new MemoryIssuerStateStore();
     const before = await newCore(store);

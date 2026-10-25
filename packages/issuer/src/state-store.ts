@@ -47,6 +47,7 @@ export interface IssuerStateSnapshot {
 }
 
 export interface IssuerStateStore {
+  readonly mode?: 'memory' | 'file-journal' | 'gcs-kms-encrypted';
   load(): Promise<IssuerStateSnapshot | undefined>;
   /** Append a complete state snapshot before the operation is acknowledged. */
   append(snapshot: IssuerStateSnapshot): Promise<void>;
@@ -54,6 +55,7 @@ export interface IssuerStateStore {
 
 /** Default store for tests and the current Confidential Space image. */
 export class MemoryIssuerStateStore implements IssuerStateStore {
+  readonly mode = 'memory' as const;
   private latest?: IssuerStateSnapshot;
 
   async load(): Promise<IssuerStateSnapshot | undefined> {
@@ -67,6 +69,7 @@ export class MemoryIssuerStateStore implements IssuerStateStore {
 
 /** Local/non-enclave append-only state journal with a sequence and SHA-256 hash chain. */
 export class FileIssuerStateStore implements IssuerStateStore {
+  readonly mode = 'file-journal' as const;
   private loaded = false;
   private sequence = 0;
   private previousHash = '0'.repeat(64);
@@ -121,7 +124,7 @@ export class FileIssuerStateStore implements IssuerStateStore {
       } catch {
         throw new Error(`issuer state journal record ${sequence} is malformed: ${this.path}`);
       }
-      if (record.version !== 1 || record.sequence !== sequence || record.previousHash !== expectedPrevious || !isSnapshot(record.state)) {
+      if (record.version !== 1 || record.sequence !== sequence || record.previousHash !== expectedPrevious || !isIssuerStateSnapshot(record.state)) {
         throw new Error(`issuer state journal chain is invalid at record ${sequence}: ${this.path}`);
       }
       const hash = journalHash(record.sequence, record.previousHash, record.state);
@@ -228,7 +231,7 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function isSnapshot(value: unknown): value is IssuerStateSnapshot {
+export function isIssuerStateSnapshot(value: unknown): value is IssuerStateSnapshot {
   if (!value || typeof value !== 'object') return false;
   const state = value as Partial<IssuerStateSnapshot>;
   return state.version === 1 && Array.isArray(state.spent) && Array.isArray(state.settlements) &&

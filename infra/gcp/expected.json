@@ -12,10 +12,10 @@
       "builtAt": "2026-10-25T01:33:08.569Z"
     },
     "relay": {
-      "imageDigest": "sha256:d4e50daf80d1ce99636ccf4c66a868448c9758a0306a186c9e026a1501da1e2d",
-      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/relay@sha256:d4e50daf80d1ce99636ccf4c66a868448c9758a0306a186c9e026a1501da1e2d",
-      "tag": "442597f",
-      "builtAt": "2026-10-25T04:15:59.052Z"
+      "imageDigest": "sha256:df2e663c7ad272ec9c59ffef20a913aeb3c63d8c537939349182b1eb7d0d87bd",
+      "imageReference": "us-central1-docker.pkg.dev/wraps-hack/wraps/relay@sha256:df2e663c7ad272ec9c59ffef20a913aeb3c63d8c537939349182b1eb7d0d87bd",
+      "tag": "6ba78eb-dirty",
+      "builtAt": "2026-10-25T04:29:19.786Z"
     }
   }
 }

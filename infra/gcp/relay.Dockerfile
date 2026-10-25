@@ -41,7 +41,8 @@ ENV NODE_ENV=production \
     TZ=UTC
 
 EXPOSE 443/tcp 8080/tcp 51820/udp
-LABEL "tee.launch_policy.log_redirect"="debugonly"
+# Relay startup logs use fixed labels and allowlisted failure codes only.
+LABEL "tee.launch_policy.log_redirect"="always"
 LABEL "tee.launch_policy.allow_env_override"="ATTESTATION_AUDIENCE,ISSUER_URL,RELAY_HOSTNAME,WG_ENABLED,WG_ENDPOINT,WG_INTERFACE_ADDRESS,WG_EGRESS_INTERFACE,WG_PEERS_JSON"
 LABEL "tee.launch_policy.allow_capabilities"="true"
 

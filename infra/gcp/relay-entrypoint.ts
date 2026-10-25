@@ -112,10 +112,10 @@ async function main(): Promise<void> {
     attestationPort: positivePort('RELAY_ATTESTATION_PORT', 8080),
   };
   const wireGuardEnabled = process.env.WG_ENABLED === 'true';
-  // The VM is created with --can-ip-forward, which enables this host setting.
-  // Confidential Space exposes /proc/sys read-only inside the workload, so do
-  // not try to rewrite it here; startWireGuardGateway verifies the value.
-  startupStep = 'relay-listeners';
+  // --can-ip-forward enables forwarding at the GCE NIC; the guest kernel must
+  // independently have net.ipv4.ip_forward=1. The gateway checks this value;
+  // the production workload cannot provision a missing guest sysctl itself.
+  startupStep = wireGuardEnabled ? 'wireguard-and-relay-listeners' : 'relay-listeners';
   const servers = wireGuardEnabled
     ? await startConfidentialWireGuardRelay({
       ...relayOptions,
@@ -164,8 +164,17 @@ async function main(): Promise<void> {
 
 }
 
-main().catch(() => {
-  // Never log URLs, keys, nonces, credentials, or attestation token contents.
-  console.error(`[relay] startup failed during ${startupStep}`);
+main().catch((error: unknown) => {
+  // Keep diagnostics to fixed labels. Raw errors can contain endpoints, keys,
+  // nonces, credentials, or token contents.
+  let failure = 'unexpected';
+  if (startupStep === 'wireguard-and-relay-listeners' && error instanceof Error) {
+    if (error.message === 'WireGuard IPv4 forwarding must be enabled by the VM deployment') {
+      failure = 'guest-ipv4-forwarding-disabled';
+    } else if (error.message.startsWith('Could not start WireGuard;')) {
+      failure = 'wireguard-tools-or-netadmin-setup-failed';
+    }
+  }
+  console.error(`[relay] startup failed during ${startupStep} (${failure})`);
   process.exitCode = 1;
 });

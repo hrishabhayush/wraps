@@ -127,8 +127,10 @@ mock attestation. Use it to rehearse without a VM.
 ```
 
 - The Confidential Space docs list `SEV` and `TDX`. They do not list `SEV_SNP`, so we use `SEV`.
-- `tee-container-log-redirect` is set on the debug image only. The image's launch policy
-  (`tee.launch_policy.log_redirect=debugonly`) allows redirect only there.
+- Relay images allow `tee-container-log-redirect` in production so startup failures are
+  observable. Relay output is restricted to fixed startup stages and allowlisted error codes;
+  never print raw errors, keys, tokens, endpoints, or merchant data. Other workloads can keep
+  the `debugonly` policy unless their logs are similarly reviewed.
 - The production image fixes its workload settings. Relay audience, issuer URL, and relay
   hostname are non-secret public configuration passed as `tee-env-*` metadata; do not put keys,
   tokens, or credentials in instance metadata.

@@ -2,7 +2,7 @@
 
 XRPL AI & Fintech Hackathon, NYC, Oct 24 to 25, 2026.
 
-**Name: decide now.** Options: Hush, Blindpay, Quiet Ledger.
+**Name: Quiet Ledger.** This is the working name for the demo.
 
 **Thesis:** x402 made agent payments less private than a card. Every x402 payment publishes the agent's spending record forever, and the facilitator sees every wallet next to every URL. We let agents pay on their own without being watched, at every layer.
 

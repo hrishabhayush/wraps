@@ -102,7 +102,7 @@ Platform: **Google Cloud Confidential Space** (AMD SEV confidential VMs), projec
 - [x] **DEM-02** Tamper test starts a modified issuer build and shows the SDK refusing its changed PCR0 before top-up or purchase. (Codex)
 - [ ] **DEM-03** Benchmarks: payment speed (p50/p95), spy bot accuracy vs number of agents.
 - [ ] **DEM-04** Tests from SPEC §21 passing.
-- [ ] **DEM-05** Update the explainer page to v4 (relay, AP4M at top-up).
+- [x] **DEM-05** Update the explainer page to v4 (Confidential Space issuer, relay status, top-up; AP4M marked not implemented). (Codex)
 - [ ] **DEM-06** Pick the name. Rehearse the live run three times. Mastercard needs it live, no recording.
 
 ---

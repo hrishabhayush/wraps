@@ -73,17 +73,33 @@ function openTls(url: URL): Promise<{ socket: TLSSocket; peerSpki: Uint8Array }>
       rejectUnauthorized: false,
       ALPNProtocols: ['http/1.1'],
     });
-    socket.setTimeout(20_000, () => socket.destroy(new Error('TLS connect timed out')));
-    socket.once('error', reject);
+    let settled = false;
+    const handshakeTimer = setTimeout(() => fail(new Error('TLS handshake timed out')), 20_000);
+    const cleanup = () => clearTimeout(handshakeTimer);
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy();
+      reject(error);
+    };
+    socket.once('error', fail);
     socket.once('secureConnect', () => {
-      socket.setTimeout(0);
+      if (settled) return;
+      settled = true;
+      cleanup();
       const cert = socket.getPeerX509Certificate();
       if (!cert) {
         socket.destroy();
         return reject(new TlsPinError('server sent no certificate'));
       }
-      const peerSpki = new Uint8Array(cert.publicKey.export({ type: 'spki', format: 'der' }));
-      resolve({ socket, peerSpki });
+      try {
+        const peerSpki = new Uint8Array(cert.publicKey.export({ type: 'spki', format: 'der' }));
+        resolve({ socket, peerSpki });
+      } catch (error) {
+        socket.destroy();
+        reject(error instanceof Error ? error : new Error('could not read TLS peer key'));
+      }
     });
   });
 }

@@ -6,8 +6,9 @@ GCP_REGION="${GCP_REGION:-us-central1}"
 GCP_ZONE="${GCP_ZONE:-us-central1-a}"
 REGISTRY="${REGISTRY:-${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/wraps}"
 WORKLOAD_SA="${WORKLOAD_SA:-wraps-workload@${GCP_PROJECT}.iam.gserviceaccount.com}"
-MACHINE_TYPE="${MACHINE_TYPE:-n2d-standard-2}"
-MAX_RUN_DURATION="${MAX_RUN_DURATION:-12h}"
+# These limits are mandatory for every workload VM in this project.
+readonly MACHINE_TYPE="n2d-standard-2"
+readonly MAX_RUN_DURATION="12h"
 
 GCP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${GCP_DIR}/../.." && pwd)"

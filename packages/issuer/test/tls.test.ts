@@ -1,7 +1,9 @@
 // HTTPS with a self-signed key made at start-up. The key is in the attested key hash,
 // and every later call is pinned to it.
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createServer as createHttpsServer } from 'node:https';
+import { createServer as createTcpServer, type Socket } from 'node:net';
+import { once } from 'node:events';
 import { AttestationError, MockAttestationProvider, MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
 import {
   IssuerCore,
@@ -123,6 +125,26 @@ describe('issuer over https', () => {
       await expect(fetchRecordingPeer(listenUrl(server))).rejects.toThrow('response exceeds 1048576 bytes');
     } finally {
       server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('uses an absolute deadline for a TLS handshake that never completes', async () => {
+    const sockets = new Set<Socket>();
+    const server = createTcpServer((socket) => { sockets.add(socket); });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('TCP server did not bind');
+    vi.useFakeTimers();
+    try {
+      const pending = fetchRecordingPeer(`https://127.0.0.1:${address.port}`);
+      await once(server, 'connection');
+      const rejection = expect(pending).rejects.toThrow('TLS handshake timed out');
+      await vi.advanceTimersByTimeAsync(20_000);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+      for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });

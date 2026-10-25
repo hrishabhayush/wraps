@@ -10,6 +10,10 @@
     "node": ">=20"
   },
   "scripts": {
+    "ap4m:check": "tsx scripts/ap4m-check.ts",
+    "ap4m:channel": "tsx scripts/ap4m-channel.ts",
+    "ap4m:demo": "tsx scripts/ap4m-demo.ts",
+    "demo:browser": "tsx apps/demo/src/browser-server.ts",
     "demo": "tsx apps/demo/src/server.ts",
     "demo:live": "tsx scripts/demo-live.ts",
     "demo:preflight": "tsx scripts/live-preflight.ts",

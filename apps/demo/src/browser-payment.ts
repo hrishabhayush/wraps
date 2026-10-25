@@ -1,0 +1,60 @@
+import { readFile, stat } from 'node:fs/promises';
+import { JsonRpcProvider, Wallet, parseUnits } from 'ethers';
+
+export function paymentConfig(env: NodeJS.ProcessEnv) {
+  const required = ['AP4M_RESOURCE_URL', 'AP4M_CHANNEL_ID', 'AP4M_STATE_DIR'];
+  const missing = required.filter(key => !env[key]);
+  if (!env.AGENT_PRIVATE_KEY && !env.AP4M_AGENT_KEY_FILE) missing.push('AGENT_PRIVATE_KEY or AP4M_AGENT_KEY_FILE');
+  const enabled = env.AP4M_ENABLE_PAYMENTS === '1';
+  const maximum = env.AP4M_MAX_RLUSD ?? '1';
+  if (!/^\d+(\.\d{1,18})?$/.test(maximum) || parseUnits(maximum, 18) <= 0n || parseUnits(maximum, 18) > parseUnits('1', 18)) {
+    throw new Error('AP4M_MAX_RLUSD must be greater than zero and at most 1 for this demo');
+  }
+  if (env.AP4M_RESOURCE_URL) {
+    const url = new URL(env.AP4M_RESOURCE_URL);
+    const local = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
+    if ((url.protocol !== 'https:' && !(local && url.protocol === 'http:')) || url.username || url.password || url.hash || url.search || url.pathname !== '/resource') {
+      throw new Error('AP4M_RESOURCE_URL must be HTTPS, or a loopback HTTP /resource URL');
+    }
+  }
+  if (env.AP4M_CHANNEL_ID && !/^0x[0-9a-f]{64}$/.test(env.AP4M_CHANNEL_ID)) throw new Error('AP4M_CHANNEL_ID must be a lowercase bytes32 channel ID');
+  return { enabled, ready: enabled && missing.length === 0, missing, maximum, resourceUrl: env.AP4M_RESOURCE_URL };
+}
+
+/** The vendor toolkit validates the channel, price, voucher and exact confirmed redemption. */
+export async function purchase(env: NodeJS.ProcessEnv, currentIp: string, expectedIp: string, publish: (type: string, message: string) => void) {
+  const cfg = paymentConfig(env);
+  if (!cfg.ready) throw new Error('Real AP4M payments are disabled or channel configuration is incomplete');
+  if (!expectedIp || currentIp !== expectedIp) throw new Error('Agent egress does not match the configured VPN exit; payment blocked');
+  let key = env.AGENT_PRIVATE_KEY?.trim();
+  if (!key) {
+    const keyFile = env.AP4M_AGENT_KEY_FILE!;
+    const info = await stat(keyFile);
+    if (!info.isFile() || (info.mode & 0o077) !== 0) throw new Error('Agent key file must be private (chmod 600)');
+    key = (await readFile(keyFile, 'utf8')).trim();
+  }
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(key)) throw new Error('Agent key must be a hex private key');
+  if (!key.startsWith('0x')) key = `0x${key}`;
+  // Official hackathon sample; the signed intent is retained privately for retry safety.
+  // @ts-expect-error Official AP4M sample is distributed as JavaScript without declarations.
+  const { loadX402Context, buyResource } = await import('../vendor/ap4m/x402.mjs');
+  const context = await loadX402Context('https://hackathon.ap4m.build');
+  const provider = new JsonRpcProvider('https://rpc.testnet.xrplevm.org');
+  try {
+    const wallet = new Wallet(key, provider);
+    return await buyResource({
+      context, provider, wallet, stateDirectory: env.AP4M_STATE_DIR!,
+      resourceUrl: cfg.resourceUrl!, channelId: env.AP4M_CHANNEL_ID!,
+      maximumAmount: parseUnits(cfg.maximum, 18).toString(),
+      // Re-running this demo resumes this same purchase; it never invents a new payment intent.
+      operation: 'xrp-research-1',
+      requestFetch: async (url: string, init: RequestInit) => {
+        const signed = new Headers(init.headers).has('PAYMENT-SIGNATURE');
+        publish(signed ? 'voucher' : 'request', signed ? 'Signed AP4M voucher sent to the merchant. Waiting for redemption.' : 'Requesting the merchant’s x402 challenge.');
+        const response = await fetch(url, init);
+        publish('http', `Merchant returned HTTP ${response.status}${response.status === 402 ? ' Payment Required' : ''}.`);
+        return response;
+      },
+    });
+  } finally { provider.destroy(); }
+}

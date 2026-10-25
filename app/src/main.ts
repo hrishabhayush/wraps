@@ -41,7 +41,7 @@ const s = {
   bal: undefined as number | undefined, // its balance in the pay asset
   qr: '', // pairing QR (svg) while connecting
   uri: '',
-  stage: '' as '' | wc.PayStage | 'minting' | 'paying' | 'linking',
+  stage: '' as '' | wc.PayStage | 'minting' | 'paying' | 'linking' | 'quoting',
   rechecking: false,
   trust: {} as Record<string, 'ok' | 'bad'>, // attestation results this session
   toast: '',
@@ -244,7 +244,8 @@ function payFrom() {
 
 function topupCta() {
   const label =
-    s.stage === 'approve' ? (wc.via() === 'browser' ? 'Approve in your browser…' : 'Approve in your wallet…')
+    s.stage === 'quoting' ? 'Verifying issuer…'
+    : s.stage === 'approve' ? (wc.via() === 'browser' ? 'Approve in your browser…' : 'Approve in your wallet…')
     : s.stage === 'linking' ? 'Connecting…'
     : s.stage === 'confirming' ? 'Confirming on XRPL EVM…'
     : s.stage === 'minting' ? 'Minting tokens…'
@@ -396,6 +397,8 @@ const actions: Record<string, (arg: string) => unknown> = {
   },
   amount: arg => { s.amount = Number(arg); render(); },
   topup: async () => {
+    if (s.stage) return;
+    s.stage = 'quoting'; render();
     try {
       const n = tokensFor(s.amount);
       if (inTauri) {
@@ -409,7 +412,10 @@ const actions: Record<string, (arg: string) => unknown> = {
       });
       toast(`Minted ${n} blind tokens`);
     } catch (e) {
-      toast((e as Error).message.slice(0, 90));
+      const message = errorText(e);
+      toast(message.includes('IMAGE_MISMATCH')
+        ? 'Top up blocked: the server version differs from the one this app trusts. Update the app.'
+        : message.slice(0, 90));
     } finally {
       s.stage = '';
       refreshBalance();

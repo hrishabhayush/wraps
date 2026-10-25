@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@agent-pay/spybot": "*",
+    "@ap4m/sdk": "https://hackathon.ap4m.build/sdk/ap4m-sdk.tgz",
     "@wraps/agent": "*",
     "@wraps/attestation": "*",
     "@wraps/issuer": "*",
     "@wraps/merchant": "*",
     "@wraps/sdk": "*",
-    "@agent-pay/spybot": "*"
+    "ethers": "^6.17.0",
+    "playwright": "^1.64.1"
   }
 }

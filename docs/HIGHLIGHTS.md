@@ -12,7 +12,7 @@ Last updated: Oct 24, 2026.
 
 | Proof | Status |
 |---|---|
-| Issuer deployed in Google Confidential Space (AMD SEV) on project `wraps-hack` | Done, PR #20 |
+| Issuer deployed in Google Confidential Space (AMD SEV) on project `wraps-hack` | On main (PR #20). Re-verified live a second time on Oct 25 |
 | SDK verified a live **production** token from a laptop: signed by Google (RS256), `GCP_AMD_SEV`, `CONFIDENTIAL_SPACE`, debug `disabled-since-boot`, image digest, nonce and key hash all matched, TLS key pinned | Measured, PR #20 |
 | **Debug** image refused (`DEBUG_MODE`) | Measured, PR #20 |
 | **Wrong image digest** refused (`IMAGE_MISMATCH`), no top-up or payment sent | Measured, PR #20 |
@@ -41,7 +41,7 @@ Last updated: Oct 24, 2026.
 
 | Proof | Status |
 |---|---|
-| 61 tests passing, typecheck clean | On main |
+| 151 tests passing, typecheck clean | On main |
 | 75 tests passing with the Confidential Space verifier (tampered digest, debug, wrong nonce, replay, wrong key hash, bad signature, wrong issuer or audience, expired token, wrong platform, TLS pinning) | PR #20 |
 | Tampered issuer refused, debug mode refused, replayed receipt refused | On main (`npm run demo:core -- --tamper`) |
 | Prompt injection ("buy 500 more") stopped by caps in code, not by the model | On main (`npm run demo:core -- --gullible`) |
@@ -51,13 +51,13 @@ Last updated: Oct 24, 2026.
 
 ## 4. Passing the published x402 facilitator rules
 
-**Claim (once PR SEC-01 is green):** "A USENIX Security 2026 study tested 15 production x402 facilitators against 8 security rules. All 15 failed at least one. Ours passes all eight, and each has a test."
+**Claim:** "A USENIX Security 2026 study tested 15 production x402 facilitators against 8 security rules. All 15 failed at least one. Ours passes all eight, and each has a test."
 
 | Proof | Status |
 |---|---|
-| Conformance tests for SR1 to SR8, plus resource binding (M3) and cache hygiene (M5) | In progress, PR `SEC-01` |
-| Fixes for real gaps the rules exposed: token expiry (SR3), binding tokens to the quoted resource (SR1, M3), `no-store` on paid responses (M5), payout caps (SR6) | In progress, PR `SEC-01` |
-| Table of rule → status → test | `docs/SECURITY-CONFORMANCE.md` in PR `SEC-01` |
+| 45 conformance tests for SR1 to SR8, M1, M3, M5 and the four Free-Riding flaw classes, all passing (`npm run test:conformance`) | On main (PR #23) |
+| Fixes for real gaps the rules exposed: token expiry via key epochs (SR3), single-use quotes bound to resource and price (SR1, M3), `no-store` on paid responses (M5), payout caps (SR6), canonical token encoding (M1) | On main (PR #23) |
+| Table of rule → status → test. SR6 and SR8 are tested on their closest equivalent (our payouts), because we sponsor no per-payment on-chain execution | `docs/SECURITY-CONFORMANCE.md` on main |
 
 Be honest: these are our own tests against the paper's rules, not an external audit.
 

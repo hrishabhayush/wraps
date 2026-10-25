@@ -1,4 +1,4 @@
-# Quiet Ledger live rehearsal
+# wraps live rehearsal
 
 Run this three times end to end before the Mastercard demo. Use testnet funds and the real AP4M sandbox flow. Do not use a recording as the demonstration.
 

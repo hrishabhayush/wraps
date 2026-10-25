@@ -4,11 +4,13 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@agent-pay/spybot": "*",
     "@wraps/agent": "*",
     "@wraps/attestation": "*",
     "@wraps/issuer": "*",
     "@wraps/merchant": "*",
     "@wraps/sdk": "*",
-    "@agent-pay/spybot": "*"
+    "x402-xrpl": "^0.3.4",
+    "xrpl": "^5.3.0"
   }
 }

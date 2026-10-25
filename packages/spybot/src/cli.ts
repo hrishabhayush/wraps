@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { SpyBot } from "./spy.js";
+import { XrplRpc } from "./rpc.js";
 import { formatCluster, formatPayment } from "./format.js";
 import { shortAddr } from "./util.js";
 
-const HELP = `spybot: read plain x402 payments on XRPL mainnet
+const HELP = `spybot: read plain x402 payments on XRPL
 
 Usage: npm run spy -- [options]
 
   --merchant <r...>   Merchant address to watch. Repeat for more. Default: AskSurf.
+  --network <name>    XRPL network: mainnet (default) or testnet.
   --limit <n>         Recent x402 payments to read per merchant (default 50).
   --follow            Keep polling for new payments.
   --no-cluster        Skip funder clustering.
@@ -23,6 +25,7 @@ Usage: npm run spy -- [options]
 const { values } = parseArgs({
   options: {
     merchant: { type: "string", multiple: true },
+    network: { type: "string", default: "mainnet" },
     limit: { type: "string", default: "50" },
     follow: { type: "boolean", default: false },
     "no-cluster": { type: "boolean", default: false },
@@ -42,6 +45,12 @@ if (values.help) {
 
 const merchants = values.merchant?.length ? values.merchant : ["ra9b6JX5aPVbdJhogDDddsRAcasWg7gzC3"];
 const quicknodeUrl = values.quicknode ?? process.env.QUICKNODE_XRPL_URL;
+if (values.network !== "mainnet" && values.network !== "testnet") {
+  throw new Error(`unsupported XRPL network: ${values.network}`);
+}
+if (values.network === "testnet" && !values.merchant?.length) {
+  throw new Error("--merchant is required with --network testnet");
+}
 
 const spy = new SpyBot({
   merchants,
@@ -50,7 +59,8 @@ const spy = new SpyBot({
   cluster: !values["no-cluster"],
   upstream: !values["no-upstream"],
   catalog: !values["no-catalog"],
-  quicknodeUrl,
+  ...(values.network === "testnet" ? { rpc: XrplRpc.testnet() } : { quicknodeUrl }),
+  ...(values.network === "testnet" ? { cluster: false, catalog: false, directory: [] } : {}),
   cachePath: values.cache,
 });
 
@@ -65,7 +75,8 @@ if (values.json) {
   spy.on("directory", (d) =>
     err(`directory: ${d.count} services from xrpl-ai.org${d.fromCache ? ` (cache from ${d.fetchedAt})` : ""}`),
   );
-  err(`watching ${merchants.map((m) => shortAddr(m, 6, 4)).join(", ")} via ${quicknodeUrl ? "Quicknode" : "public nodes"}`);
+  const rpcLabel = values.network === "testnet" ? "XRPL testnet public node" : quicknodeUrl ? "Quicknode" : "public nodes";
+  err(`watching ${merchants.map((m) => shortAddr(m, 6, 4)).join(", ")} via ${rpcLabel}`);
   spy.on("catalog", (c) =>
     err(
       `catalog ${shortAddr(c.address, 6, 4)}: hub shows ${c.seen} of ${c.total ?? "?"} APIs` +

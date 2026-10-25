@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { XrplRpc } from "../src/rpc.js";
+import { XrplRpc, PUBLIC_NODES, TESTNET_NODES } from "../src/rpc.js";
 import { clusterByFunder, estimateSentTxs } from "../src/funders.js";
 import { formatCluster } from "../src/format.js";
 
@@ -34,6 +34,12 @@ describe("XrplRpc", () => {
     const rpc = XrplRpc.withQuicknode("https://qn.example/");
     expect(rpc.endpoints[0]).toBe("https://qn.example/");
     expect(rpc.endpoints.length).toBe(4);
+  });
+
+  it("keeps testnet RPC isolated from mainnet nodes", () => {
+    const rpc = XrplRpc.testnet();
+    expect(rpc.endpoints).toEqual(TESTNET_NODES);
+    expect(rpc.endpoints).not.toEqual(expect.arrayContaining(PUBLIC_NODES));
   });
 });
 

@@ -171,6 +171,7 @@ export async function* readRecentPayments(
   let found = 0;
   for (let page = 0; page < maxPages; page++) {
     const res: any = await rpc.request("account_tx", {
+      api_version: 2,
       account: merchant,
       limit: pageSize,
       forward: false,
@@ -203,6 +204,7 @@ export async function* followPayments(
     let maxSeen = min - 1;
     do {
       const res: any = await rpc.request("account_tx", {
+        api_version: 2,
         account: merchant,
         ledger_index_min: min,
         ledger_index_max: -1,

@@ -99,18 +99,18 @@
       <section class="intro">
         <div>
           <h1>One agent pays in public.<br />One agent pays privately.</h1>
-          <p>Watch the XRPL spy bot observe ordinary x402 payments while our local agent buys research with blind tokens. The two feeds are independent.</p>
+          <p>Watch a plain x402 agent pay for a testnet resource while the spy bot reads the settled payment, alongside a local blind-token research run.</p>
         </div>
-        <div class="legend">Live XRPL mainnet observer · local mock issuer and merchant</div>
+        <div class="legend">XRPL testnet x402 observer · local mock issuer and merchant</div>
       </section>
 
       <section class="columns" aria-label="Live demo events">
         <article class="panel left">
           <div class="panel-head">
-            <div class="panel-title"><div class="panel-icon">⌕</div><div><h2>Public x402 payments</h2><div class="panel-kicker">XRPL AI Hub merchant · on-chain events</div></div></div>
+            <div class="panel-title"><div class="panel-icon">⌕</div><div><h2>Plain x402 agent</h2><div class="panel-kicker">t54 facilitator · XRPL testnet · live chain observer</div></div></div>
             <span class="tag">Spy bot</span>
           </div>
-          <div class="panel-caption">The bot can see payer, merchant, amount, time, and a best-effort service match.</div>
+          <div class="panel-caption">The agent handles the 402 flow, then SpyBot reads the validated payment from the merchant’s testnet account.</div>
           <div id="spy-feed" class="feed"><div class="empty">Start the demo to load public payment activity.</div></div>
         </article>
 
@@ -123,7 +123,7 @@
           <div id="agent-feed" class="feed"><div class="empty">The local agent is idle.</div></div>
         </article>
       </section>
-      <div class="system">This page uses mock attestation and a mock top-up rail. The left feed reads public XRPL data when network access is available.</div>
+    <div class="system">Set XRPL_TESTNET_BUYER_SEED, XRPL_TESTNET_RESOURCE_URL, and XRPL_TESTNET_MERCHANT_ADDRESS to enable the left-side testnet payment. The right side uses mock attestation and a mock top-up rail.</div>
     </main>
     <script>
       const $ = (selector) => document.querySelector(selector);

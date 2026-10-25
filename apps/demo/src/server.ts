@@ -1,6 +1,4 @@
 import { createServer, type ServerResponse } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { MockAttestationVerifier, mockPcrs } from '@wraps/attestation';
@@ -8,11 +6,12 @@ import { ResearchAgent, DEMO_TASKS } from '@wraps/agent';
 import { startIssuer } from '@wraps/issuer';
 import { Merchant } from '@wraps/merchant';
 import { MockTopUpWallet, PrivatePayClient } from '@wraps/sdk';
-import { SpyBot } from '@agent-pay/spybot';
+import { SpyBot, XrplRpc } from '@agent-pay/spybot';
+import { x402Fetch } from 'x402-xrpl';
+import { Wallet } from 'xrpl';
 
 const PORT = Number(process.env.DEMO_PORT ?? 4174);
 const HOST = process.env.DEMO_HOST ?? '127.0.0.1';
-const WATCHED_MERCHANT = 'ra9b6JX5aPVbdJhogDDddsRAcasWg7gzC3';
 const MAX_HISTORY = 500;
 const pagePath = fileURLToPath(new URL('./index.html', import.meta.url));
 
@@ -47,14 +46,17 @@ function json(res: ServerResponse, status: number, value: unknown) {
 }
 
 function startSpy() {
+  const testnetMerchant = process.env.XRPL_TESTNET_MERCHANT_ADDRESS;
+  if (!testnetMerchant) throw new Error('XRPL_TESTNET_MERCHANT_ADDRESS is required to start the testnet observer.');
   const bot = new SpyBot({
-    merchants: [WATCHED_MERCHANT],
+    merchants: [testnetMerchant],
     limit: 15,
     follow: true,
+    cluster: false,
+    catalog: false,
+    directory: [],
+    rpc: XrplRpc.testnet(),
     pollMs: 6_000,
-    quicknodeUrl: process.env.QUICKNODE_XRPL_URL,
-    cachePath: join(tmpdir(), 'wraps-demo-directory-cache.json'),
-    catalogCachePath: join(tmpdir(), 'wraps-demo-catalog-cache.json'),
   });
   spy = bot;
   bot.on('directory', (data) => publish('spy', 'directory', data));
@@ -69,6 +71,28 @@ function startSpy() {
   spyRun = bot.run().catch((err: unknown) => {
     publish('spy', 'error', { message: err instanceof Error ? err.message : String(err) });
   });
+}
+
+async function runTestnetAgent() {
+  const seed = process.env.XRPL_TESTNET_BUYER_SEED;
+  const resourceUrl = process.env.XRPL_TESTNET_RESOURCE_URL;
+  if (!seed || !resourceUrl) {
+    publish('spy', 'status', { message: 'Testnet buyer is idle. Set XRPL_TESTNET_BUYER_SEED and XRPL_TESTNET_RESOURCE_URL to enable it.' });
+    return;
+  }
+  try {
+    const buyer = Wallet.fromSeed(seed);
+    publish('spy', 'status', { message: 'Testnet agent is requesting the paid resource.' });
+    const paidFetch = x402Fetch({ wallet: buyer, network: 'xrpl:1' });
+    const response = await paidFetch(resourceUrl, { headers: { accept: 'application/json' } });
+    if (!response.ok) {
+      publish('spy', 'error', { message: `Testnet x402 request returned HTTP ${response.status}.` });
+      return;
+    }
+    publish('spy', 'status', { message: `Testnet x402 resource paid; response HTTP ${response.status}. Waiting for the bot to observe the validated payment.` });
+  } catch (err) {
+    publish('spy', 'error', { message: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 async function runPrivateAgent() {
@@ -114,7 +138,14 @@ function startDemo() {
   if (running) return false;
   running = true;
   publish('system', 'status', { running, message: 'Live demo started.' });
-  startSpy();
+  const missingTestnetConfig = ['XRPL_TESTNET_BUYER_SEED', 'XRPL_TESTNET_RESOURCE_URL', 'XRPL_TESTNET_MERCHANT_ADDRESS']
+    .filter((name) => !process.env[name]);
+  if (missingTestnetConfig.length === 0) {
+    startSpy();
+    void runTestnetAgent();
+  } else {
+    publish('spy', 'status', { message: `Testnet x402 buyer is idle. Configure ${missingTestnetConfig.join(', ')} to enable it.` });
+  }
   agentRun = runPrivateAgent();
   void agentRun.finally(() => {
     agentRun = undefined;

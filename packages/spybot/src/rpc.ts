@@ -6,6 +6,9 @@ export const PUBLIC_NODES = [
   "https://xrplcluster.com/",
 ];
 
+/** XRPL testnet nodes. Keep this list separate from mainnet fallbacks. */
+export const TESTNET_NODES = ["https://s.altnet.rippletest.net:51234/"];
+
 /** Errors that mean "try again later or try another node". */
 const RETRYABLE = new Set(["tooBusy", "slowDown", "noNetwork", "noCurrent", "noClosed", "amendmentBlocked", "failedToForward"]);
 
@@ -54,6 +57,11 @@ export class XrplRpc {
   static withQuicknode(url: string | undefined, opts: RpcOptions = {}): XrplRpc {
     const endpoints = url ? [url, ...PUBLIC_NODES] : PUBLIC_NODES;
     return new XrplRpc({ ...opts, endpoints });
+  }
+
+  /** Build a testnet-only RPC client. Never mixes testnet and mainnet nodes. */
+  static testnet(opts: RpcOptions = {}): XrplRpc {
+    return new XrplRpc({ ...opts, endpoints: opts.endpoints?.length ? opts.endpoints : TESTNET_NODES });
   }
 
   async request<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {

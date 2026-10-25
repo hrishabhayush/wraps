@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { matchService, parseX402Payment, T54_SOURCE_TAG } from "../src/payments.js";
+import { matchService, parseX402Payment, readRecentPayments, T54_SOURCE_TAG } from "../src/payments.js";
 import { formatPayment } from "../src/format.js";
 import type { DirectoryEntry } from "../src/directory.js";
 
@@ -50,6 +50,22 @@ describe("parseX402Payment", () => {
     const v2 = { tx_json: { ...entry.tx }, meta: entry.meta, hash: entry.tx.hash, ledger_index: entry.tx.ledger_index };
     delete (v2.tx_json as any).hash;
     expect(parseX402Payment(v2)?.hash).toBe(entry.tx.hash);
+  });
+});
+
+describe("readRecentPayments", () => {
+  it("requests XRPL account_tx API v2 and parses the response", async () => {
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const rpc = {
+      request: async (method: string, params: Record<string, unknown>) => {
+        requests.push({ method, params });
+        return { transactions: [entry] };
+      },
+    } as any;
+    const payments = [];
+    for await (const payment of readRecentPayments(rpc, ASKSURF, { limit: 1 })) payments.push(payment);
+    expect(requests[0]).toMatchObject({ method: "account_tx", params: { api_version: 2, account: ASKSURF } });
+    expect(payments).toHaveLength(1);
   });
 });
 

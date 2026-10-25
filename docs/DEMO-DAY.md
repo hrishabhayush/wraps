@@ -73,7 +73,7 @@ Stop with the **Stop** button or Ctrl-C. That closes the local merchant and the 
 | How private is it really? | Simulation, PR #7: with hourly payouts a watcher still pins 69% of spending at 5 agents and 6% at 100. Privacy needs a crowd and slow payouts. |
 | Is it faster? | Locally, a token payment takes about 1.8 ms (mock rails). Plain x402 on XRPL waits about 4 s for the ledger. Local number, not production. |
 | SEV or SEV-SNP? | AMD SEV, verified by Google. Not SNP. |
-| Is the WireGuard gateway attested? | The WireGuard path inside the Confidential Space relay is attested and was verified live (HTTPS 200 through the tunnel). The separate standalone gateway VM is not attested. |
+| Is the WireGuard gateway attested? | The WireGuard path inside the Confidential Space relay is attested and was verified live (HTTPS 200 through the tunnel). The separate standalone gateway is a plain GCE VM outside Confidential Space, with no attestation or token metering. |
 
 ---
 

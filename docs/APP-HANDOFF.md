@@ -64,7 +64,7 @@ The underlying issue is the role. **The buyer shouldn't settle.** The relay or m
 
 - AMD **SEV**, verified by Google. Not SEV-SNP.
 - AP4M (Mastercard) top-up is **not** implemented. The demo uses a mock rail. Your XRPL EVM RLUSD top-up is real.
-- The **standalone** WireGuard gateway VM (PR #43) is **not attested**. Only the WireGuard path inside the Confidential Space relay is.
+- The **standalone** WireGuard gateway VM (PR #43) is a plain GCE VM outside Confidential Space, with no attestation or token metering. Only the WireGuard path inside the Confidential Space relay is attested.
 - Issuer state lives in memory: a restart loses keys, so old tokens become unknown.
 
 ---
